@@ -1,7 +1,7 @@
 <!-- InstaGallery README -->
 
 <p align="center">
-  <img src="docs/assets/instagallery-logo.svg" alt="InstaGallery app logo" width="144" />
+  <img src="instagallery-logo.svg" alt="InstaGallery app logo" width="144" />
 </p>
 
 <h1 align="center">InstaGallery</h1>
