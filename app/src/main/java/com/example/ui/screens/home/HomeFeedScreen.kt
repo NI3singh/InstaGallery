@@ -1,7 +1,6 @@
 package com.example.ui.screens.home
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,12 +19,13 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.PhotoCamera
-import androidx.compose.material3.Divider
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -50,6 +50,7 @@ import com.example.data.local.entity.PersonEntity
 import com.example.ui.components.IndexingStatusBanner
 import com.example.ui.components.PostCard
 import com.example.ui.theme.IgBlack
+import com.example.ui.theme.IgBlue
 import com.example.ui.theme.IgBorder
 import com.example.ui.theme.IgRed
 import com.example.ui.theme.IgStoryGradient
@@ -87,15 +88,17 @@ fun HomeFeedScreen(
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Cursive,
                 color = IgTextPrimary,
-                modifier = Modifier.testTag("app_title")
+                modifier = Modifier
+                    .clickable { viewModel.reshuffle() }
+                    .testTag("app_title")
             )
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 // Live face scanning status indicator
-                if (uiState.isScanning || uiState.totalToScan > 0) {
+                if (uiState.isScanning) {
                     val current = uiState.scannedCount
                     val total = if (uiState.totalToScan > 0) uiState.totalToScan else 100
                     IndexingStatusBanner(processed = current, total = total)
@@ -112,6 +115,21 @@ fun HomeFeedScreen(
                         imageVector = if (uiState.isFilteringFavorites) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
                         contentDescription = "Filter Favorites",
                         tint = if (uiState.isFilteringFavorites) IgRed else Color.White,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+
+                // Bookmarks / Saved filter toggle
+                IconButton(
+                    onClick = { viewModel.toggleBookmarksFilter() },
+                    modifier = Modifier
+                        .size(36.dp)
+                        .testTag("bookmarks_filter_button")
+                ) {
+                    Icon(
+                        imageVector = if (uiState.isFilteringBookmarks) Icons.Default.Bookmark else Icons.Outlined.BookmarkBorder,
+                        contentDescription = "Filter Saved Posts",
+                        tint = if (uiState.isFilteringBookmarks) IgBlue else Color.White,
                         modifier = Modifier.size(24.dp)
                     )
                 }
@@ -135,7 +153,7 @@ fun HomeFeedScreen(
                 )
             }
 
-            // Empty state when no media exists on device
+            // Empty state when no media matches filter or device storage is empty
             if (uiState.photos.isEmpty()) {
                 item(key = "empty_feed") {
                     Column(
@@ -153,7 +171,11 @@ fun HomeFeedScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = Icons.Outlined.PhotoCamera,
+                                imageVector = when (uiState.activeFilter) {
+                                    HomeFeedFilter.FAVORITES -> Icons.Outlined.FavoriteBorder
+                                    HomeFeedFilter.BOOKMARKED -> Icons.Outlined.BookmarkBorder
+                                    HomeFeedFilter.ALL -> Icons.Outlined.PhotoCamera
+                                },
                                 contentDescription = "No photos",
                                 tint = IgTextSecondary,
                                 modifier = Modifier.size(36.dp)
@@ -161,7 +183,11 @@ fun HomeFeedScreen(
                         }
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = if (uiState.isFilteringFavorites) "No favorite photos yet" else "No photos found on device",
+                            text = when (uiState.activeFilter) {
+                                HomeFeedFilter.FAVORITES -> "No favorite photos yet"
+                                HomeFeedFilter.BOOKMARKED -> "No saved posts yet"
+                                HomeFeedFilter.ALL -> "No photos found on device"
+                            },
                             fontSize = 17.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = IgTextPrimary,
@@ -169,7 +195,11 @@ fun HomeFeedScreen(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = if (uiState.isFilteringFavorites) "Tap the heart on any photo to add it to your favorites." else "Take some photos or download images to your phone storage to see your feed come alive.",
+                            text = when (uiState.activeFilter) {
+                                HomeFeedFilter.FAVORITES -> "Double-tap any photo or tap the heart icon to add it to your favorites."
+                                HomeFeedFilter.BOOKMARKED -> "Tap the bookmark icon on any post to save it to your private collection."
+                                HomeFeedFilter.ALL -> "Take some photos or download images to your phone storage to see your feed come alive."
+                            },
                             fontSize = 13.sp,
                             color = IgTextSecondary,
                             textAlign = TextAlign.Center,
@@ -186,7 +216,10 @@ fun HomeFeedScreen(
                         item = item,
                         onAuthorClick = onPersonClick,
                         onToggleFavorite = { id, current -> viewModel.toggleFavorite(id, current) },
-                        onToggleBookmark = { id, current -> viewModel.toggleBookmark(id, current) }
+                        onToggleBookmark = { id, current -> viewModel.toggleBookmark(id, current) },
+                        allPeople = uiState.people,
+                        onTagPerson = { mediaId, personId -> viewModel.tagPersonInMedia(mediaId, personId) },
+                        onUntagPerson = { mediaId, personId -> viewModel.removePersonFromMedia(mediaId, personId) }
                     )
                     HorizontalDivider(color = IgBorder, thickness = 1.dp)
                 }
@@ -318,8 +351,8 @@ fun StoryOtherItem(
             Box(
                 modifier = Modifier
                     .size(63.dp)
-                .clip(CircleShape)
-                .background(IgSurfacePill),
+                    .clip(CircleShape)
+                    .background(IgSurfacePill),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(

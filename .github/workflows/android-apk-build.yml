@@ -1,4 +1,4 @@
-name: Android APK Build
+name: Android APK Build & Release
 
 on:
   push:
@@ -10,6 +10,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -20,48 +21,52 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: 'cmdline-tools;latest platform-tools'
-
       - name: Accept Android SDK Licenses
-        run: yes | sdkmanager --licenses || true
+        run: |
+          SDKMANAGER=$(find $ANDROID_HOME/cmdline-tools -name sdkmanager | head -n 1)
+          if [ -z "$SDKMANAGER" ]; then
+            SDKMANAGER=$(which sdkmanager || true)
+          fi
+          if [ -n "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --licenses || true
+          fi
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.3.1'
 
-      - name: Ensure debug.keystore exists for CI signing
+      - name: Ensure debug.keystore exists for signing
         run: |
           if [ ! -f "debug.keystore" ]; then
-            keytool -genkeypair -v \
-              -keystore debug.keystore \
-              -storepass android \
-              -alias androiddebugkey \
-              -keypass android \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
-          fi
-
-      - name: Pre-fetch Face Embedding Model
-        run: |
-          mkdir -p app/src/main/assets
-          if [ ! -f "app/src/main/assets/mobilefacenet.tflite" ]; then
-            echo "Attempting to download mobilefacenet.tflite..."
-            curl -L --fail --connect-timeout 10 --max-time 30 \
-              "https://raw.githubusercontent.com/sirius-ai/MobileFaceNet_TF/master/model/mobilefacenet.tflite" \
-              -o app/src/main/assets/mobilefacenet.tflite || true
+            if [ -f "debug.keystore.base64" ]; then
+              base64 -d debug.keystore.base64 > debug.keystore
+            else
+              keytool -genkeypair -v \
+                -keystore debug.keystore \
+                -storepass android \
+                -alias androiddebugkey \
+                -keypass android \
+                -keyalg RSA \
+                -keysize 2048 \
+                -validity 10000 \
+                -dname "CN=Android Debug,O=Android,C=US"
+            fi
           fi
 
       - name: Build Debug APK
         run: gradle assembleDebug --stacktrace
 
-      - name: Upload Debug APK
+      - name: Copy APK to releases folder
+        run: |
+          mkdir -p releases
+          cp app/build/outputs/apk/debug/app-debug.apk releases/InstaGallery-v1.0.apk
+
+      - name: Upload InstaGallery APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: InstaGallery-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: InstaGallery-APK
+          path: |
+            releases/InstaGallery-v1.0.apk
+            app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

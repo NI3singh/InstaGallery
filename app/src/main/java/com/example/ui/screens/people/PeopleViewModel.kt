@@ -12,10 +12,17 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+enum class PeopleSortOrder(val label: String) {
+    MOST_POSTS("Most Posts"),
+    NAME_ASC("Name (A–Z)"),
+    NEWEST("Recently Added")
+}
+
 data class PeopleUiState(
     val people: List<PersonEntity> = emptyList(),
     val filteredPeople: List<PersonEntity> = emptyList(),
     val searchQuery: String = "",
+    val sortOrder: PeopleSortOrder = PeopleSortOrder.MOST_POSTS,
     val isSelectionMode: Boolean = false,
     val selectedPersonIds: Set<Long> = emptySet(),
     val duplicatePair: Pair<PersonEntity, PersonEntity>? = null,
@@ -28,41 +35,57 @@ class PeopleViewModel(application: Application) : AndroidViewModel(application) 
     private val repository = GalleryRepository(application)
 
     private val _searchQuery = MutableStateFlow("")
+    private val _sortOrder = MutableStateFlow(PeopleSortOrder.MOST_POSTS)
     private val _isSelectionMode = MutableStateFlow(false)
     private val _selectedPersonIds = MutableStateFlow<Set<Long>>(emptySet())
+    private val _ignoredDuplicateKeys = MutableStateFlow<Set<String>>(emptySet())
     private val _toastMessage = MutableStateFlow<String?>(null)
 
-    private val selectionState = combine(
+    private val filterAndSelectionState = combine(
+        _searchQuery,
+        _sortOrder,
         _isSelectionMode,
-        _selectedPersonIds
-    ) { isSelecting, selected ->
-        Pair(isSelecting, selected)
+        _selectedPersonIds,
+        _ignoredDuplicateKeys
+    ) { query, sort, isSelecting, selected, ignored ->
+        FilterSelectionTuple(query, sort, isSelecting, selected, ignored)
     }
+
+    private data class FilterSelectionTuple(
+        val query: String,
+        val sort: PeopleSortOrder,
+        val isSelecting: Boolean,
+        val selected: Set<Long>,
+        val ignoredKeys: Set<String>
+    )
 
     val uiState: StateFlow<PeopleUiState> = combine(
         repository.allPeople,
-        _searchQuery,
-        selectionState,
+        filterAndSelectionState,
         repository.unassociatedCount,
         _toastMessage
-    ) { people, query, sel, unassociated, toast ->
-        val isSelecting = sel.first
-        val selected = sel.second
-
-        val filtered = if (query.isBlank()) {
+    ) { people, state, unassociated, toast ->
+        val searched = if (state.query.isBlank()) {
             people
         } else {
-            people.filter { it.name.contains(query, ignoreCase = true) }
+            people.filter { it.name.contains(state.query, ignoreCase = true) }
         }
 
-        val duplicate = repository.findPossibleDuplicatePair(people)
+        val sorted = when (state.sort) {
+            PeopleSortOrder.MOST_POSTS -> searched.sortedByDescending { it.faceCount }
+            PeopleSortOrder.NAME_ASC -> searched.sortedBy { it.name.lowercase() }
+            PeopleSortOrder.NEWEST -> searched.sortedByDescending { it.createdAt }
+        }
+
+        val duplicate = repository.findPossibleDuplicatePair(people, state.ignoredKeys)
 
         PeopleUiState(
             people = people,
-            filteredPeople = filtered,
-            searchQuery = query,
-            isSelectionMode = isSelecting,
-            selectedPersonIds = selected,
+            filteredPeople = sorted,
+            searchQuery = state.query,
+            sortOrder = state.sort,
+            isSelectionMode = state.isSelecting,
+            selectedPersonIds = state.selected,
             duplicatePair = duplicate,
             unassociatedCount = unassociated,
             toastMessage = toast
@@ -75,6 +98,16 @@ class PeopleViewModel(application: Application) : AndroidViewModel(application) 
 
     fun onSearchQueryChange(query: String) {
         _searchQuery.value = query
+    }
+
+    fun cycleSortOrder() {
+        val next = when (_sortOrder.value) {
+            PeopleSortOrder.MOST_POSTS -> PeopleSortOrder.NAME_ASC
+            PeopleSortOrder.NAME_ASC -> PeopleSortOrder.NEWEST
+            PeopleSortOrder.NEWEST -> PeopleSortOrder.MOST_POSTS
+        }
+        _sortOrder.value = next
+        _toastMessage.value = "Sorted by: ${next.label}"
     }
 
     fun toggleSelectionMode() {
@@ -95,12 +128,19 @@ class PeopleViewModel(application: Application) : AndroidViewModel(application) 
         _selectedPersonIds.value = current
         if (current.isNotEmpty() && !_isSelectionMode.value) {
             _isSelectionMode.value = true
+        } else if (current.isEmpty() && _isSelectionMode.value) {
+            _isSelectionMode.value = false
         }
     }
 
     fun reviewDuplicate(pair: Pair<PersonEntity, PersonEntity>) {
         _isSelectionMode.value = true
         _selectedPersonIds.value = setOf(pair.first.personId, pair.second.personId)
+    }
+
+    fun ignoreDuplicatePair(pair: Pair<PersonEntity, PersonEntity>) {
+        val key = repository.pairKey(pair.first.personId, pair.second.personId)
+        _ignoredDuplicateKeys.value = _ignoredDuplicateKeys.value + key
     }
 
     fun mergeSelectedPeople(targetName: String) {

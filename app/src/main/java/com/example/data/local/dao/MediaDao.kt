@@ -30,6 +30,10 @@ interface MediaDao {
     @Query("SELECT * FROM media_items WHERE isVideo = 0 AND isFavorite = 1 ORDER BY dateAddedSeconds DESC")
     fun getFavoritePhotosWithAuthors(): Flow<List<MediaWithAuthors>>
 
+    @Transaction
+    @Query("SELECT * FROM media_items WHERE isVideo = 0 AND isBookmarked = 1 ORDER BY dateAddedSeconds DESC")
+    fun getBookmarkedPhotosWithAuthors(): Flow<List<MediaWithAuthors>>
+
     @RewriteQueriesToDropUnusedColumns
     @Transaction
     @Query("""
@@ -89,6 +93,18 @@ interface MediaDao {
         WHERE mediaId NOT IN (SELECT DISTINCT mediaId FROM media_person_cross_ref)
     """)
     fun getUnassociatedCount(): Flow<Int>
+
+    @Query("""
+        SELECT COUNT(*) FROM media_items 
+        WHERE mediaId NOT IN (SELECT DISTINCT mediaId FROM media_person_cross_ref) AND isVideo = 0
+    """)
+    fun getUnassociatedPhotoCount(): Flow<Int>
+
+    @Query("""
+        SELECT COUNT(*) FROM media_items 
+        WHERE mediaId NOT IN (SELECT DISTINCT mediaId FROM media_person_cross_ref) AND isVideo = 1
+    """)
+    fun getUnassociatedVideoCount(): Flow<Int>
 
     @Query("SELECT * FROM media_items WHERE isProcessedForFaces = 0 ORDER BY isVideo ASC, dateAddedSeconds DESC LIMIT :limit")
     suspend fun getUnindexedMedia(limit: Int = 25): List<MediaEntity>

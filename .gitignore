@@ -16,3 +16,8 @@
 local.properties
 .env
 debug.keystore
+.build-outputs
+
+# Explicitly allow prebuilt downloadable APKs in /releases for direct GitHub download
+!/releases/
+!/releases/*.apk

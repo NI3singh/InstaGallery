@@ -37,6 +37,9 @@ interface PersonDao {
     @Query("UPDATE people SET avatarCropPath = :cropPath WHERE personId = :personId")
     suspend fun updateAvatar(personId: Long, cropPath: String)
 
+    @Query("UPDATE people SET faceCount = :count WHERE personId = :personId")
+    suspend fun updatePersonFaceCount(personId: Long, count: Int)
+
     @Query("DELETE FROM people WHERE personId = :personId")
     suspend fun deletePerson(personId: Long)
 
@@ -63,6 +66,13 @@ interface PersonDao {
     """)
     fun getTotalCountForPerson(personId: Long): Flow<Int>
 
+    @Query("""
+        SELECT COUNT(DISTINCT mediaId) 
+        FROM media_person_cross_ref 
+        WHERE personId = :personId
+    """)
+    suspend fun countDistinctMediaForPerson(personId: Long): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertFace(face: FaceEntity): Long
 
@@ -71,6 +81,27 @@ interface PersonDao {
 
     @Query("SELECT * FROM detected_faces WHERE personId = :personId ORDER BY faceId DESC")
     suspend fun getFacesForPersonSync(personId: Long): List<FaceEntity>
+
+    @Query("SELECT * FROM detected_faces WHERE mediaId = :mediaId")
+    fun getFacesForMedia(mediaId: Long): Flow<List<FaceEntity>>
+
+    @Query("DELETE FROM detected_faces WHERE mediaId = :mediaId AND personId = :personId")
+    suspend fun deleteFacesForMediaAndPerson(mediaId: Long, personId: Long)
+
+    @Transaction
+    suspend fun removeMediaFromPersonAndSyncCount(mediaId: Long, personId: Long) {
+        deleteCrossRef(mediaId, personId)
+        deleteFacesForMediaAndPerson(mediaId, personId)
+        val remaining = countDistinctMediaForPerson(personId)
+        updatePersonFaceCount(personId, remaining)
+    }
+
+    @Transaction
+    suspend fun tagPersonInMediaAndSyncCount(mediaId: Long, personId: Long) {
+        insertCrossRefIgnore(mediaId, personId)
+        val total = countDistinctMediaForPerson(personId)
+        updatePersonFaceCount(personId, total)
+    }
 
     @Transaction
     suspend fun mergePeople(sourcePersonIds: List<Long>, targetPersonId: Long, newName: String) {
@@ -93,12 +124,12 @@ interface PersonDao {
             deletePerson(sourceId)
         }
 
-        // Update target person name and face count
-        val totalFaces = countFacesForPerson(targetPersonId)
+        // Update target person name and distinct media post count
+        val totalMedia = countDistinctMediaForPerson(targetPersonId).coerceAtLeast(1)
         updatePerson(
             target.copy(
                 name = newName.ifBlank { target.name },
-                faceCount = totalFaces
+                faceCount = totalMedia
             )
         )
     }
@@ -111,6 +142,9 @@ interface PersonDao {
 
     @Query("INSERT OR IGNORE INTO media_person_cross_ref (mediaId, personId) VALUES (:mediaId, :personId)")
     suspend fun insertCrossRefIgnore(mediaId: Long, personId: Long)
+
+    @Query("DELETE FROM media_person_cross_ref WHERE mediaId = :mediaId AND personId = :personId")
+    suspend fun deleteCrossRef(mediaId: Long, personId: Long)
 
     @Query("DELETE FROM media_person_cross_ref WHERE personId = :personId")
     suspend fun deleteCrossRefsForPerson(personId: Long)

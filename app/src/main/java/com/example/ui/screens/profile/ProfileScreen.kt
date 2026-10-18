@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.outlined.AddAPhoto
@@ -35,8 +36,8 @@ import androidx.compose.material.icons.outlined.FolderShared
 import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.GroupAdd
 import androidx.compose.material.icons.outlined.Movie
-import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AlertDialog
@@ -65,7 +66,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -89,6 +89,7 @@ fun ProfileScreen(
     viewModel: ProfileViewModel,
     onBackClick: () -> Unit,
     onMediaClick: (Long) -> Unit,
+    onMergedToPerson: (Long) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -161,13 +162,18 @@ fun ProfileScreen(
             }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = {}, modifier = Modifier.size(36.dp)) {
-                    Icon(
-                        imageVector = Icons.Outlined.Notifications,
-                        contentDescription = "Notifications",
-                        tint = IgTextPrimary,
-                        modifier = Modifier.size(22.dp)
-                    )
+                if (!isOther) {
+                    IconButton(
+                        onClick = { showEditNameDialog = true },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Edit,
+                            contentDescription = "Edit Profile Name",
+                            tint = IgTextPrimary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
                 IconButton(
                     onClick = { showActionSheet = true },
@@ -175,7 +181,7 @@ fun ProfileScreen(
                 ) {
                     Icon(
                         imageVector = Icons.Default.MoreHoriz,
-                        contentDescription = "More",
+                        contentDescription = "More options",
                         tint = IgTextPrimary,
                         modifier = Modifier.size(24.dp)
                     )
@@ -191,12 +197,15 @@ fun ProfileScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // 86.dp Avatar with gradient ring
+            // 86.dp Avatar with gradient ring (tappable to change avatar crop)
             Box(
                 modifier = Modifier
                     .size(86.dp)
                     .clip(CircleShape)
-                    .background(IgStoryGradient),
+                    .background(IgStoryGradient)
+                    .clickable(enabled = !isOther && uiState.faces.isNotEmpty()) {
+                        showAvatarPickerSheet = true
+                    },
                 contentAlignment = Alignment.Center
             ) {
                 Box(
@@ -250,9 +259,20 @@ fun ProfileScreen(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                StatColumn(number = uiState.photoCount.toString(), label = "Posts")
-                StatColumn(number = uiState.reelCount.toString(), label = "Reels")
-                StatColumn(number = uiState.totalCount.toString(), label = "Total")
+                StatColumn(
+                    number = uiState.photoCount.toString(),
+                    label = "Posts",
+                    onClick = { viewModel.selectTab(0) }
+                )
+                StatColumn(
+                    number = uiState.reelCount.toString(),
+                    label = "Reels",
+                    onClick = { viewModel.selectTab(1) }
+                )
+                StatColumn(
+                    number = uiState.totalCount.toString(),
+                    label = "Total"
+                )
             }
         }
 
@@ -444,68 +464,127 @@ fun ProfileScreen(
 
         HorizontalDivider(color = IgBorderNav, thickness = 0.5.dp)
 
-        // 3-Column Square Media Grid
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(3),
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-            modifier = Modifier
-                .fillMaxSize()
-                .testTag("profile_media_grid")
-        ) {
-            items(
-                items = activeMediaList,
-                key = { it.media.mediaId }
-            ) { item ->
-                Box(
-                    modifier = Modifier
-                        .aspectRatio(1f)
-                        .background(IgElevated)
-                        .combinedClickable(
-                            onClick = { onMediaClick(item.media.mediaId) },
-                            onLongClick = {
-                                selectedMediaForAction = item
-                                showActionSheet = true
-                            }
-                        )
+        // 3-Column Square Media Grid or Empty State
+        if (activeMediaList.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(32.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
                 ) {
-                    AsyncImage(
-                        model = item.media.uri,
-                        contentDescription = item.media.displayName,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-
-                    // Video overlay badge
-                    if (item.media.isVideo) {
+                    Box(
+                        modifier = Modifier
+                            .size(64.dp)
+                            .clip(CircleShape)
+                            .background(IgSurfacePill),
+                        contentAlignment = Alignment.Center
+                    ) {
                         Icon(
-                            imageVector = Icons.Outlined.Movie,
-                            contentDescription = "Video",
-                            tint = Color.White,
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(6.dp)
-                                .size(16.dp)
+                            imageVector = if (uiState.selectedTab == 0) Icons.Outlined.PhotoCamera else Icons.Outlined.Movie,
+                            contentDescription = "No media",
+                            tint = IgTextSecondary,
+                            modifier = Modifier.size(30.dp)
                         )
-                        Row(
-                            modifier = Modifier
-                                .align(Alignment.BottomStart)
-                                .padding(6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(2.dp)
-                        ) {
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = if (uiState.selectedTab == 0) "No Photos Yet" else "No Reels Yet",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = IgTextPrimary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = if (uiState.selectedTab == 0) {
+                            "Photos featuring @$profileName will appear in this grid."
+                        } else {
+                            "Videos featuring @$profileName will appear here."
+                        },
+                        fontSize = 12.5.sp,
+                        color = IgTextSecondary,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(3),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag("profile_media_grid")
+            ) {
+                items(
+                    items = activeMediaList,
+                    key = { it.media.mediaId }
+                ) { item ->
+                    Box(
+                        modifier = Modifier
+                            .aspectRatio(1f)
+                            .background(IgElevated)
+                            .combinedClickable(
+                                onClick = { onMediaClick(item.media.mediaId) },
+                                onLongClick = {
+                                    selectedMediaForAction = item
+                                    showActionSheet = true
+                                }
+                            )
+                    ) {
+                        AsyncImage(
+                            model = item.media.uri,
+                            contentDescription = item.media.displayName,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+
+                        if (item.media.isFavorite) {
                             Icon(
-                                imageVector = Icons.Outlined.PlayArrow,
-                                contentDescription = null,
+                                imageVector = Icons.Default.Favorite,
+                                contentDescription = "Favorite",
+                                tint = IgRed,
+                                modifier = Modifier
+                                    .align(Alignment.TopStart)
+                                    .padding(6.dp)
+                                    .size(14.dp)
+                            )
+                        }
+
+                        // Video overlay badge
+                        if (item.media.isVideo) {
+                            Icon(
+                                imageVector = Icons.Outlined.Movie,
+                                contentDescription = "Video",
                                 tint = Color.White,
-                                modifier = Modifier.size(12.dp)
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(6.dp)
+                                    .size(16.dp)
                             )
-                            val durationSec = (item.media.durationMs ?: 0L) / 1000L
-                            Text(
-                                text = "${durationSec}s",
-                                fontSize = 11.sp,
-                                color = Color.White
-                            )
+                            Row(
+                                modifier = Modifier
+                                    .align(Alignment.BottomStart)
+                                    .padding(6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.PlayArrow,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                val durationSec = (item.media.durationMs ?: 0L) / 1000L
+                                Text(
+                                    text = "${durationSec}s",
+                                    fontSize = 11.sp,
+                                    color = Color.White
+                                )
+                            }
                         }
                     }
                 }
@@ -593,7 +672,9 @@ fun ProfileScreen(
                                     .clip(RoundedCornerShape(8.dp))
                                     .clickable {
                                         showMergePickerSheet = false
-                                        viewModel.mergeWithPerson(other.personId)
+                                        viewModel.mergeWithPerson(other.personId) { mergedTargetId ->
+                                            onMergedToPerson(mergedTargetId)
+                                        }
                                     }
                                     .padding(8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -844,8 +925,15 @@ fun ProfileScreen(
 }
 
 @Composable
-fun StatColumn(number: String, label: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+fun StatColumn(
+    number: String,
+    label: String,
+    onClick: (() -> Unit)? = null
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier
+    ) {
         Text(
             text = number,
             fontSize = 18.sp,

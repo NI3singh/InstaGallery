@@ -5,9 +5,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,8 +31,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.AutoFixHigh
-import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Person
@@ -41,7 +43,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
@@ -71,13 +72,11 @@ import com.example.data.local.entity.PersonEntity
 import com.example.ui.theme.IgAmber
 import com.example.ui.theme.IgBlack
 import com.example.ui.theme.IgBlue
-import com.example.ui.theme.IgBorder
 import com.example.ui.theme.IgBorderNav
 import com.example.ui.theme.IgElevated
 import com.example.ui.theme.IgStoryGradient
 import com.example.ui.theme.IgSurfaceHigh
 import com.example.ui.theme.IgSurfaceModal
-import com.example.ui.theme.IgSurfacePill
 import com.example.ui.theme.IgTextPrimary
 import com.example.ui.theme.IgTextSecondary
 import kotlinx.coroutines.delay
@@ -95,7 +94,7 @@ fun PeopleDirectoryScreen(
     // Auto-dismiss toast
     LaunchedEffect(uiState.toastMessage) {
         if (uiState.toastMessage != null) {
-            delay(4000)
+            delay(3500)
             viewModel.dismissToast()
         }
     }
@@ -198,11 +197,23 @@ fun PeopleDirectoryScreen(
                         },
                         modifier = Modifier.weight(1f)
                     )
+                    if (uiState.searchQuery.isNotEmpty()) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Clear search",
+                            tint = IgTextSecondary,
+                            modifier = Modifier
+                                .size(16.dp)
+                                .clickable { viewModel.onSearchQueryChange("") }
+                        )
+                    }
                     Icon(
                         imageVector = Icons.Outlined.Tune,
-                        contentDescription = "Filter",
+                        contentDescription = "Sort people (${uiState.sortOrder.label})",
                         tint = IgTextSecondary,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier
+                            .size(18.dp)
+                            .clickable { viewModel.cycleSortOrder() }
                     )
                 }
             }
@@ -221,7 +232,8 @@ fun PeopleDirectoryScreen(
                     item(span = { GridItemSpan(3) }) {
                         DuplicateSuggestionBanner(
                             pair = dup,
-                            onReview = { viewModel.reviewDuplicate(dup) }
+                            onReview = { viewModel.reviewDuplicate(dup) },
+                            onDismiss = { viewModel.ignoreDuplicatePair(dup) }
                         )
                     }
                 }
@@ -242,6 +254,9 @@ fun PeopleDirectoryScreen(
                             } else {
                                 onPersonClick(person.personId)
                             }
+                        },
+                        onLongClick = {
+                            viewModel.togglePersonSelection(person.personId)
                         }
                     )
                 }
@@ -408,7 +423,8 @@ fun PeopleDirectoryScreen(
 @Composable
 fun DuplicateSuggestionBanner(
     pair: Pair<PersonEntity, PersonEntity>,
-    onReview: () -> Unit
+    onReview: () -> Unit,
+    onDismiss: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -416,7 +432,7 @@ fun DuplicateSuggestionBanner(
             .clip(RoundedCornerShape(50))
             .background(Color(0xFF1F1F1F))
             .border(1.dp, IgBorderNav, RoundedCornerShape(50))
-            .padding(12.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
@@ -456,34 +472,53 @@ fun DuplicateSuggestionBanner(
             }
         }
 
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(50))
-                .background(IgSurfaceModal)
-                .clickable(onClick = onReview)
-                .padding(horizontal = 12.dp, vertical = 6.dp)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Text(
-                text = "Review",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = IgBlue
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(IgSurfaceModal)
+                    .clickable(onClick = onReview)
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                Text(
+                    text = "Review",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = IgBlue
+                )
+            }
+
+            Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = "Dismiss duplicate suggestion",
+                tint = IgTextSecondary,
+                modifier = Modifier
+                    .size(18.dp)
+                    .clickable(onClick = onDismiss)
             )
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PersonGridItem(
     person: PersonEntity,
     isSelectionMode: Boolean,
     isSelected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = {}
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
             .testTag("person_grid_item_${person.personId}")
     ) {
         Box(

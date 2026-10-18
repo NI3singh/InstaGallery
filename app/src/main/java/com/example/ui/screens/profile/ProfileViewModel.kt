@@ -23,6 +23,7 @@ data class ProfileUiState(
     val reelCount: Int = 0,
     val totalCount: Int = 0,
     val faces: List<FaceEntity> = emptyList(),
+    val allPeople: List<PersonEntity> = emptyList(),
     val otherPeople: List<PersonEntity> = emptyList(),
     val selectedTab: Int = 0 // 0 = Photos grid, 1 = Reels grid
 )
@@ -72,6 +73,7 @@ class ProfileViewModel(
             reelCount = counts.reels,
             totalCount = counts.total,
             faces = faces,
+            allPeople = allPeople,
             otherPeople = candidateOthers,
             selectedTab = tab
         )
@@ -99,17 +101,37 @@ class ProfileViewModel(
         }
     }
 
-    fun removePhotoFromPerson(mediaId: Long) {
+    fun removePhotoFromPerson(mediaId: Long, targetPersonId: Long = personId) {
+        if (targetPersonId == -1L) return
         viewModelScope.launch {
-            repository.removeMediaFromPerson(mediaId, personId)
+            repository.removeMediaFromPerson(mediaId, targetPersonId)
         }
     }
 
-    fun mergeWithPerson(targetPersonId: Long) {
+    fun tagPersonInMedia(mediaId: Long, targetPersonId: Long) {
+        viewModelScope.launch {
+            repository.tagPersonInMedia(mediaId, targetPersonId)
+        }
+    }
+
+    fun toggleFavorite(mediaId: Long, current: Boolean) {
+        viewModelScope.launch {
+            repository.toggleFavorite(mediaId, current)
+        }
+    }
+
+    fun toggleBookmark(mediaId: Long, current: Boolean) {
+        viewModelScope.launch {
+            repository.toggleBookmarked(mediaId, current)
+        }
+    }
+
+    fun mergeWithPerson(targetPersonId: Long, onComplete: (Long) -> Unit = {}) {
         if (personId == -1L || targetPersonId == personId) return
         val currentPerson = uiState.value.person ?: return
         viewModelScope.launch {
             repository.mergePeople(listOf(personId), targetPersonId, currentPerson.name)
+            onComplete(targetPersonId)
         }
     }
 }

@@ -9,7 +9,6 @@ import com.example.data.local.entity.MediaWithAuthors
 import com.example.data.local.entity.PersonEntity
 import com.example.data.media.MediaStoreScanner
 import com.example.ml.FaceClusterManager
-import com.example.ml.FaceIndexingWorker
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -25,6 +24,7 @@ class GalleryRepository(private val context: Context) {
     val photosWithAuthors: Flow<List<MediaWithAuthors>> = mediaDao.getPhotosWithAuthors()
     val videosWithAuthors: Flow<List<MediaWithAuthors>> = mediaDao.getVideosWithAuthors()
     val favoritePhotosWithAuthors: Flow<List<MediaWithAuthors>> = mediaDao.getFavoritePhotosWithAuthors()
+    val bookmarkedPhotosWithAuthors: Flow<List<MediaWithAuthors>> = mediaDao.getBookmarkedPhotosWithAuthors()
     val allPeople: Flow<List<PersonEntity>> = personDao.getAllPeople()
     val unindexedCount: Flow<Int> = mediaDao.getUnindexedCount()
     val totalMediaCount: Flow<Int> = mediaDao.getTotalMediaCount()
@@ -61,7 +61,7 @@ class GalleryRepository(private val context: Context) {
 
     fun getPhotoCountForPerson(personId: Long): Flow<Int> {
         return if (personId == -1L) {
-            mediaDao.getUnassociatedCount()
+            mediaDao.getUnassociatedPhotoCount()
         } else {
             personDao.getPhotoCountForPerson(personId)
         }
@@ -69,7 +69,7 @@ class GalleryRepository(private val context: Context) {
 
     fun getReelCountForPerson(personId: Long): Flow<Int> {
         return if (personId == -1L) {
-            mediaDao.getUnassociatedVideos().map { it.size }
+            mediaDao.getUnassociatedVideoCount()
         } else {
             personDao.getReelCountForPerson(personId)
         }
@@ -89,6 +89,10 @@ class GalleryRepository(private val context: Context) {
         mediaDao.setFavorite(mediaId, !currentFavorite)
     }
 
+    suspend fun setFavorite(mediaId: Long, isFavorite: Boolean) {
+        mediaDao.setFavorite(mediaId, isFavorite)
+    }
+
     suspend fun toggleBookmarked(mediaId: Long, currentBookmarked: Boolean) {
         mediaDao.setBookmarked(mediaId, !currentBookmarked)
     }
@@ -102,14 +106,23 @@ class GalleryRepository(private val context: Context) {
     }
 
     suspend fun removeMediaFromPerson(mediaId: Long, personId: Long) {
-        mediaDao.removeMediaFromPerson(mediaId, personId)
+        personDao.removeMediaFromPersonAndSyncCount(mediaId, personId)
+    }
+
+    suspend fun tagPersonInMedia(mediaId: Long, personId: Long) {
+        personDao.tagPersonInMediaAndSyncCount(mediaId, personId)
     }
 
     suspend fun mergePeople(sourceIds: List<Long>, targetId: Long, newName: String) {
         personDao.mergePeople(sourceIds, targetId, newName)
     }
 
-    fun findPossibleDuplicatePair(people: List<PersonEntity>): Pair<PersonEntity, PersonEntity>? {
-        return clusterManager.findPossibleDuplicatePair(people)
+    fun findPossibleDuplicatePair(
+        people: List<PersonEntity>,
+        ignoredPairKeys: Set<String> = emptySet()
+    ): Pair<PersonEntity, PersonEntity>? {
+        return clusterManager.findPossibleDuplicatePair(people, ignoredPairKeys)
     }
+
+    fun pairKey(id1: Long, id2: Long): String = clusterManager.pairKey(id1, id2)
 }

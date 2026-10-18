@@ -26,6 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.entity.MediaWithAuthors
+import com.example.data.local.entity.PersonEntity
 import com.example.ui.components.PostCard
 import com.example.ui.theme.IgBlack
 import com.example.ui.theme.IgBorder
@@ -39,6 +40,9 @@ fun PostDetailScreen(
     onPersonClick: (Long) -> Unit,
     onToggleFavorite: (Long, Boolean) -> Unit,
     onToggleBookmark: (Long, Boolean) -> Unit,
+    allPeople: List<PersonEntity> = emptyList(),
+    onTagPerson: ((Long, Long) -> Unit)? = null,
+    onUntagPerson: ((Long, Long) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val initialIndex = remember(mediaList, initialMediaId) {
@@ -96,7 +100,10 @@ fun PostDetailScreen(
                     item = item,
                     onAuthorClick = onPersonClick,
                     onToggleFavorite = onToggleFavorite,
-                    onToggleBookmark = onToggleBookmark
+                    onToggleBookmark = onToggleBookmark,
+                    allPeople = allPeople,
+                    onTagPerson = onTagPerson,
+                    onUntagPerson = onUntagPerson
                 )
                 HorizontalDivider(color = IgBorder, thickness = 1.dp)
             }

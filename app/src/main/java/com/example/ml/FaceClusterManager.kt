@@ -15,6 +15,7 @@ import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.UUID
+import kotlin.math.min
 import kotlin.math.sqrt
 
 class FaceClusterManager(
@@ -23,9 +24,8 @@ class FaceClusterManager(
     private val mediaDao: MediaDao
 ) {
     companion object {
-        const val MATCH_THRESHOLD = 0.68f
-        const val DUPLICATE_MIN_THRESHOLD = 0.55f
-        const val DUPLICATE_MAX_THRESHOLD = 0.679f
+        const val MATCH_THRESHOLD = 0.72f
+        const val DUPLICATE_MIN_THRESHOLD = 0.56f
     }
 
     private data class CachedCluster(
@@ -81,13 +81,14 @@ class FaceClusterManager(
         val box = face.boundingBox
 
         if (bestCluster != null && maxSim >= MATCH_THRESHOLD) {
-            // Match found! Update centroid
+            // Match found: update running centroid
             val oldCentroid = bestCluster.centroid
-            val count = bestCluster.faceCount
+            val count = bestCluster.faceCount.coerceAtLeast(1)
             val newCount = count + 1
 
-            val updatedCentroid = FloatArray(embedding.size)
-            for (i in embedding.indices) {
+            val dim = min(embedding.size, oldCentroid.size)
+            val updatedCentroid = FloatArray(dim)
+            for (i in 0 until dim) {
                 updatedCentroid[i] = (oldCentroid[i] * count + embedding[i]) / newCount
             }
             val normalizedCentroid = l2Normalize(updatedCentroid)
@@ -109,22 +110,34 @@ class FaceClusterManager(
             personDao.insertFace(faceEntity)
             mediaDao.insertMediaPersonCrossRef(MediaPersonCrossRef(mediaId, bestCluster.personId))
 
-            // Update in DB
+            // Fetch latest name/avatar from DB in case user renamed while worker was running
+            val latestInDb = personDao.getPersonByIdSync(bestCluster.personId)
+            val currentName = latestInDb?.name ?: bestCluster.name
+            val currentAvatar = latestInDb?.avatarCropPath?.ifBlank { cropPath } ?: bestCluster.avatarCropPath
+            val distinctMediaCount = personDao.countDistinctMediaForPerson(bestCluster.personId)
+
+            bestCluster.name = currentName
+            bestCluster.avatarCropPath = currentAvatar
+            bestCluster.faceCount = distinctMediaCount.coerceAtLeast(1)
+
             personDao.updatePerson(
                 PersonEntity(
                     personId = bestCluster.personId,
-                    name = bestCluster.name,
-                    avatarCropPath = bestCluster.avatarCropPath,
+                    name = currentName,
+                    avatarCropPath = currentAvatar,
                     centroidEmbeddingBlob = floatArrayToBlob(normalizedCentroid),
-                    faceCount = newCount
+                    faceCount = bestCluster.faceCount
                 )
             )
 
             bestCluster.personId
         } else {
-            // New person detected!
+            // New person cluster
             val cropPath = saveFaceCrop(cropBitmap)
-            val nextNumber = clusterCache.size + 1
+            val maxExistingNumber = clusterCache.mapNotNull {
+                it.name.removePrefix("Person ").trim().toIntOrNull()
+            }.maxOrNull() ?: clusterCache.size
+            val nextNumber = maxExistingNumber + 1
             val newPersonName = "Person $nextNumber"
 
             val newPerson = PersonEntity(
@@ -166,10 +179,9 @@ class FaceClusterManager(
         val cropsDir = File(context.filesDir, "face_crops").apply { mkdirs() }
         val file = File(cropsDir, "face_${UUID.randomUUID()}.jpg")
 
-        // Scale to 150x150
-        val scaled = Bitmap.createScaledBitmap(cropBitmap, 150, 150, true)
+        val scaled = Bitmap.createScaledBitmap(cropBitmap, 160, 160, true)
         FileOutputStream(file).use { out ->
-            scaled.compress(Bitmap.CompressFormat.JPEG, 90, out)
+            scaled.compress(Bitmap.CompressFormat.JPEG, 92, out)
         }
         if (scaled != cropBitmap) {
             scaled.recycle()
@@ -177,26 +189,45 @@ class FaceClusterManager(
         return file.absolutePath
     }
 
-    fun findPossibleDuplicatePair(people: List<PersonEntity>): Pair<PersonEntity, PersonEntity>? {
+    /**
+     * Finds the highest-similarity pair of people that may be duplicates of the same individual,
+     * excluding any pairs the user has already dismissed in this session.
+     */
+    fun findPossibleDuplicatePair(
+        people: List<PersonEntity>,
+        ignoredPairKeys: Set<String> = emptySet()
+    ): Pair<PersonEntity, PersonEntity>? {
         if (people.size < 2) return null
+
+        var bestPair: Pair<PersonEntity, PersonEntity>? = null
+        var bestSim = -1f
 
         for (i in 0 until people.size) {
             val p1 = people[i]
             val emb1 = blobToFloatArray(p1.centroidEmbeddingBlob)
             for (j in i + 1 until people.size) {
                 val p2 = people[j]
+                val key = pairKey(p1.personId, p2.personId)
+                if (ignoredPairKeys.contains(key)) continue
+
                 val emb2 = blobToFloatArray(p2.centroidEmbeddingBlob)
                 val sim = cosineSimilarity(emb1, emb2)
-                if (sim in DUPLICATE_MIN_THRESHOLD..DUPLICATE_MAX_THRESHOLD) {
-                    return Pair(p1, p2)
+                if (sim >= DUPLICATE_MIN_THRESHOLD && sim > bestSim) {
+                    bestSim = sim
+                    bestPair = Pair(p1, p2)
                 }
             }
         }
-        return null
+        return bestPair
+    }
+
+    fun pairKey(id1: Long, id2: Long): String {
+        return if (id1 < id2) "${id1}_${id2}" else "${id2}_${id1}"
     }
 
     private fun cosineSimilarity(v1: FloatArray, v2: FloatArray): Float {
-        val len = kotlin.math.min(v1.size, v2.size)
+        val len = min(v1.size, v2.size)
+        if (len == 0) return 0f
         var dot = 0f
         for (i in 0 until len) {
             dot += v1[i] * v2[i]

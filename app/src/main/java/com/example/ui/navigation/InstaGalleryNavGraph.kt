@@ -1,6 +1,5 @@
 package com.example.ui.navigation
 
-import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -27,6 +26,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,8 +58,6 @@ import com.example.ui.screens.reels.ReelsScreen
 import com.example.ui.screens.reels.ReelsViewModel
 import com.example.ui.theme.IgBlack
 import com.example.ui.theme.IgBorderNav
-import com.example.ui.theme.IgSurfacePill
-import com.example.ui.theme.IgTextPrimary
 import com.example.ui.theme.IgTextSecondary
 import java.io.File
 
@@ -72,7 +70,7 @@ fun InstaGalleryNavGraph(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
-    val repository = GalleryRepository(context)
+    val repository = remember(context) { GalleryRepository(context) }
     val allPeople by repository.allPeople.collectAsStateWithLifecycle(initialValue = emptyList())
     val topPersonAvatar = allPeople.firstOrNull()?.avatarCropPath ?: ""
 
@@ -171,6 +169,11 @@ fun InstaGalleryNavGraph(
                     onBackClick = { navController.popBackStack() },
                     onMediaClick = { mediaId ->
                         navController.navigate(Screen.PostDetail.createRoute(personId, mediaId))
+                    },
+                    onMergedToPerson = { mergedPersonId ->
+                        navController.navigate(Screen.Profile.createRoute(mergedPersonId)) {
+                            popUpTo(Screen.Profile.route) { inclusive = true }
+                        }
                     }
                 )
             }
@@ -198,17 +201,27 @@ fun InstaGalleryNavGraph(
                 )
 
                 val uiState by profileViewModel.uiState.collectAsStateWithLifecycle()
-                val activeList = if (uiState.selectedTab == 0) uiState.photos else uiState.videos
+                val combinedMedia = remember(uiState.photos, uiState.videos, initialMediaId) {
+                    val isInitialVideo = uiState.videos.any { it.media.mediaId == initialMediaId }
+                    if (isInitialVideo) uiState.videos else uiState.photos
+                }
 
                 PostDetailScreen(
-                    mediaList = activeList,
+                    mediaList = combinedMedia,
                     initialMediaId = initialMediaId,
                     onBackClick = { navController.popBackStack() },
                     onPersonClick = { clickedPersonId ->
                         navController.navigate(Screen.Profile.createRoute(clickedPersonId))
                     },
-                    onToggleFavorite = { id, _ -> },
-                    onToggleBookmark = { id, _ -> }
+                    onToggleFavorite = { id, current -> profileViewModel.toggleFavorite(id, current) },
+                    onToggleBookmark = { id, current -> profileViewModel.toggleBookmark(id, current) },
+                    allPeople = uiState.allPeople,
+                    onTagPerson = { mediaId, targetPersonId ->
+                        profileViewModel.tagPersonInMedia(mediaId, targetPersonId)
+                    },
+                    onUntagPerson = { mediaId, targetPersonId ->
+                        profileViewModel.removePhotoFromPerson(mediaId, targetPersonId)
+                    }
                 )
             }
         }

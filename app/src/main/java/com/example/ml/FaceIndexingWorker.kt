@@ -33,7 +33,16 @@ class FaceIndexingWorker(
         try {
             var processedCount = 0
             val totalUnindexed = mediaDao.getUnindexedCount().firstOrNull() ?: 0
-            var remainingTotal = totalUnindexed
+            val remainingTotal = totalUnindexed
+
+            if (remainingTotal > 0) {
+                setProgress(
+                    workDataOf(
+                        PROGRESS_PROCESSED to 0,
+                        PROGRESS_TOTAL to remainingTotal
+                    )
+                )
+            }
 
             while (!isStopped) {
                 val unindexedBatch = mediaDao.getUnindexedMedia(limit = 25)
@@ -58,7 +67,7 @@ class FaceIndexingWorker(
                                 for (face in detectedFaces) {
                                     val crop = detectorProcessor.cropFaceBitmap(bitmap, face)
                                     if (crop != null) {
-                                        val embedding = embeddingExtractor.extractEmbedding(crop)
+                                        val embedding = embeddingExtractor.extractEmbedding(crop, face)
                                         clusterManager.processFace(
                                             mediaId = media.mediaId,
                                             face = face,
@@ -81,7 +90,6 @@ class FaceIndexingWorker(
                         )
                     } catch (e: Exception) {
                         Log.e(TAG, "Error processing media ${media.mediaId}", e)
-                        // Mark processed to prevent infinite loops
                         mediaDao.updateMediaProcessed(media.mediaId, isProcessed = true, hasFaces = false)
                     }
 
@@ -89,7 +97,7 @@ class FaceIndexingWorker(
                     setProgress(
                         workDataOf(
                             PROGRESS_PROCESSED to processedCount,
-                            PROGRESS_TOTAL to remainingTotal
+                            PROGRESS_TOTAL to remainingTotal.coerceAtLeast(processedCount)
                         )
                     )
                 }

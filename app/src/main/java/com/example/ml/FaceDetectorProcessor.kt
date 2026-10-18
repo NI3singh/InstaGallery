@@ -15,22 +15,24 @@ import com.google.mlkit.vision.face.FaceDetectorOptions
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 
 class FaceDetectorProcessor(private val context: Context) {
 
     companion object {
         private const val TAG = "FaceDetectorProcessor"
         private const val MAX_DIMENSION = 1024
-        private const val MIN_FACE_PIXELS = 48
+        private const val MIN_FACE_PIXELS = 44
     }
 
     private val detector by lazy {
         val options = FaceDetectorOptions.Builder()
-            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-            .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_NONE)
-            .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE)
-            .setMinFaceSize(0.08f)
+            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
+            .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
+            .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
+            .setMinFaceSize(0.07f)
             .build()
         FaceDetection.getClient(options)
     }
@@ -52,7 +54,7 @@ class FaceDetectorProcessor(private val context: Context) {
     private fun decodePhoto(uri: Uri): Bitmap? {
         val contentResolver = context.contentResolver
 
-        // Step 1: Decode bounds
+        // Step 1: Decode bounds only
         val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         contentResolver.openInputStream(uri)?.use { stream ->
             BitmapFactory.decodeStream(stream, null, boundsOptions)
@@ -62,14 +64,14 @@ class FaceDetectorProcessor(private val context: Context) {
         val height = boundsOptions.outHeight
         if (width <= 0 || height <= 0) return null
 
-        // Calculate inSampleSize
+        // Calculate power-of-2 inSampleSize
         val longestEdge = max(width, height)
         var inSampleSize = 1
         while (longestEdge / (inSampleSize * 2) >= MAX_DIMENSION) {
             inSampleSize *= 2
         }
 
-        // Step 2: Decode scaled bitmap
+        // Step 2: Decode scaled bitmap in ARGB_8888
         val decodeOptions = BitmapFactory.Options().apply {
             this.inSampleSize = inSampleSize
             inPreferredConfig = Bitmap.Config.ARGB_8888
@@ -78,7 +80,7 @@ class FaceDetectorProcessor(private val context: Context) {
             BitmapFactory.decodeStream(stream, null, decodeOptions)
         } ?: return null
 
-        // Step 3: Handle EXIF orientation
+        // Step 3: Read and apply EXIF orientation
         val orientation = contentResolver.openInputStream(uri)?.use { stream ->
             ExifInterface(stream).getAttributeInt(
                 ExifInterface.TAG_ORIENTATION,
@@ -110,8 +112,8 @@ class FaceDetectorProcessor(private val context: Context) {
                 val scale = MAX_DIMENSION.toFloat() / longestEdge
                 val scaled = Bitmap.createScaledBitmap(
                     rawFrame,
-                    (width * scale).toInt(),
-                    (height * scale).toInt(),
+                    (width * scale).toInt().coerceAtLeast(1),
+                    (height * scale).toInt().coerceAtLeast(1),
                     true
                 )
                 if (scaled != rawFrame) {
@@ -163,7 +165,9 @@ class FaceDetectorProcessor(private val context: Context) {
             }
             faces.filter { face ->
                 val box = face.boundingBox
-                box.width() >= MIN_FACE_PIXELS && box.height() >= MIN_FACE_PIXELS
+                box.width() >= MIN_FACE_PIXELS &&
+                    box.height() >= MIN_FACE_PIXELS &&
+                    abs(face.headEulerAngleY) < 60f // Filter extreme side-profile false positives
             }
         } catch (e: Exception) {
             Log.e(TAG, "Face detection error", e)
@@ -171,12 +175,20 @@ class FaceDetectorProcessor(private val context: Context) {
         }
     }
 
+    /**
+     * Crops and deskews the face region based on head roll angle (headEulerAngleZ)
+     * so both avatar thumbnails and embedding extraction receive an aligned face crop.
+     */
     fun cropFaceBitmap(bitmap: Bitmap, face: Face): Bitmap? {
         val box = face.boundingBox
-        val left = max(0, box.left)
-        val top = max(0, box.top)
-        val right = kotlin.math.min(bitmap.width, box.right)
-        val bottom = kotlin.math.min(bitmap.height, box.bottom)
+        // Add a slight 8% padding for visual avatar framing while keeping focus on the face
+        val padX = (box.width() * 0.08f).toInt()
+        val padY = (box.height() * 0.08f).toInt()
+
+        val left = max(0, box.left - padX)
+        val top = max(0, box.top - padY)
+        val right = min(bitmap.width, box.right + padX)
+        val bottom = min(bitmap.height, box.bottom + padY)
 
         val width = right - left
         val height = bottom - top
@@ -184,7 +196,20 @@ class FaceDetectorProcessor(private val context: Context) {
         if (width <= 0 || height <= 0) return null
 
         return try {
-            Bitmap.createBitmap(bitmap, left, top, width, height)
+            val rawCrop = Bitmap.createBitmap(bitmap, left, top, width, height)
+            val rollAngle = face.headEulerAngleZ
+            if (abs(rollAngle) in 4f..35f) {
+                val matrix = Matrix().apply {
+                    postRotate(-rollAngle, rawCrop.width / 2f, rawCrop.height / 2f)
+                }
+                val aligned = Bitmap.createBitmap(rawCrop, 0, 0, rawCrop.width, rawCrop.height, matrix, true)
+                if (aligned != rawCrop) {
+                    rawCrop.recycle()
+                }
+                aligned
+            } else {
+                rawCrop
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to crop face bitmap", e)
             null

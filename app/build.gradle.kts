@@ -116,7 +116,7 @@ dependencies {
   implementation(libs.media3.ui)
   implementation(libs.mlkit.face.detection)
   implementation(libs.androidx.work.runtime.ktx)
-  implementation(libs.converter.moshi)
+  // implementation(libs.converter.moshi)
   // implementation(libs.firebase.ai)
   // Uncomment to use Firestore:
   // implementation(libs.firebase.firestore)
@@ -131,11 +131,11 @@ dependencies {
   // implementation(libs.firebase.appcheck.debug)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
-  implementation(libs.logging.interceptor)
-  implementation(libs.moshi.kotlin)
-  implementation(libs.okhttp)
+  // implementation(libs.logging.interceptor)
+  // implementation(libs.moshi.kotlin)
+  // implementation(libs.okhttp)
   // implementation(libs.play.services.location)
-  implementation(libs.retrofit)
+  // implementation(libs.retrofit)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
@@ -150,5 +150,18 @@ dependencies {
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)
-  "ksp"(libs.moshi.kotlin.codegen)
+  // "ksp"(libs.moshi.kotlin.codegen)
 }
+
+tasks.matching { it.name == "assembleDebug" || it.name == "packageDebug" }.configureEach {
+  val rootReleasesDir = rootProject.layout.projectDirectory.dir("releases").asFile
+  val debugApkDir = layout.buildDirectory.dir("outputs/apk/debug")
+  doLast {
+    val sourceApk = debugApkDir.get().file("app-debug.apk").asFile
+    if (sourceApk.exists()) {
+      rootReleasesDir.mkdirs()
+      sourceApk.copyTo(File(rootReleasesDir, "InstaGallery-v1.0.apk"), overwrite = true)
+    }
+  }
+}
+
