@@ -1,12 +1,14 @@
 # 📸 InstaGallery — Private Offline-First Local Instagram Clone & AI Face Network
 
 <p align="center">
+  <a href="../../releases/latest/download/InstaGallery-v1.0.apk">
+    <img src="https://img.shields.io/badge/⬇_Download_APK-GitHub_Releases_(v1.0.0)-0095F6?style=for-the-badge&logo=android&logoColor=white" alt="Download InstaGallery APK from GitHub Releases" />
+  </a>
   <a href="./releases/InstaGallery-v1.0.apk">
-    <img src="https://img.shields.io/badge/⬇_Download_APK-InstaGallery_v1.0-0095F6?style=for-the-badge&logo=android&logoColor=white" alt="Download InstaGallery APK" />
+    <img src="https://img.shields.io/badge/📦_Mirror_APK-/releases_Folder-262626?style=for-the-badge&logo=github&logoColor=white" alt="Download APK from repo folder" />
   </a>
   <img src="https://img.shields.io/badge/Platform-Android_8.0%2B_(API_26%2B)-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Android 8.0+" />
   <img src="https://img.shields.io/badge/Privacy-100%25_Offline_(Zero_Internet)-FF3040?style=for-the-badge" alt="100% Offline" />
-  <img src="https://img.shields.io/badge/UI-Jetpack_Compose_M3-8134AF?style=for-the-badge&logo=jetpackcompose&logoColor=white" alt="Jetpack Compose" />
 </p>
 
 **InstaGallery** transforms your phone's local camera roll and video folders into a sleek, dark-mode **Instagram-style social network of your friends and family** — **100% offline** on your device.
@@ -17,13 +19,18 @@ Using native Android `MediaStore` indexing, **ML Kit Face Detection**, and on-de
 
 ## 📲 Direct APK Download (No Play Store Needed)
 
-You can download and install the ready-to-run signed Android APK directly from this repository:
+You can download and install the signed **`InstaGallery-v1.0.apk`** directly from **GitHub Releases**:
 
-👉 **[Download `InstaGallery-v1.0.apk`](./releases/InstaGallery-v1.0.apk)** *(Click **"View raw"** or **"Download raw file"** on GitHub)*
+1. **Direct 1-Click APK Download (GitHub Releases)**:
+   👉 **[Download `InstaGallery-v1.0.apk` (Latest Release)](../../releases/latest/download/InstaGallery-v1.0.apk)**
+2. **GitHub Releases Page**:
+   👉 **[View All Releases (`v1.0.0`)](../../releases)** *(Listed under the **Releases** section on the right sidebar of this GitHub repo)*
+3. **Repository Mirror Path**:
+   👉 **[`releases/InstaGallery-v1.0.apk`](./releases/InstaGallery-v1.0.apk)**
 
-### Installation Steps:
-1. Download [`releases/InstaGallery-v1.0.apk`](./releases/InstaGallery-v1.0.apk) to your Android device.
-2. Open the downloaded `.apk` file (if prompted, allow *"Install unknown apps"* for your browser/file manager).
+### Installation Steps on Android:
+1. Tap the download link above on your Android phone (8.0 Oreo / API 26 or newer).
+2. Open the downloaded **`InstaGallery-v1.0.apk`** file (if prompted, allow *"Install unknown apps"* for your browser or file manager).
 3. Launch **InstaGallery** and tap **Grant Media Access** to index your local photos and videos.
 
 ---
@@ -115,15 +122,15 @@ You can download and install the ready-to-run signed Android APK directly from t
 ## 🛠️ Building from Source
 
 ### Prerequisites
-- JDK 17+
+- JDK 21 (Temurin 21+)
 - Android SDK (API 36)
 
-### Build Debug APK
+### Build Signed Debug APK
 ```bash
 gradle assembleDebug
 ```
 The compiled APK will be generated at:
 ```
 app/build/outputs/apk/debug/app-debug.apk
+releases/InstaGallery-v1.0.apk
 ```
-And automatically copied to `releases/InstaGallery-v1.0.apk` during CI builds.

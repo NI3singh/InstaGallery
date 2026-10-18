@@ -3,9 +3,14 @@ name: Android APK Build & Release
 on:
   push:
     branches: [ main, master ]
+    paths-ignore:
+      - 'releases/**'
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -14,21 +19,24 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Setup Java 17
+      - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: Accept Android SDK Licenses
         run: |
-          SDKMANAGER=$(find $ANDROID_HOME/cmdline-tools -name sdkmanager | head -n 1)
-          if [ -z "$SDKMANAGER" ]; then
-            SDKMANAGER=$(which sdkmanager || true)
-          fi
+          export ANDROID_SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          mkdir -p "$ANDROID_SDK_ROOT/licenses"
+          printf "\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n" > "$ANDROID_SDK_ROOT/licenses/android-sdk-license"
+          printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n504667f4c0de7af1a06de9f4b1727b84351f2910\n" > "$ANDROID_SDK_ROOT/licenses/android-sdk-preview-license"
+          SDKMANAGER=$(find "$ANDROID_SDK_ROOT/cmdline-tools" -name sdkmanager 2>/dev/null | head -n 1)
           if [ -n "$SDKMANAGER" ]; then
-            yes | "$SDKMANAGER" --licenses || true
+            yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
           fi
 
       - name: Setup Gradle
@@ -54,10 +62,10 @@ jobs:
             fi
           fi
 
-      - name: Build Debug APK
+      - name: Build Signed APK
         run: gradle assembleDebug --stacktrace
 
-      - name: Copy APK to releases folder
+      - name: Prepare Release APK
         run: |
           mkdir -p releases
           cp app/build/outputs/apk/debug/app-debug.apk releases/InstaGallery-v1.0.apk
@@ -65,8 +73,55 @@ jobs:
       - name: Upload InstaGallery APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: InstaGallery-APK
-          path: |
-            releases/InstaGallery-v1.0.apk
-            app/build/outputs/apk/debug/app-debug.apk
+          name: InstaGallery-v1.0-APK
+          path: releases/InstaGallery-v1.0.apk
           if-no-files-found: error
+
+      - name: Commit APK to Repository /releases Folder
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f releases/InstaGallery-v1.0.apk
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(release): update InstaGallery-v1.0.apk [skip ci]"
+            git push origin HEAD:${GITHUB_REF_NAME} || true
+          fi
+
+      - name: Publish Package to GitHub Releases
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cat << 'EOF' > RELEASE_NOTES.md
+          ## 📸 InstaGallery v1.0.0 — Private Offline-First Local Instagram Clone & AI Face Network
+
+          ### 📲 Direct APK Download & Installation
+          1. Tap **`InstaGallery-v1.0.apk`** under **Assets** below to download the installable Android package.
+          2. Open the downloaded `.apk` file on your Android 8.0+ (API 26+) device.
+          3. Allow *Install unknown apps* if prompted, open **InstaGallery**, and tap **Grant Media Access**.
+
+          ### ✨ Highlights
+          - **100% Offline Privacy**: Zero internet permission (`android.permission.INTERNET` completely omitted).
+          - **On-Device AI Face Detection & Clustering**: Automatically detects faces across photos & videos, aligns tilted faces, and groups recurring people into dedicated `@Person` profiles.
+          - **Instagram Home Feed & Stories Tray**: Double-tap heart burst animation, interactive floating `@Person` tag bubbles, overlapping co-author avatars, Favorites (`♥`) and Bookmarks (`🔖`) filters.
+          - **Full-Screen Vertical Reels**: Single-ExoPlayer lifecycle pager with tap to play/pause, double-tap like, scrolling audio marquee, and tag management.
+          - **Smart People Directory**: Automatic duplicate profile detection banner, multi-profile merge workflow, custom avatar picker, and non-destructive tag management.
+          EOF
+
+          git tag -f v1.0.0
+          git push origin v1.0.0 --force
+
+          if gh release view v1.0.0 >/dev/null 2>&1; then
+            gh release upload v1.0.0 releases/InstaGallery-v1.0.apk --clobber
+            gh release edit v1.0.0 \
+              --title "InstaGallery v1.0.0 — Direct Android APK" \
+              --notes-file RELEASE_NOTES.md \
+              --latest
+          else
+            gh release create v1.0.0 releases/InstaGallery-v1.0.apk \
+              --title "InstaGallery v1.0.0 — Direct Android APK" \
+              --notes-file RELEASE_NOTES.md \
+              --latest
+          fi
+          rm -f RELEASE_NOTES.md
