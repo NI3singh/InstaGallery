@@ -34,15 +34,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.Image
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.example.R
+import com.example.ui.theme.GrandHotelFont
 import com.example.ui.theme.IgBlack
 import com.example.ui.theme.IgBlue
 import com.example.ui.theme.IgBorderNav
@@ -101,37 +104,33 @@ fun PermissionGateScreen(
             verticalArrangement = Arrangement.Center,
             modifier = Modifier.fillMaxWidth()
         ) {
-            // Instagram gradient ring icon
+            // Master Squircle App Icon (Instagram sunset mesh gradient + dual-frame camera & AI star)
             Box(
                 modifier = Modifier
-                    .size(92.dp)
-                    .clip(CircleShape)
-                    .background(IgStoryGradient),
+                    .size(96.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(22.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(86.dp)
-                        .clip(CircleShape)
-                        .background(IgBlack),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.PhotoCamera,
-                        contentDescription = "Camera",
-                        tint = Color.White,
-                        modifier = Modifier.size(44.dp)
-                    )
-                }
+                Image(
+                    painter = painterResource(id = R.drawable.ic_launcher_background),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize()
+                )
+                Image(
+                    painter = painterResource(id = R.drawable.ic_launcher_foreground),
+                    contentDescription = "InstaGallery App Logo",
+                    modifier = Modifier.fillMaxSize()
+                )
             }
 
             Spacer(modifier = Modifier.height(24.dp))
 
             Text(
                 text = "InstaGallery",
-                fontSize = 32.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Cursive,
+                fontSize = 38.sp,
+                fontWeight = FontWeight.Normal,
+                fontFamily = GrandHotelFont,
                 color = IgTextPrimary
             )
 

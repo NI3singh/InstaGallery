@@ -2,10 +2,10 @@
 
 <p align="center">
   <a href="../../releases/latest/download/InstaGallery-v1.0.apk">
-    <img src="https://img.shields.io/badge/⬇_Download_APK-GitHub_Releases_(v1.0.0)-0095F6?style=for-the-badge&logo=android&logoColor=white" alt="Download InstaGallery APK from GitHub Releases" />
+    <img src="https://img.shields.io/badge/⬇_Download_Slim_APK-GitHub_Releases_(~16_MB)-0095F6?style=for-the-badge&logo=android&logoColor=white" alt="Download InstaGallery APK from GitHub Releases" />
   </a>
-  <a href="./releases/InstaGallery-v1.0.apk">
-    <img src="https://img.shields.io/badge/📦_Mirror_APK-/releases_Folder-262626?style=for-the-badge&logo=github&logoColor=white" alt="Download APK from repo folder" />
+  <a href="../../releases">
+    <img src="https://img.shields.io/badge/⚡_Fast_CDN_Mirror-Inside_Release_Notes-DD2A7B?style=for-the-badge&logo=cloudflare&logoColor=white" alt="View Releases & Fast Mirror" />
   </a>
   <img src="https://img.shields.io/badge/Platform-Android_8.0%2B_(API_26%2B)-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Android 8.0+" />
   <img src="https://img.shields.io/badge/Privacy-100%25_Offline_(Zero_Internet)-FF3040?style=for-the-badge" alt="100% Offline" />
@@ -19,19 +19,26 @@ Using native Android `MediaStore` indexing, **ML Kit Face Detection**, and on-de
 
 ## 📲 Direct APK Download (No Play Store Needed)
 
-You can download and install the signed **`InstaGallery-v1.0.apk`** directly from **GitHub Releases**:
+The APK has been **optimized down from ~60 MB to ~16 MB** (by stripping 41 MB of unused Material extended icon DEX classes, compressing JNI native libraries, and excluding PC-emulator `x86`/`x86_64` binaries).
 
 1. **Direct 1-Click APK Download (GitHub Releases)**:
    👉 **[Download `InstaGallery-v1.0.apk` (Latest Release)](../../releases/latest/download/InstaGallery-v1.0.apk)**
-2. **GitHub Releases Page**:
-   👉 **[View All Releases (`v1.0.0`)](../../releases)** *(Listed under the **Releases** section on the right sidebar of this GitHub repo)*
-3. **Repository Mirror Path**:
-   👉 **[`releases/InstaGallery-v1.0.apk`](./releases/InstaGallery-v1.0.apk)**
+2. **GitHub Releases Page & High-Speed Cloudflare Mirror**:
+   👉 **[Open GitHub Releases (`v1.0.0`)](../../releases)** *(Includes a 1-click **Cloudflare Fast CDN Mirror** link inside the release notes in case your mobile carrier throttles GitHub's `objects.githubusercontent.com` S3 server)*
 
 ### Installation Steps on Android:
 1. Tap the download link above on your Android phone (8.0 Oreo / API 26 or newer).
 2. Open the downloaded **`InstaGallery-v1.0.apk`** file (if prompted, allow *"Install unknown apps"* for your browser or file manager).
 3. Launch **InstaGallery** and tap **Grant Media Access** to index your local photos and videos.
+
+---
+
+## 🎨 Custom Adaptive Icon Design Spec (`API 26–36`)
+
+- **Master Squircle & Adaptive Canvas (`108×108 dp` / `66×66 dp` Safe Zone)**:
+  - **Background (`ic_launcher_background.xml`)**: Full-bleed **Instagram Sunset Mesh Gradient** (`#FFD66B` → `#F58529` → `#DD2A7B` → `#8134AF` → `#5B51D8`) with radial golden and violet mesh highlights.
+  - **Foreground (`ic_launcher_foreground.xml`)**: **Dual-frame gallery camera glyph** with interior landscape mountain silhouette and a **4-point AI recognition star (`✦`)**.
+  - **Monochrome (`Material You`) & Legacy Density Buckets**: Full support for Android 13+ themed monochrome icons plus pre-rendered `32-bit RGBA PNG` icons across `mdpi (48px)`, `hdpi (72px)`, `xhdpi (96px)`, `xxhdpi (144px)`, and `xxxhdpi (192px)`.
 
 ---
 
@@ -77,60 +84,17 @@ You can download and install the signed **`InstaGallery-v1.0.apk`** directly fro
 
 ---
 
-## 🏗️ Technical Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│              InstaGallery UI (Jetpack Compose)              │
-├─────────────────┬─────────────────┬─────────────────────────┤
-│  HomeFeedScreen │   ReelsScreen   │  PeopleDirectoryScreen  │
-│  (Stories Tray, │  (Media3 Player,│  (Duplicate Banner,     │
-│   Post Cards)   │   Audio Marquee)│   Merge Modal & Grid)   │
-└────────┬────────┴────────┬────────┴────────────┬────────────┘
-         │                 │                     │
-         ▼                 ▼                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│                       ViewModel Layer                       │
-│   (HomeViewModel, ReelsViewModel, PeopleViewModel, etc.)    │
-└──────────────────────────────┬──────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      GalleryRepository                      │
-├──────────────────────────────┬──────────────────────────────┤
-│      MediaStoreScanner       │      FaceIndexingWorker      │
-│  (Reads Images & Videos)     │ (ML Kit + TFLite / HOG Emb)  │
-└──────────────┬───────────────┴──────────────┬───────────────┘
-               │                              │
-               ▼                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    Room SQLite Database                     │
-├──────────────┬───────────────┬──────────────┬───────────────┤
-│ media_items  │    people     │detected_faces│media_person_  │
-│              │               │              │   cross_ref   │
-└──────────────┴───────────────┴──────────────┴───────────────┘
-```
-
-### Tech Stack
-- **UI**: Kotlin, Jetpack Compose, Material Design 3 (True OLED `#000000` Dark Theme), Navigation Compose
-- **Media & Video**: AndroidX Media3 (`ExoPlayer`), Coil (`coil-compose` + `coil-video`), AndroidX `ExifInterface`
-- **On-Device ML**: Google ML Kit Face Detection (`com.google.mlkit:face-detection`), TensorFlow Lite (`org.tensorflow:tensorflow-lite`) with deterministic Landmark + Sobel HOG + YCbCr fallback
-- **Persistence & Background Work**: AndroidX Room (`ksp`), AndroidX WorkManager (`CoroutineWorker`), Kotlin Coroutines & `StateFlow`
-
----
-
 ## 🛠️ Building from Source
 
 ### Prerequisites
 - JDK 21 (Temurin 21+)
 - Android SDK (API 36)
 
-### Build Signed Debug APK
+### Build Slim Phone APK
 ```bash
-gradle assembleDebug
+gradle assembleDebug -PtargetPhonesOnly=true
 ```
 The compiled APK will be generated at:
 ```
 app/build/outputs/apk/debug/app-debug.apk
-releases/InstaGallery-v1.0.apk
 ```

@@ -52,6 +52,7 @@ import com.example.ui.components.PostCard
 import com.example.ui.theme.IgBlack
 import com.example.ui.theme.IgBlue
 import com.example.ui.theme.IgBorder
+import com.example.ui.theme.GrandHotelFont
 import com.example.ui.theme.IgRed
 import com.example.ui.theme.IgStoryGradient
 import com.example.ui.theme.IgSurfacePill
@@ -84,9 +85,9 @@ fun HomeFeedScreen(
         ) {
             Text(
                 text = "InstaGallery",
-                fontSize = 28.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Cursive,
+                fontSize = 31.sp,
+                fontWeight = FontWeight.Normal,
+                fontFamily = GrandHotelFont,
                 color = IgTextPrimary,
                 modifier = Modifier
                     .clickable { viewModel.reshuffle() }

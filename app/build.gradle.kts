@@ -20,6 +20,18 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    if (project.findProperty("targetPhonesOnly") == "true") {
+      ndk {
+        abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+      }
+    }
+  }
+
+  packaging {
+    jniLibs {
+      useLegacyPackaging = true
+    }
   }
 
   androidResources {
@@ -96,7 +108,7 @@ dependencies {
   // implementation(libs.androidx.camera.lifecycle)
   // implementation(libs.androidx.camera.view)
   implementation(libs.androidx.compose.material.icons.core)
-  implementation(libs.androidx.compose.material.icons.extended)
+  // implementation(libs.androidx.compose.material.icons.extended)
   implementation(libs.androidx.compose.material3)
   implementation(libs.androidx.compose.ui)
   implementation(libs.androidx.compose.ui.graphics)
@@ -147,20 +159,23 @@ dependencies {
   androidTestImplementation(libs.androidx.espresso.core)
   androidTestImplementation(libs.androidx.junit)
   androidTestImplementation(libs.androidx.runner)
-  debugImplementation(libs.androidx.compose.ui.test.manifest)
-  debugImplementation(libs.androidx.compose.ui.tooling)
+  // debugImplementation(libs.androidx.compose.ui.test.manifest)
+  // debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)
   // "ksp"(libs.moshi.kotlin.codegen)
 }
 
-tasks.matching { it.name == "assembleDebug" || it.name == "packageDebug" }.configureEach {
-  val rootReleasesDir = rootProject.layout.projectDirectory.dir("releases").asFile
-  val debugApkDir = layout.buildDirectory.dir("outputs/apk/debug")
-  doLast {
-    val sourceApk = debugApkDir.get().file("app-debug.apk").asFile
-    if (sourceApk.exists()) {
-      rootReleasesDir.mkdirs()
-      sourceApk.copyTo(File(rootReleasesDir, "InstaGallery-v1.0.apk"), overwrite = true)
+tasks.named("preBuild") {
+  val resDir = layout.projectDirectory.dir("src/main/res").asFile
+  doFirst {
+    listOf("mdpi", "hdpi", "xhdpi", "xxhdpi", "xxxhdpi").forEach { density ->
+      val dir = File(resDir, "mipmap-$density")
+      if (File(dir, "ic_launcher.png").exists()) {
+        File(dir, "ic_launcher.webp").delete()
+      }
+      if (File(dir, "ic_launcher_round.png").exists()) {
+        File(dir, "ic_launcher_round.webp").delete()
+      }
     }
   }
 }

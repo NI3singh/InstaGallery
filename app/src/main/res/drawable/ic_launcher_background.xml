@@ -5,18 +5,65 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+
+    <!-- Base diagonal Instagram sunset gradient (bottom-left warm gold to top-right indigo-violet) -->
     <path android:pathData="M0,0h108v108h-108z">
         <aapt:attr name="android:fillColor">
             <gradient
                 android:type="linear"
-                android:startX="0"
-                android:startY="108"
-                android:endX="108"
-                android:endY="0">
-                <item android:offset="0.0" android:color="#FEDA77" />
-                <item android:offset="0.3" android:color="#F58529" />
-                <item android:offset="0.65" android:color="#DD2A7B" />
-                <item android:offset="1.0" android:color="#8134AF" />
+                android:startX="10"
+                android:startY="100"
+                android:endX="98"
+                android:endY="8">
+                <item android:offset="0.0" android:color="#FFD66B" />
+                <item android:offset="0.24" android:color="#F58529" />
+                <item android:offset="0.56" android:color="#DD2A7B" />
+                <item android:offset="0.82" android:color="#8134AF" />
+                <item android:offset="1.0" android:color="#5B51D8" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Bottom-left warm golden sunset mesh glow -->
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="22"
+                android:centerY="90"
+                android:gradientRadius="64">
+                <item android:offset="0.0" android:color="#99FFCC4D" />
+                <item android:offset="0.55" android:color="#44F58529" />
+                <item android:offset="1.0" android:color="#00F58529" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Top-right deep violet-indigo mesh glow -->
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="88"
+                android:centerY="18"
+                android:gradientRadius="68">
+                <item android:offset="0.0" android:color="#885B51D8" />
+                <item android:offset="0.6" android:color="#338134AF" />
+                <item android:offset="1.0" android:color="#008134AF" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Bottom-right vibrant magenta mesh accent -->
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="92"
+                android:centerY="88"
+                android:gradientRadius="56">
+                <item android:offset="0.0" android:color="#77E1306C" />
+                <item android:offset="1.0" android:color="#00DD2A7B" />
             </gradient>
         </aapt:attr>
     </path>
