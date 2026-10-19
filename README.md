@@ -49,6 +49,8 @@ The result is a familiar social-style experience — posts, Stories, Reels, prof
 - **On-image person tags:** reveal linked `@Person` profiles from a post or its person badge.
 - **Multiple people per memory:** overlapping avatars represent photos associated with more than one person.
 - **Liked and bookmarked filters:** return to favorite memories quickly.
+- **Live indexing progress:** see processed-versus-total media counts while background face indexing runs.
+- **Stable feed ordering:** the randomized order is seeded for the current session, so ordinary state updates do not intentionally reshuffle the feed; the app-title action can trigger a reshuffle and media rescan.
 - **Manual tagging and media details:** add or remove person associations and inspect available file details such as dimensions, MIME type, and capture date.
 
 ### 🎬 Full-screen vertical Reels
@@ -62,7 +64,8 @@ The result is a familiar social-style experience — posts, Stories, Reels, prof
 ### 👥 People directory and face grouping
 
 - Detect faces locally using Google ML Kit.
-- Generate on-device facial descriptors using the TensorFlow Lite model when it is available, with a built-in facial-geometry, HOG, and color-feature fallback.
+- Deskew detected face crops using the estimated head-roll angle before feature extraction.
+- Generate on-device facial descriptors using the TensorFlow Lite model when it is available, with a built-in 128-dimensional facial-geometry, HOG, and color-feature fallback.
 - Group detections into person profiles and maintain local links between people and media.
 - Review possible duplicate profiles, then merge profiles or dismiss the suggestion.
 - Sort the people directory by post count, name, or recency.
