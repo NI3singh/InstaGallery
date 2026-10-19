@@ -1,3 +1,4 @@
+// InstaGallery v1.0
 package com.example.data.local.dao
 
 import androidx.room.Dao
@@ -23,7 +24,7 @@ interface MediaDao {
     fun getPhotosWithAuthors(): Flow<List<MediaWithAuthors>>
 
     @Transaction
-    @Query("SELECT * FROM media_items WHERE isVideo = 1 ORDER BY dateAddedSeconds DESC")
+    @Query("SELECT * FROM media_items WHERE isVideo = 1 AND (durationMs IS NULL OR durationMs >= 400) ORDER BY dateAddedSeconds DESC")
     fun getVideosWithAuthors(): Flow<List<MediaWithAuthors>>
 
     @Transaction
@@ -112,6 +113,9 @@ interface MediaDao {
     @Query("SELECT COUNT(*) FROM media_items WHERE isProcessedForFaces = 0")
     fun getUnindexedCount(): Flow<Int>
 
+    @Query("SELECT COUNT(*) FROM media_items WHERE isProcessedForFaces = 1")
+    fun getProcessedCount(): Flow<Int>
+
     @Query("SELECT COUNT(*) FROM media_items")
     fun getTotalMediaCount(): Flow<Int>
 
@@ -128,14 +132,20 @@ interface MediaDao {
     @Query("UPDATE media_items SET isProcessedForFaces = :isProcessed, hasFaces = :hasFaces WHERE mediaId = :mediaId")
     suspend fun updateMediaProcessed(mediaId: Long, isProcessed: Boolean, hasFaces: Boolean)
 
+    @Query("UPDATE media_items SET isProcessedForFaces = 0, hasFaces = 0")
+    suspend fun resetAllMediaProcessed()
+
+    @Query("DELETE FROM media_person_cross_ref")
+    suspend fun clearAllCrossRefs()
+
     @Query("UPDATE media_items SET isFavorite = :isFavorite WHERE mediaId = :mediaId")
     suspend fun setFavorite(mediaId: Long, isFavorite: Boolean)
 
     @Query("UPDATE media_items SET isBookmarked = :isBookmarked WHERE mediaId = :mediaId")
     suspend fun setBookmarked(mediaId: Long, isBookmarked: Boolean)
 
-    @Query("DELETE FROM media_items WHERE mediaId NOT IN (:activeIds)")
-    suspend fun deleteMissingMedia(activeIds: List<Long>)
+    @Query("DELETE FROM media_items WHERE mediaId IN (:deletedIds)")
+    suspend fun deleteMediaByIds(deletedIds: List<Long>)
 
     @Query("DELETE FROM media_person_cross_ref WHERE mediaId = :mediaId AND personId = :personId")
     suspend fun removeMediaFromPerson(mediaId: Long, personId: Long)

@@ -1,8 +1,11 @@
+// InstaGallery v1.0
 package com.example.ui.screens.reels
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Matrix
 import android.net.Uri
+import android.view.TextureView
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.annotation.OptIn
@@ -10,6 +13,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -19,12 +23,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,6 +39,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
@@ -57,7 +65,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -66,16 +73,20 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
@@ -88,12 +99,16 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.example.data.local.entity.MediaWithAuthors
 import com.example.ui.components.OverlappingAvatars
@@ -154,29 +169,36 @@ fun ReelsScreen(
                 }
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    text = if (uiState.onlyFavorites) "No Favorite Reels Yet" else "No Videos Found",
+                    text = when {
+                        uiState.onlyFavorites -> "No Favorite Reels Yet"
+                        uiState.selectedPersonId != null -> "No Reels for Selected Profile"
+                        else -> "No Videos Found"
+                    },
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
                     color = IgTextPrimary
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = if (uiState.onlyFavorites) {
-                        "Double-tap any Reel or tap the heart icon to save your favorite videos."
-                    } else {
-                        "Videos in your device storage will appear here as auto-looping Reels."
+                    text = when {
+                        uiState.onlyFavorites -> "Double-tap any Reel or tap the heart icon to save your favorite videos."
+                        uiState.selectedPersonId != null -> "Try selecting another person filter or tap below to view all Reels."
+                        else -> "Videos in your device storage will appear here as auto-looping Reels."
                     },
                     fontSize = 13.sp,
                     color = IgTextSecondary,
                     textAlign = TextAlign.Center
                 )
-                if (uiState.onlyFavorites) {
+                if (uiState.onlyFavorites || uiState.selectedPersonId != null) {
                     Spacer(modifier = Modifier.height(16.dp))
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(50))
                             .background(IgBlue)
-                            .clickable { viewModel.toggleFavoritesFilter() }
+                            .clickable {
+                                if (uiState.onlyFavorites) viewModel.toggleFavoritesFilter()
+                                if (uiState.selectedPersonId != null) viewModel.selectPersonFilter(null)
+                            }
                             .padding(horizontal = 16.dp, vertical = 8.dp)
                     ) {
                         Text(
@@ -193,18 +215,73 @@ fun ReelsScreen(
     }
 
     val pagerState = rememberPagerState(pageCount = { videos.size })
+    val settledPage = pagerState.settledPage.coerceIn(0, (videos.size - 1).coerceAtLeast(0))
+    val settledVideo = videos.getOrNull(settledPage)
+    val settledMediaId = settledVideo?.media?.mediaId ?: -1L
+    val settledMediaUri = settledVideo?.media?.uri ?: ""
 
-    // Single ExoPlayer instance shared across the Reels pager
+    var renderedFirstFrameMediaId by remember { mutableLongStateOf(-1L) }
+    var activeVideoWidth by remember { mutableIntStateOf(0) }
+    var activeVideoHeight by remember { mutableIntStateOf(0) }
+    var playbackProgress by remember { mutableFloatStateOf(0f) }
+    var currentPositionMs by remember { mutableLongStateOf(0L) }
+    var durationMs by remember { mutableLongStateOf(0L) }
+    var isPausedByTap by remember { mutableStateOf(false) }
+    var isFastForward2x by remember { mutableStateOf(false) }
+    var isScrubbing by remember { mutableStateOf(false) }
+    var showDoubleTapHeart by remember { mutableStateOf(false) }
+    var errorRetryCount by remember { mutableIntStateOf(0) }
+
+    // Configure ExoPlayer with hardware decoder fallback + audio focus so all phone videos play cleanly
     val exoPlayer = remember {
-        ExoPlayer.Builder(context).build().apply {
-            repeatMode = Player.REPEAT_MODE_ONE
-            playWhenReady = true
-        }
+        val renderersFactory = DefaultRenderersFactory(context)
+            .setEnableDecoderFallback(true)
+
+        val audioAttributes = AudioAttributes.Builder()
+            .setUsage(C.USAGE_MEDIA)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+            .build()
+
+        ExoPlayer.Builder(context, renderersFactory)
+            .setAudioAttributes(audioAttributes, true)
+            .build()
+            .apply {
+                repeatMode = Player.REPEAT_MODE_ONE
+                playWhenReady = true
+            }
     }
 
-    var playbackProgress by remember { mutableFloatStateOf(0f) }
-    var isPausedByTap by remember { mutableStateOf(false) }
-    var showDoubleTapHeart by remember { mutableStateOf(false) }
+    // Attach Player.Listener to track first-frame rendering (eliminates flicker) and recover from codec errors
+    DisposableEffect(exoPlayer, settledMediaId) {
+        val listener = object : Player.Listener {
+            override fun onRenderedFirstFrame() {
+                renderedFirstFrameMediaId = settledMediaId
+            }
+
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                if (videoSize.width > 0 && videoSize.height > 0) {
+                    activeVideoWidth = videoSize.width
+                    activeVideoHeight = videoSize.height
+                }
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                if (errorRetryCount < 1 && settledMediaUri.isNotBlank()) {
+                    errorRetryCount++
+                    exoPlayer.stop()
+                    exoPlayer.setMediaItem(MediaItem.fromUri(settledMediaUri))
+                    exoPlayer.prepare()
+                    exoPlayer.playWhenReady = !isPausedByTap
+                } else if (settledMediaId != -1L) {
+                    viewModel.markVideoUnplayable(settledMediaId)
+                }
+            }
+        }
+        exoPlayer.addListener(listener)
+        onDispose {
+            exoPlayer.removeListener(listener)
+        }
+    }
 
     LaunchedEffect(showDoubleTapHeart) {
         if (showDoubleTapHeart) {
@@ -213,32 +290,41 @@ fun ReelsScreen(
         }
     }
 
-    // Update mute state
+    // Update mute state without resetting playback
     LaunchedEffect(uiState.isMuted) {
         exoPlayer.volume = if (uiState.isMuted) 0f else 1f
     }
 
-    // Attach currently settled page media item to player
-    LaunchedEffect(pagerState.settledPage, videos) {
-        if (videos.isNotEmpty() && pagerState.settledPage < videos.size) {
-            val currentVideo = videos[pagerState.settledPage]
+    // Load video ONLY when settledMediaId actually changes (never on Like/Bookmark/Tag updates!)
+    LaunchedEffect(settledMediaId) {
+        if (settledMediaId != -1L && settledMediaUri.isNotBlank()) {
+            errorRetryCount = 0
             isPausedByTap = false
+            isFastForward2x = false
+            renderedFirstFrameMediaId = -1L
+            playbackProgress = 0f
+            exoPlayer.setPlaybackParameters(PlaybackParameters.DEFAULT)
             exoPlayer.stop()
-            exoPlayer.setMediaItem(MediaItem.fromUri(currentVideo.media.uri))
+            exoPlayer.setMediaItem(MediaItem.fromUri(settledMediaUri))
             exoPlayer.prepare()
+            exoPlayer.playWhenReady = true
             exoPlayer.play()
         }
     }
 
-    // Poll playback progress
-    LaunchedEffect(exoPlayer) {
+    // Poll playback progress smoothly
+    LaunchedEffect(exoPlayer, isScrubbing) {
         while (isActive) {
-            val duration = exoPlayer.duration
-            val position = exoPlayer.currentPosition
-            if (duration > 0) {
-                playbackProgress = (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+            if (!isScrubbing) {
+                val dur = exoPlayer.duration
+                val pos = exoPlayer.currentPosition
+                if (dur > 0) {
+                    durationMs = dur
+                    currentPositionMs = pos.coerceAtLeast(0L)
+                    playbackProgress = (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f)
+                }
             }
-            delay(100)
+            delay(80)
         }
     }
 
@@ -258,6 +344,8 @@ fun ReelsScreen(
         }
     }
 
+    val contentScaleMode = if (uiState.isFitMode) ContentScale.Fit else ContentScale.Crop
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -266,20 +354,41 @@ fun ReelsScreen(
     ) {
         VerticalPager(
             state = pagerState,
+            beyondViewportPageCount = 1,
             modifier = Modifier.fillMaxSize()
         ) { page ->
             val video = videos[page]
-            val isCurrentPage = (page == pagerState.settledPage)
+            val isSettledPage = (page == settledPage)
+            val isFirstFrameReady = isSettledPage && (renderedFirstFrameMediaId == video.media.mediaId)
+
+            // Smooth crossfade of thumbnail shield ONLY after ExoPlayer has rendered the first frame
+            val thumbnailAlpha by animateFloatAsState(
+                targetValue = if (isFirstFrameReady) 0f else 1f,
+                animationSpec = tween(durationMillis = 160),
+                label = "thumbnail_shield_alpha"
+            )
 
             Box(
                 modifier = Modifier
                     .fillMaxSize()
+                    .background(IgBlack)
                     .pointerInput(video.media.mediaId, video.media.isFavorite) {
                         detectTapGestures(
                             onDoubleTap = {
                                 showDoubleTapHeart = true
                                 if (!video.media.isFavorite) {
                                     viewModel.toggleFavorite(video.media.mediaId, false)
+                                }
+                            },
+                            onLongPress = {
+                                isFastForward2x = true
+                                exoPlayer.setPlaybackParameters(PlaybackParameters(2.0f))
+                            },
+                            onPress = {
+                                tryAwaitRelease()
+                                if (isFastForward2x) {
+                                    isFastForward2x = false
+                                    exoPlayer.setPlaybackParameters(PlaybackParameters.DEFAULT)
                                 }
                             },
                             onTap = {
@@ -294,33 +403,33 @@ fun ReelsScreen(
                         )
                     }
             ) {
-                if (isCurrentPage) {
-                    AndroidView(
-                        factory = { ctx ->
-                            PlayerView(ctx).apply {
-                                useController = false
-                                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                                player = exoPlayer
-                                layoutParams = FrameLayout.LayoutParams(
-                                    ViewGroup.LayoutParams.MATCH_PARENT,
-                                    ViewGroup.LayoutParams.MATCH_PARENT
-                                )
-                            }
-                        },
+                // Zero-Flicker TextureView Renderer (bound when settled on this page)
+                if (isSettledPage) {
+                    ZeroFlickerTextureVideoPlayer(
+                        exoPlayer = exoPlayer,
+                        videoWidth = activeVideoWidth.takeIf { it > 0 } ?: video.media.width,
+                        videoHeight = activeVideoHeight.takeIf { it > 0 } ?: video.media.height,
+                        isFitMode = uiState.isFitMode,
                         modifier = Modifier.fillMaxSize()
                     )
-                } else {
+                }
+
+                // Thumbnail Shield: stays visible until ExoPlayer renders first frame -> 0% flicker!
+                if (thumbnailAlpha > 0.01f) {
                     AsyncImage(
                         model = video.media.uri,
                         contentDescription = video.media.displayName,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
+                        contentScale = contentScaleMode,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .alpha(thumbnailAlpha)
+                            .background(IgBlack)
                     )
                 }
 
                 // Paused Indicator Overlay
                 AnimatedVisibility(
-                    visible = isCurrentPage && isPausedByTap,
+                    visible = isSettledPage && isPausedByTap,
                     enter = fadeIn() + scaleIn(initialScale = 0.8f),
                     exit = fadeOut() + scaleOut(targetScale = 0.8f),
                     modifier = Modifier.align(Alignment.Center)
@@ -341,9 +450,34 @@ fun ReelsScreen(
                     }
                 }
 
+                // 2x Speed Indicator Pill (when long-pressing)
+                AnimatedVisibility(
+                    visible = isSettledPage && isFastForward2x,
+                    enter = fadeIn() + scaleIn(initialScale = 0.9f),
+                    exit = fadeOut(),
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 96.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(Color.Black.copy(alpha = 0.72f))
+                            .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(50))
+                            .padding(horizontal = 14.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = "2x Speed ⏩",
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                }
+
                 // Double-Tap Heart Burst Overlay
                 AnimatedVisibility(
-                    visible = isCurrentPage && showDoubleTapHeart,
+                    visible = isSettledPage && showDoubleTapHeart,
                     enter = scaleIn(
                         animationSpec = spring(
                             dampingRatio = Spring.DampingRatioMediumBouncy,
@@ -362,20 +496,20 @@ fun ReelsScreen(
                     )
                 }
 
-                // Top scrim gradient (112.dp)
+                // Top scrim gradient
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(112.dp)
+                        .height(128.dp)
                         .align(Alignment.TopCenter)
                         .background(
                             Brush.verticalGradient(
-                                listOf(Color.Black.copy(alpha = 0.7f), Color.Transparent)
+                                listOf(Color.Black.copy(alpha = 0.75f), Color.Transparent)
                             )
                         )
                 )
 
-                // Bottom scrim gradient (256.dp)
+                // Bottom scrim gradient
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -397,7 +531,7 @@ fun ReelsScreen(
                     },
                     modifier = Modifier
                         .align(Alignment.BottomStart)
-                        .padding(start = 16.dp, bottom = 68.dp)
+                        .padding(start = 16.dp, bottom = 36.dp)
                 )
 
                 // Right-Side Vertical Action Rail
@@ -414,63 +548,192 @@ fun ReelsScreen(
                     },
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(end = 14.dp, bottom = 72.dp)
+                        .padding(end = 14.dp, bottom = 36.dp)
                 )
             }
         }
 
-        // Top Overlay Bar
-        Row(
+        // Top Overlay Bar + Person Filter Strip
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 16.dp, start = 16.dp, end = 16.dp)
-                .align(Alignment.TopCenter),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+                .align(Alignment.TopCenter)
+                .padding(top = 12.dp)
         ) {
             Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.clickable { viewModel.reshuffle() }
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.clickable { viewModel.reshuffle() }
+                ) {
+                    Text(
+                        text = if (uiState.onlyFavorites) "Favorite Reels" else "Reels",
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowDown,
+                        contentDescription = "Shuffle Reels",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    // Crop / Fit Aspect Ratio Pill
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(Color.Black.copy(alpha = 0.45f))
+                            .border(1.dp, Color.White.copy(alpha = 0.3f), RoundedCornerShape(50))
+                            .clickable { viewModel.toggleFitMode() }
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = if (uiState.isFitMode) "Fit" else "Crop",
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+                    }
+
+                    IconButton(onClick = { viewModel.toggleFavoritesFilter() }) {
+                        Icon(
+                            imageVector = if (uiState.onlyFavorites) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
+                            contentDescription = "Filter Favorite Reels",
+                            tint = if (uiState.onlyFavorites) IgRed else Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+            }
+
+            // Person Filter Chips Row
+            if (uiState.allPeople.isNotEmpty()) {
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    item(key = "filter_all") {
+                        ReelPersonChip(
+                            label = "All",
+                            isSelected = uiState.selectedPersonId == null,
+                            onClick = { viewModel.selectPersonFilter(null) }
+                        )
+                    }
+                    items(
+                        items = uiState.allPeople,
+                        key = { it.personId }
+                    ) { person ->
+                        ReelPersonChip(
+                            label = "@${person.name}",
+                            isSelected = uiState.selectedPersonId == person.personId,
+                            onClick = { viewModel.selectPersonFilter(person.personId) }
+                        )
+                    }
+                    item(key = "filter_other") {
+                        ReelPersonChip(
+                            label = "@Other",
+                            isSelected = uiState.selectedPersonId == -1L,
+                            onClick = { viewModel.selectPersonFilter(-1L) }
+                        )
+                    }
+                }
+            }
+        }
+
+        // Scrubbing Time Indicator Pill
+        AnimatedVisibility(
+            visible = isScrubbing && durationMs > 0L,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 26.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(Color.Black.copy(alpha = 0.78f))
+                    .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(50))
+                    .padding(horizontal = 14.dp, vertical = 5.dp)
             ) {
                 Text(
-                    text = if (uiState.onlyFavorites) "Favorite Reels" else "Reels",
-                    fontSize = 22.sp,
+                    text = "${formatDurationMs(currentPositionMs)} / ${formatDurationMs(durationMs)}",
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
                 )
-                Icon(
-                    imageVector = Icons.Default.KeyboardArrowDown,
-                    contentDescription = "Shuffle Reels",
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            IconButton(onClick = { viewModel.toggleFavoritesFilter() }) {
-                Icon(
-                    imageVector = if (uiState.onlyFavorites) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
-                    contentDescription = "Filter Favorite Reels",
-                    tint = if (uiState.onlyFavorites) IgRed else Color.White,
-                    modifier = Modifier.size(24.dp)
-                )
             }
         }
 
-        // Slim 2.dp Playback Progress Bar at bottom of viewport
+        // Interactive Scrubbable Seekbar at bottom of viewport
+        var barWidthPx by remember { mutableFloatStateOf(1f) }
         val animatedProgress by animateFloatAsState(
             targetValue = playbackProgress,
             label = "reel_progress"
         )
-        LinearProgressIndicator(
-            progress = { animatedProgress },
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(2.dp)
-                .align(Alignment.BottomCenter),
-            color = Color.White,
-            trackColor = Color.White.copy(alpha = 0.2f)
-        )
+                .height(18.dp)
+                .align(Alignment.BottomCenter)
+                .onSizeChanged { barWidthPx = it.width.toFloat().coerceAtLeast(1f) }
+                .pointerInput(durationMs) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { offset ->
+                            isScrubbing = true
+                            val fraction = (offset.x / barWidthPx).coerceIn(0f, 1f)
+                            playbackProgress = fraction
+                            if (durationMs > 0) {
+                                currentPositionMs = (fraction * durationMs).toLong()
+                            }
+                        },
+                        onHorizontalDrag = { change, _ ->
+                            change.consume()
+                            val fraction = (change.position.x / barWidthPx).coerceIn(0f, 1f)
+                            playbackProgress = fraction
+                            if (durationMs > 0) {
+                                currentPositionMs = (fraction * durationMs).toLong()
+                            }
+                        },
+                        onDragEnd = {
+                            if (durationMs > 0) {
+                                exoPlayer.seekTo((playbackProgress * durationMs).toLong())
+                            }
+                            isScrubbing = false
+                        },
+                        onDragCancel = {
+                            isScrubbing = false
+                        }
+                    )
+                },
+            contentAlignment = Alignment.BottomStart
+        ) {
+            val barHeight = if (isScrubbing) 5.dp else 2.5.dp
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(barHeight)
+                    .background(Color.White.copy(alpha = 0.24f))
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(animatedProgress.coerceIn(0f, 1f))
+                    .height(barHeight)
+                    .background(Color.White)
+            )
+        }
     }
 
     // Reel Details & Tag Management Modal Bottom Sheet
@@ -500,7 +763,7 @@ fun ReelsScreen(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Text(
-                    text = if (authors.isEmpty()) "No people tagged in this Reel" else "Tagged in this Reel:",
+                    text = if (authors.isEmpty()) "Tagged: @Other (No specific person tagged)" else "Tagged in this Reel:",
                     fontSize = 13.sp,
                     color = IgTextSecondary
                 )
@@ -618,6 +881,109 @@ fun ReelsScreen(
     }
 }
 
+/**
+ * Renders ExoPlayer video into a hardware-accelerated TextureView with matrix aspect-ratio scaling.
+ * Unlike SurfaceView, TextureView participates directly in Compose's render node tree,
+ * preventing black surface-punch flickering during Pager swipes or screen transitions.
+ */
+@Composable
+private fun ZeroFlickerTextureVideoPlayer(
+    exoPlayer: ExoPlayer,
+    videoWidth: Int,
+    videoHeight: Int,
+    isFitMode: Boolean,
+    modifier: Modifier = Modifier
+) {
+    AndroidView(
+        factory = { ctx ->
+            TextureView(ctx).apply {
+                layoutParams = FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+                isOpaque = false
+                addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                    applyVideoScaleMatrix(this, videoWidth, videoHeight, isFitMode)
+                }
+            }
+        },
+        update = { textureView ->
+            exoPlayer.setVideoTextureView(textureView)
+            applyVideoScaleMatrix(textureView, videoWidth, videoHeight, isFitMode)
+        },
+        onReset = { textureView ->
+            exoPlayer.clearVideoTextureView(textureView)
+        },
+        modifier = modifier
+    )
+}
+
+private fun applyVideoScaleMatrix(
+    textureView: TextureView,
+    videoWidth: Int,
+    videoHeight: Int,
+    isFitMode: Boolean
+) {
+    val viewWidth = textureView.width.toFloat()
+    val viewHeight = textureView.height.toFloat()
+    if (viewWidth <= 0f || viewHeight <= 0f || videoWidth <= 0 || videoHeight <= 0) return
+
+    val videoAspect = videoWidth.toFloat() / videoHeight.toFloat()
+    val viewAspect = viewWidth / viewHeight
+
+    var scaleX = 1f
+    var scaleY = 1f
+
+    if (isFitMode) {
+        // Fit Center (letterbox/pillarbox without cropping)
+        if (videoAspect > viewAspect) {
+            scaleY = viewAspect / videoAspect
+        } else {
+            scaleX = videoAspect / viewAspect
+        }
+    } else {
+        // Center Crop (full-bleed Reels standard)
+        if (videoAspect > viewAspect) {
+            scaleX = videoAspect / viewAspect
+        } else {
+            scaleY = viewAspect / videoAspect
+        }
+    }
+
+    val pivotX = viewWidth / 2f
+    val pivotY = viewHeight / 2f
+    val matrix = Matrix()
+    matrix.setScale(scaleX, scaleY, pivotX, pivotY)
+    textureView.setTransform(matrix)
+}
+
+@Composable
+private fun ReelPersonChip(
+    label: String,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(if (isSelected) IgBlue else Color.Black.copy(alpha = 0.45f))
+            .border(
+                width = 1.dp,
+                color = if (isSelected) IgBlue else Color.White.copy(alpha = 0.28f),
+                shape = RoundedCornerShape(50)
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+    ) {
+        Text(
+            text = label,
+            fontSize = 11.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = Color.White
+        )
+    }
+}
+
 @Composable
 fun ReelsActionRail(
     video: MediaWithAuthors,
@@ -689,7 +1055,7 @@ fun ReelsActionRail(
             }
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = if (authorsCount > 0) "$authorsCount People" else "People",
+                text = if (authorsCount > 0) "$authorsCount People" else "@Other",
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
                 color = Color.White
@@ -775,7 +1141,7 @@ fun ReelsBottomOverlay(
 ) {
     val authors = video.authors
     val authorHandles = remember(authors) {
-        if (authors.isEmpty()) "@From your Reels"
+        if (authors.isEmpty()) "@Other"
         else authors.take(2).joinToString(" and ") { "@${it.name}" }
     }
 
@@ -807,7 +1173,9 @@ fun ReelsBottomOverlay(
                 color = Color.White,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false)
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .clickable(onClick = onViewProfilesClick)
             )
 
             Box(
@@ -819,7 +1187,7 @@ fun ReelsBottomOverlay(
                     .padding(horizontal = 8.dp, vertical = 2.dp)
             ) {
                 Text(
-                    text = "View Profiles",
+                    text = if (authors.isEmpty()) "View @Other" else "View Profile",
                     fontSize = 11.5.sp,
                     fontWeight = FontWeight.Medium,
                     color = Color.White
@@ -868,6 +1236,13 @@ fun ReelsBottomOverlay(
             }
         }
     }
+}
+
+private fun formatDurationMs(ms: Long): String {
+    val totalSeconds = (ms / 1000L).coerceAtLeast(0L)
+    val minutes = totalSeconds / 60L
+    val seconds = totalSeconds % 60L
+    return String.format(Locale.US, "%d:%02d", minutes, seconds)
 }
 
 private fun shareVideo(context: Context, uriString: String) {

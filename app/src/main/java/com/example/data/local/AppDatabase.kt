@@ -1,3 +1,4 @@
+// InstaGallery v1.0
 package com.example.data.local
 
 import android.content.Context
@@ -18,7 +19,7 @@ import com.example.data.local.entity.PersonEntity
         FaceEntity::class,
         MediaPersonCrossRef::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

@@ -1,3 +1,4 @@
+// InstaGallery v1.0
 package com.example.ui.components
 
 import android.content.Context
@@ -127,7 +128,7 @@ fun PostCard(
 
     val authorHandles = remember(authors) {
         if (authors.isEmpty()) {
-            "From your gallery"
+            "@Other"
         } else {
             when (authors.size) {
                 1 -> "@${authors[0].name}"
@@ -143,7 +144,7 @@ fun PostCard(
     }
 
     val taggedNames = remember(authors) {
-        if (authors.isEmpty()) "No faces detected"
+        if (authors.isEmpty()) "@Other"
         else authors.joinToString(", ") { "@${it.name}" }
     }
 

@@ -1,3 +1,4 @@
+// InstaGallery v1.0
 package com.example.data.local.dao
 
 import androidx.room.Dao
@@ -31,7 +32,7 @@ interface PersonDao {
     @Update
     suspend fun updatePerson(person: PersonEntity)
 
-    @Query("UPDATE people SET name = :name WHERE personId = :personId")
+    @Query("UPDATE people SET name = :name, isNamedByUser = 1 WHERE personId = :personId")
     suspend fun updatePersonName(personId: Long, name: String)
 
     @Query("UPDATE people SET avatarCropPath = :cropPath WHERE personId = :personId")
@@ -42,6 +43,22 @@ interface PersonDao {
 
     @Query("DELETE FROM people WHERE personId = :personId")
     suspend fun deletePerson(personId: Long)
+
+    @Query("DELETE FROM people")
+    suspend fun deleteAllPeople()
+
+    @Query("DELETE FROM detected_faces")
+    suspend fun deleteAllFaces()
+
+    @Query("DELETE FROM detected_faces WHERE personId = :personId")
+    suspend fun deleteFacesForPerson(personId: Long)
+
+    @Transaction
+    suspend fun movePersonToOther(personId: Long) {
+        deleteCrossRefsForPerson(personId)
+        deleteFacesForPerson(personId)
+        deletePerson(personId)
+    }
 
     @Query("""
         SELECT COUNT(DISTINCT media_person_cross_ref.mediaId) 
@@ -126,10 +143,12 @@ interface PersonDao {
 
         // Update target person name and distinct media post count
         val totalMedia = countDistinctMediaForPerson(targetPersonId).coerceAtLeast(1)
+        val resolvedName = newName.trim().ifBlank { target.name }
         updatePerson(
             target.copy(
-                name = newName.ifBlank { target.name },
-                faceCount = totalMedia
+                name = resolvedName,
+                faceCount = totalMedia,
+                isNamedByUser = true
             )
         )
     }

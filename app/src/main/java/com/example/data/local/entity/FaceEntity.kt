@@ -1,3 +1,4 @@
+// InstaGallery v1.0
 package com.example.data.local.entity
 
 import androidx.room.Entity

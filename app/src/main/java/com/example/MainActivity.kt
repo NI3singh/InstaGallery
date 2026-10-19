@@ -1,3 +1,4 @@
+// InstaGallery v1.0
 package com.example
 
 import android.os.Bundle

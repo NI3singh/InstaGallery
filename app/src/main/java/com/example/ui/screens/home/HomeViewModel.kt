@@ -1,3 +1,4 @@
+// InstaGallery v1.0
 package com.example.ui.screens.home
 
 import android.app.Application
@@ -14,7 +15,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlin.random.Random
 
 enum class HomeFeedFilter {
     ALL,
@@ -82,8 +82,12 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     ) { photos, people, unassociatedCount, seed, scanInfo ->
         val (isRunning, current, total) = scanInfo
         val filter = _activeFilter.value
+        // Deterministic per-mediaId shuffle order so liking/tagging never jumps the scroll position
+        val stableShuffled = photos.sortedBy { item ->
+            mixHash(item.media.mediaId, seed)
+        }
         HomeUiState(
-            photos = photos.shuffled(Random(seed)),
+            photos = stableShuffled,
             people = people,
             unassociatedCount = unassociatedCount,
             activeFilter = filter,
@@ -99,6 +103,13 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = HomeUiState()
     )
+
+    private fun mixHash(id: Long, seed: Long): Long {
+        var z = (id xor seed) + -0x61c8864680b583ebL
+        z = (z xor (z ushr 30)) * -0x40a7b892e31b1a47L
+        z = (z xor (z ushr 27)) * -0x6b2fb644ecceee15L
+        return z xor (z ushr 31)
+    }
 
     init {
         scanMedia()

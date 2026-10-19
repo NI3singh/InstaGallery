@@ -1,3 +1,4 @@
+// InstaGallery v1.0
 package com.example.ui.screens.people
 
 import android.app.Application

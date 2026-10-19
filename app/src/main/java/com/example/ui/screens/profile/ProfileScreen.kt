@@ -1,3 +1,4 @@
+// InstaGallery v1.0
 package com.example.ui.screens.profile
 
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -861,6 +862,42 @@ fun ProfileScreen(
                             imageVector = Icons.Outlined.AddAPhoto,
                             contentDescription = "Avatar",
                             tint = IgTextSecondary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    HorizontalDivider(color = IgBorderNav, thickness = 0.5.dp)
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable {
+                                showActionSheet = false
+                                viewModel.moveProfileToOther {
+                                    onBackClick()
+                                }
+                            }
+                            .padding(vertical = 14.dp, horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text(
+                                text = "Mark as Unknown (Move to @Other)",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = IgRed
+                            )
+                            Text(
+                                text = "Removes @$profileName profile and moves their media into @Other",
+                                fontSize = 12.sp,
+                                color = IgTextSecondary
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.Outlined.DeleteOutline,
+                            contentDescription = "Move to Other",
+                            tint = IgRed,
                             modifier = Modifier.size(20.dp)
                         )
                     }

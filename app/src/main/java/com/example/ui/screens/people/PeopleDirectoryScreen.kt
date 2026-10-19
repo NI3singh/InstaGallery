@@ -1,3 +1,4 @@
+// InstaGallery v1.0
 package com.example.ui.screens.people
 
 import androidx.compose.animation.AnimatedVisibility
@@ -86,10 +87,13 @@ import java.io.File
 fun PeopleDirectoryScreen(
     viewModel: PeopleViewModel,
     onPersonClick: (Long) -> Unit,
+    onOpenSetupClick: () -> Unit = {},
+    onRescanGalleryClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var showMergeDialog by remember { mutableStateOf(false) }
+    var showRescanConfirmDialog by remember { mutableStateOf(false) }
 
     // Auto-dismiss toast
     LaunchedEffect(uiState.toastMessage) {
@@ -142,16 +146,53 @@ fun PeopleDirectoryScreen(
                     }
                 }
 
-                Text(
-                    text = if (uiState.isSelectionMode) "Cancel" else "Merge",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = IgBlue,
-                    modifier = Modifier
-                        .clickable { viewModel.toggleSelectionMode() }
-                        .padding(vertical = 4.dp, horizontal = 6.dp)
-                        .testTag("merge_toggle_button")
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(IgSurfaceModal)
+                            .border(1.dp, IgBorderNav, RoundedCornerShape(50))
+                            .clickable { onOpenSetupClick() }
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = "Name Faces",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = IgTextPrimary
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(IgSurfaceModal)
+                            .border(1.dp, IgBorderNav, RoundedCornerShape(50))
+                            .clickable { showRescanConfirmDialog = true }
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = "Re-Scan",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = IgTextSecondary
+                        )
+                    }
+
+                    Text(
+                        text = if (uiState.isSelectionMode) "Cancel" else "Merge",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = IgBlue,
+                        modifier = Modifier
+                            .clickable { viewModel.toggleSelectionMode() }
+                            .padding(vertical = 4.dp, horizontal = 4.dp)
+                            .testTag("merge_toggle_button")
+                    )
+                }
             }
 
             // Search Input Bar
@@ -413,6 +454,45 @@ fun PeopleDirectoryScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showMergeDialog = false }) {
+                    Text("Cancel", color = IgTextSecondary)
+                }
+            }
+        )
+    }
+
+    // Re-Scan Gallery Confirmation Dialog
+    if (showRescanConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showRescanConfirmDialog = false },
+            containerColor = IgSurfaceModal,
+            title = {
+                Text(
+                    text = "Re-Scan All Gallery Faces?",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = IgTextPrimary
+                )
+            },
+            text = {
+                Text(
+                    text = "This will run fresh on-device AI face detection across all your photos and reels, and open the Profile Setup screen so you can name detected faces.",
+                    fontSize = 13.sp,
+                    color = IgTextSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showRescanConfirmDialog = false
+                        onRescanGalleryClick()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = IgBlue)
+                ) {
+                    Text("Start Re-Scan")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRescanConfirmDialog = false }) {
                     Text("Cancel", color = IgTextSecondary)
                 }
             }

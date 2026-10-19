@@ -1,7 +1,10 @@
+// InstaGallery v1.0
 package com.example.ui.navigation
 
 sealed class Screen(val route: String) {
     data object PermissionGate : Screen("permission_gate")
+    data object FaceScanning : Screen("face_scanning")
+    data object ProfileSetup : Screen("profile_setup")
     data object Home : Screen("home_feed")
     data object Reels : Screen("reels")
     data object People : Screen("people_directory")

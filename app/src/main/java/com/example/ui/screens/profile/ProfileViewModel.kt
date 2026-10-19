@@ -1,3 +1,4 @@
+// InstaGallery v1.0
 package com.example.ui.screens.profile
 
 import android.app.Application
@@ -132,6 +133,14 @@ class ProfileViewModel(
         viewModelScope.launch {
             repository.mergePeople(listOf(personId), targetPersonId, currentPerson.name)
             onComplete(targetPersonId)
+        }
+    }
+
+    fun moveProfileToOther(onComplete: () -> Unit = {}) {
+        if (personId == -1L) return
+        viewModelScope.launch {
+            repository.movePersonToOther(personId)
+            onComplete()
         }
     }
 }

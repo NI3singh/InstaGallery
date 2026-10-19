@@ -1,3 +1,5 @@
+// InstaGallery v1.0
+
 package com.example.data.media
 
 import android.content.ContentUris
@@ -7,6 +9,7 @@ import android.provider.MediaStore
 import android.util.Log
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
 import com.example.data.local.dao.MediaDao
 import com.example.data.local.entity.MediaEntity
@@ -31,7 +34,7 @@ class MediaStoreScanner(
                 MediaStore.Files.getContentUri("external")
             }
 
-            val projection = arrayOf(
+            val projectionList = mutableListOf(
                 MediaStore.Files.FileColumns._ID,
                 MediaStore.Files.FileColumns.MEDIA_TYPE,
                 MediaStore.Files.FileColumns.MIME_TYPE,
@@ -39,10 +42,19 @@ class MediaStoreScanner(
                 MediaStore.Files.FileColumns.WIDTH,
                 MediaStore.Files.FileColumns.HEIGHT,
                 MediaStore.Video.VideoColumns.DURATION,
-                MediaStore.Files.FileColumns.DISPLAY_NAME
+                MediaStore.Files.FileColumns.DISPLAY_NAME,
+                MediaStore.Files.FileColumns.SIZE
             )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                projectionList.add(MediaStore.MediaColumns.IS_PENDING)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                projectionList.add(MediaStore.MediaColumns.IS_TRASHED)
+            }
 
-            val selection = "${MediaStore.Files.FileColumns.MEDIA_TYPE} = ? OR ${MediaStore.Files.FileColumns.MEDIA_TYPE} = ?"
+            val projection = projectionList.toTypedArray()
+
+            val selection = "(${MediaStore.Files.FileColumns.MEDIA_TYPE} = ? OR ${MediaStore.Files.FileColumns.MEDIA_TYPE} = ?) AND ${MediaStore.Files.FileColumns.SIZE} > 1024"
             val selectionArgs = arrayOf(
                 MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(),
                 MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString()
@@ -67,13 +79,35 @@ class MediaStoreScanner(
                 val heightCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.HEIGHT)
                 val durationCol = cursor.getColumnIndex(MediaStore.Video.VideoColumns.DURATION)
                 val displayNameCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.DISPLAY_NAME)
+                val pendingCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    cursor.getColumnIndex(MediaStore.MediaColumns.IS_PENDING)
+                } else -1
+                val trashedCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    cursor.getColumnIndex(MediaStore.MediaColumns.IS_TRASHED)
+                } else -1
 
                 while (cursor.moveToNext()) {
-                    val id = cursor.getLong(idCol)
-                    activeIds.add(id)
+                    if (pendingCol >= 0 && !cursor.isNull(pendingCol) && cursor.getInt(pendingCol) == 1) {
+                        continue
+                    }
+                    if (trashedCol >= 0 && !cursor.isNull(trashedCol) && cursor.getInt(trashedCol) == 1) {
+                        continue
+                    }
 
+                    val id = cursor.getLong(idCol)
                     val mediaType = cursor.getInt(mediaTypeCol)
                     val isVideo = (mediaType == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO)
+
+                    val duration = if (isVideo && durationCol >= 0 && !cursor.isNull(durationCol)) {
+                        cursor.getLong(durationCol)
+                    } else null
+
+                    // Skip corrupted or 0-second stub video files that would render black in Reels
+                    if (isVideo && (duration == null || duration < 400L)) {
+                        continue
+                    }
+
+                    activeIds.add(id)
 
                     val contentUri = if (isVideo) {
                         ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
@@ -82,9 +116,9 @@ class MediaStoreScanner(
                     }
 
                     val mimeType = if (mimeTypeCol >= 0 && !cursor.isNull(mimeTypeCol)) {
-                        cursor.getString(mimeTypeCol) ?: if (isVideo) "video/*" else "image/*"
+                        cursor.getString(mimeTypeCol) ?: if (isVideo) "video/mp4" else "image/jpeg"
                     } else {
-                        if (isVideo) "video/*" else "image/*"
+                        if (isVideo) "video/mp4" else "image/jpeg"
                     }
 
                     val dateAdded = if (dateAddedCol >= 0 && !cursor.isNull(dateAddedCol)) {
@@ -95,9 +129,6 @@ class MediaStoreScanner(
 
                     val width = if (widthCol >= 0 && !cursor.isNull(widthCol)) cursor.getInt(widthCol) else 0
                     val height = if (heightCol >= 0 && !cursor.isNull(heightCol)) cursor.getInt(heightCol) else 0
-                    val duration = if (isVideo && durationCol >= 0 && !cursor.isNull(durationCol)) {
-                        cursor.getLong(durationCol)
-                    } else null
 
                     val displayName = if (displayNameCol >= 0 && !cursor.isNull(displayNameCol)) {
                         cursor.getString(displayNameCol) ?: "Media_$id"
@@ -123,18 +154,25 @@ class MediaStoreScanner(
                 }
             }
 
-            // Insert newly discovered files (OnConflictStrategy.IGNORE keeps existing indexed state)
+            // Insert newly discovered files in chunks of 250 to avoid SQLite variable limits
             if (scannedMedia.isNotEmpty()) {
-                mediaDao.insertMediaList(scannedMedia)
+                scannedMedia.chunked(250).forEach { chunk ->
+                    mediaDao.insertMediaList(chunk)
+                }
             }
 
-            // Clean up deleted items from Room (cascading deletes face records)
-            if (activeIds.isNotEmpty()) {
-                mediaDao.deleteMissingMedia(activeIds)
+            // Clean up deleted items from Room safely
+            val existingIds = mediaDao.getAllMediaIds()
+            val activeIdSet = activeIds.toHashSet()
+            val deletedIds = existingIds.filter { !activeIdSet.contains(it) }
+            if (deletedIds.isNotEmpty()) {
+                deletedIds.chunked(250).forEach { chunk ->
+                    mediaDao.deleteMediaByIds(chunk)
+                }
             }
 
-            // Enqueue FaceIndexingWorker to process unindexed items in background
-            enqueueFaceIndexingWorker()
+            // Enqueue expedited FaceIndexingWorker to process unindexed items
+            enqueueFaceIndexingWorker(replace = false)
 
             scannedMedia.size
         } catch (e: Exception) {
@@ -143,11 +181,13 @@ class MediaStoreScanner(
         }
     }
 
-    fun enqueueFaceIndexingWorker() {
-        val workRequest = OneTimeWorkRequestBuilder<FaceIndexingWorker>().build()
+    fun enqueueFaceIndexingWorker(replace: Boolean = false) {
+        val workRequest = OneTimeWorkRequestBuilder<FaceIndexingWorker>()
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .build()
         WorkManager.getInstance(context).enqueueUniqueWork(
             FACE_INDEXING_WORK_NAME,
-            ExistingWorkPolicy.KEEP,
+            if (replace) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP,
             workRequest
         )
     }

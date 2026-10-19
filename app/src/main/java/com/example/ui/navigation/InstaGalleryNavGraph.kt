@@ -1,3 +1,4 @@
+// InstaGallery v1.0
 package com.example.ui.navigation
 
 import androidx.compose.foundation.background
@@ -44,10 +45,14 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.navArgument
 import coil.compose.AsyncImage
+import com.example.data.local.OnboardingPreferences
 import com.example.data.repository.GalleryRepository
 import com.example.ui.screens.detail.PostDetailScreen
 import com.example.ui.screens.home.HomeFeedScreen
 import com.example.ui.screens.home.HomeViewModel
+import com.example.ui.screens.onboarding.FaceScanLoadingScreen
+import com.example.ui.screens.onboarding.OnboardingViewModel
+import com.example.ui.screens.onboarding.ProfileSetupScreen
 import com.example.ui.screens.people.PeopleDirectoryScreen
 import com.example.ui.screens.people.PeopleViewModel
 import com.example.ui.screens.permission.PermissionGateScreen
@@ -74,12 +79,19 @@ fun InstaGalleryNavGraph(
     val allPeople by repository.allPeople.collectAsStateWithLifecycle(initialValue = emptyList())
     val topPersonAvatar = allPeople.firstOrNull()?.avatarCropPath ?: ""
 
-    val showBottomBar = currentRoute != Screen.PermissionGate.route
+    val onboardingViewModel: OnboardingViewModel = viewModel()
 
-    val startDestination = if (hasAnyMediaPermission(context)) {
-        Screen.Home.route
-    } else {
-        Screen.PermissionGate.route
+    val showBottomBar = currentRoute != Screen.PermissionGate.route &&
+        currentRoute != Screen.FaceScanning.route &&
+        currentRoute != Screen.ProfileSetup.route
+
+    val startDestination = remember {
+        when {
+            !hasAnyMediaPermission(context) -> Screen.PermissionGate.route
+            !OnboardingPreferences.isInitialScanDone(context) -> Screen.FaceScanning.route
+            !OnboardingPreferences.isProfileSetupDone(context) -> Screen.ProfileSetup.route
+            else -> Screen.Home.route
+        }
     }
 
     Scaffold(
@@ -111,8 +123,35 @@ fun InstaGalleryNavGraph(
             composable(Screen.PermissionGate.route) {
                 PermissionGateScreen(
                     onPermissionsGranted = {
-                        navController.navigate(Screen.Home.route) {
+                        val nextRoute = when {
+                            !OnboardingPreferences.isInitialScanDone(context) -> Screen.FaceScanning.route
+                            !OnboardingPreferences.isProfileSetupDone(context) -> Screen.ProfileSetup.route
+                            else -> Screen.Home.route
+                        }
+                        navController.navigate(nextRoute) {
                             popUpTo(Screen.PermissionGate.route) { inclusive = true }
+                        }
+                    }
+                )
+            }
+
+            composable(Screen.FaceScanning.route) {
+                FaceScanLoadingScreen(
+                    viewModel = onboardingViewModel,
+                    onScanCompleted = {
+                        navController.navigate(Screen.ProfileSetup.route) {
+                            popUpTo(Screen.FaceScanning.route) { inclusive = true }
+                        }
+                    }
+                )
+            }
+
+            composable(Screen.ProfileSetup.route) {
+                ProfileSetupScreen(
+                    viewModel = onboardingViewModel,
+                    onSetupCompleted = {
+                        navController.navigate(Screen.Home.route) {
+                            popUpTo(Screen.ProfileSetup.route) { inclusive = true }
                         }
                     }
                 )
@@ -144,6 +183,13 @@ fun InstaGalleryNavGraph(
                     viewModel = peopleViewModel,
                     onPersonClick = { personId ->
                         navController.navigate(Screen.Profile.createRoute(personId))
+                    },
+                    onOpenSetupClick = {
+                        navController.navigate(Screen.ProfileSetup.route)
+                    },
+                    onRescanGalleryClick = {
+                        onboardingViewModel.triggerFullRescan()
+                        navController.navigate(Screen.FaceScanning.route)
                     }
                 )
             }
