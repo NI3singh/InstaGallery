@@ -85,9 +85,10 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
             val personMedia = mediaByPerson[person.personId] ?: emptyList()
             val photos = personMedia.count { !it.isVideo }
             val reels = personMedia.count { it.isVideo }
+            val topThreeMedia = personMedia.sortedBy { it.isVideo }.take(3)
             PersonPreviewCard(
                 person = person,
-                sampleMedia = personMedia.take(5),
+                sampleMedia = topThreeMedia,
                 photoCount = photos,
                 reelCount = reels
             )
@@ -177,6 +178,22 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
             current.remove(personId)
         } else {
             current.add(personId)
+        }
+        _markedUnknownIds.value = current
+    }
+
+    fun setPersonUnknownStatus(personId: Long, isUnknown: Boolean, defaultName: String = "") {
+        val current = _markedUnknownIds.value.toMutableSet()
+        if (isUnknown) {
+            current.add(personId)
+        } else {
+            current.remove(personId)
+            val existingName = _editedNames.value[personId]
+            if (existingName != null && existingName.isBlank() && defaultName.isNotBlank()) {
+                val names = _editedNames.value.toMutableMap()
+                names[personId] = defaultName
+                _editedNames.value = names
+            }
         }
         _markedUnknownIds.value = current
     }
