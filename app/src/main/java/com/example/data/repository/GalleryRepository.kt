@@ -13,6 +13,7 @@ import com.example.data.media.MediaStoreScanner
 import com.example.ml.FaceClusterManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -25,13 +26,46 @@ class GalleryRepository(private val context: Context) {
     private val scanner = MediaStoreScanner(context, mediaDao)
     private val clusterManager = FaceClusterManager(context, personDao, mediaDao)
 
+    /**
+     * Section 3.1: Primary people Flow observed by ProfileSetupScreen, HomeFeedScreen, and PeopleDirectoryScreen.
+     * Uses `personDao.getVisiblePeopleFlow()` (`isHiddenToOther = 0 AND (faceCount >= 2 OR isNamedByUser = 1)`),
+     * falling back to `faceCount >= 1` ONLY if the entire device has 0 clusters with `faceCount >= 2 || isNamedByUser`.
+     */
+    val allPeople: Flow<List<PersonEntity>> = combine(
+        personDao.getVisiblePeopleFlow(),
+        personDao.getAllPeople()
+    ) { visiblePeople, allActivePeople ->
+        if (visiblePeople.isNotEmpty()) {
+            visiblePeople
+        } else {
+            allActivePeople
+        }
+    }
+
+    private fun filterMediaAuthorsToVisible(
+        mediaFlow: Flow<List<MediaWithAuthors>>
+    ): Flow<List<MediaWithAuthors>> = combine(
+        mediaFlow,
+        allPeople
+    ) { items, visiblePeople ->
+        val visibleIds = visiblePeople.asSequence().map { it.personId }.toHashSet()
+        items.map { item ->
+            val filteredAuthors = item.authors.filter { visibleIds.contains(it.personId) }
+            if (filteredAuthors.size == item.authors.size) {
+                item
+            } else {
+                item.copy(authors = filteredAuthors)
+            }
+        }
+    }
+
     // Observables
-    val allMediaWithAuthors: Flow<List<MediaWithAuthors>> = mediaDao.getAllMediaWithAuthors()
-    val photosWithAuthors: Flow<List<MediaWithAuthors>> = mediaDao.getPhotosWithAuthors()
-    val videosWithAuthors: Flow<List<MediaWithAuthors>> = mediaDao.getVideosWithAuthors()
-    val favoritePhotosWithAuthors: Flow<List<MediaWithAuthors>> = mediaDao.getFavoritePhotosWithAuthors()
-    val bookmarkedPhotosWithAuthors: Flow<List<MediaWithAuthors>> = mediaDao.getBookmarkedPhotosWithAuthors()
-    val allPeople: Flow<List<PersonEntity>> = personDao.getAllPeople()
+    val allMediaWithAuthors: Flow<List<MediaWithAuthors>> = filterMediaAuthorsToVisible(mediaDao.getAllMediaWithAuthors())
+    val photosWithAuthors: Flow<List<MediaWithAuthors>> = filterMediaAuthorsToVisible(mediaDao.getPhotosWithAuthors())
+    val videosWithAuthors: Flow<List<MediaWithAuthors>> = filterMediaAuthorsToVisible(mediaDao.getVideosWithAuthors())
+    val favoritePhotosWithAuthors: Flow<List<MediaWithAuthors>> = filterMediaAuthorsToVisible(mediaDao.getFavoritePhotosWithAuthors())
+    val bookmarkedPhotosWithAuthors: Flow<List<MediaWithAuthors>> = filterMediaAuthorsToVisible(mediaDao.getBookmarkedPhotosWithAuthors())
+
     val unindexedCount: Flow<Int> = mediaDao.getUnindexedCount()
     val processedCount: Flow<Int> = mediaDao.getProcessedCount()
     val totalMediaCount: Flow<Int> = mediaDao.getTotalMediaCount()
@@ -46,32 +80,45 @@ class GalleryRepository(private val context: Context) {
         return scanner.scanAndReconcile()
     }
 
-    fun getMediaById(mediaId: Long): Flow<MediaWithAuthors?> = mediaDao.getMediaById(mediaId)
+    fun getMediaById(mediaId: Long): Flow<MediaWithAuthors?> = combine(
+        mediaDao.getMediaById(mediaId),
+        allPeople
+    ) { item, visiblePeople ->
+        if (item == null) {
+            null
+        } else {
+            val visibleIds = visiblePeople.asSequence().map { it.personId }.toHashSet()
+            item.copy(authors = item.authors.filter { visibleIds.contains(it.personId) })
+        }
+    }
 
     fun getPersonById(personId: Long): Flow<PersonEntity?> = personDao.getPersonById(personId)
 
     fun getMediaForPerson(personId: Long): Flow<List<MediaWithAuthors>> {
-        return if (personId == -1L) {
+        val rawFlow = if (personId == -1L) {
             mediaDao.getUnassociatedMedia()
         } else {
             mediaDao.getMediaForPerson(personId)
         }
+        return filterMediaAuthorsToVisible(rawFlow)
     }
 
     fun getPhotosForPerson(personId: Long): Flow<List<MediaWithAuthors>> {
-        return if (personId == -1L) {
+        val rawFlow = if (personId == -1L) {
             mediaDao.getUnassociatedPhotos()
         } else {
             mediaDao.getPhotosForPerson(personId)
         }
+        return filterMediaAuthorsToVisible(rawFlow)
     }
 
     fun getVideosForPerson(personId: Long): Flow<List<MediaWithAuthors>> {
-        return if (personId == -1L) {
+        val rawFlow = if (personId == -1L) {
             mediaDao.getUnassociatedVideos()
         } else {
             mediaDao.getVideosForPerson(personId)
         }
+        return filterMediaAuthorsToVisible(rawFlow)
     }
 
     fun getPhotoCountForPerson(personId: Long): Flow<Int> {
@@ -112,8 +159,43 @@ class GalleryRepository(private val context: Context) {
         mediaDao.setBookmarked(mediaId, !currentBookmarked)
     }
 
-    suspend fun updatePersonName(personId: Long, name: String) {
-        personDao.updatePersonName(personId, name)
+    /**
+     * Section 3.2: Live Auto-Merge & Instant Anchor Re-Sweep When User Names a Profile:
+     * 1. Trims and strips any leading '@'.
+     * 2. Checks if another PersonEntity already has `name.equals(newName, ignoreCase = true)`:
+     *    - If a match exists: automatically merges the two profiles into one.
+     *    - If no match exists: marks the person as named by user (`personDao.markPersonNamedByUser(personId, newName)`).
+     * 3. Immediately triggers `clusterManager.runPass2ConsolidationAndAnchorSweep()` on `Dispatchers.Default`
+     *    so all unassigned/angled faces and video frames matching this named anchor (>= 0.55f) are swept in!
+     */
+    suspend fun updatePersonName(personId: Long, rawName: String) = withContext(Dispatchers.IO) {
+        val newName = rawName.trim().removePrefix("@").trim()
+        if (newName.isBlank()) {
+            personDao.hidePersonToOther(personId)
+            clusterManager.invalidateCache()
+            return@withContext
+        }
+
+        val allExisting = personDao.getAllPeopleIncludeHiddenSync()
+        val matchingExisting = allExisting.firstOrNull {
+            it.personId != personId &&
+                !it.isHiddenToOther &&
+                it.name.trim().removePrefix("@").trim().equals(newName, ignoreCase = true)
+        }
+
+        if (matchingExisting != null) {
+            personDao.mergePeople(
+                sourcePersonIds = listOf(personId),
+                targetPersonId = matchingExisting.personId,
+                newName = newName
+            )
+        } else {
+            personDao.markPersonNamedByUser(personId, newName)
+        }
+
+        withContext(Dispatchers.Default) {
+            clusterManager.runPass2ConsolidationAndAnchorSweep()
+        }
     }
 
     suspend fun updateAvatar(personId: Long, cropPath: String) {
@@ -128,19 +210,26 @@ class GalleryRepository(private val context: Context) {
         personDao.tagPersonInMediaAndSyncCount(mediaId, personId)
     }
 
-    suspend fun mergePeople(sourceIds: List<Long>, targetId: Long, newName: String) {
-        personDao.mergePeople(sourceIds, targetId, newName)
+    suspend fun mergePeople(sourceIds: List<Long>, targetId: Long, newName: String) = withContext(Dispatchers.IO) {
+        val cleanName = newName.trim().removePrefix("@").trim()
+        personDao.mergePeople(sourceIds, targetId, cleanName)
+        withContext(Dispatchers.Default) {
+            clusterManager.runPass2ConsolidationAndAnchorSweep()
+        }
     }
 
-    suspend fun movePersonToOther(personId: Long) {
-        personDao.movePersonToOther(personId)
+    suspend fun movePersonToOther(personId: Long) = withContext(Dispatchers.IO) {
+        personDao.hidePersonToOther(personId)
+        clusterManager.invalidateCache()
     }
 
     /**
      * Completes the Profile Setup step:
-     * 1. Moves any clusters marked as Unknown/Skip into @Other (unlinking their cross-refs).
-     * 2. Saves user-assigned or default names for active profiles.
-     * 3. Automatically merges any profiles given the exact same name by the user!
+     * 1. Hides any clusters marked as Unknown/Skip into @Other (`personDao.hidePersonToOther`).
+     * 2. Saves user-assigned or default names for active profiles (stripping any leading `@`).
+     * 3. Automatically merges any profiles given the exact same name by the user.
+     * 4. Immediately runs `clusterManager.runPass2ConsolidationAndAnchorSweep()` on `Dispatchers.Default`
+     *    so newly named anchors (e.g. `@Papa`, `@Maa`) sweep unassigned/side-angle faces before the feed opens.
      */
     suspend fun applyProfileSetup(
         namedProfiles: Map<Long, String>,
@@ -148,32 +237,55 @@ class GalleryRepository(private val context: Context) {
     ) = withContext(Dispatchers.IO) {
         // 1. Move unknown / skipped face clusters into @Other
         for (unknownId in unknownPersonIds) {
-            personDao.movePersonToOther(unknownId)
+            personDao.hidePersonToOther(unknownId)
         }
 
         // 2. Group remaining profiles by normalized name so duplicate names auto-merge
         val activeGroups = mutableMapOf<String, MutableList<Pair<Long, String>>>()
         for ((personId, rawName) in namedProfiles) {
             if (unknownPersonIds.contains(personId)) continue
-            val cleanName = rawName.trim()
+            val cleanName = rawName.trim().removePrefix("@").trim()
             if (cleanName.isBlank()) {
-                personDao.movePersonToOther(personId)
+                personDao.hidePersonToOther(personId)
                 continue
             }
             val key = cleanName.lowercase()
             activeGroups.getOrPut(key) { mutableListOf() }.add(personId to cleanName)
         }
 
-        for ((_, group) in activeGroups) {
-            if (group.size == 1) {
+        val allExistingInDb = personDao.getAllPeopleIncludeHiddenSync().associateBy { it.personId }
+
+        for ((normalizedKey, group) in activeGroups) {
+            // Also check if another active person in DB (outside this setup batch) already has this name
+            val externalMatch = allExistingInDb.values.firstOrNull { existing ->
+                !existing.isHiddenToOther &&
+                    !unknownPersonIds.contains(existing.personId) &&
+                    group.none { it.first == existing.personId } &&
+                    existing.name.trim().removePrefix("@").trim().lowercase() == normalizedKey
+            }
+
+            if (externalMatch != null) {
+                val sourceIds = group.map { it.first }
+                val targetName = group.first().second
+                personDao.mergePeople(
+                    sourcePersonIds = sourceIds,
+                    targetPersonId = externalMatch.personId,
+                    newName = targetName
+                )
+            } else if (group.size == 1) {
                 val (personId, name) = group[0]
-                personDao.updatePersonName(personId, name)
+                personDao.markPersonNamedByUser(personId, name)
             } else if (group.size > 1) {
                 val targetId = group[0].first
                 val targetName = group[0].second
                 val sourceIds = group.drop(1).map { it.first }
                 personDao.mergePeople(sourceIds, targetId, targetName)
             }
+        }
+
+        // 3. Trigger immediate Pass-2 Anchor Sweep so named profiles sweep unassigned/side-angle faces
+        withContext(Dispatchers.Default) {
+            clusterManager.runPass2ConsolidationAndAnchorSweep()
         }
 
         OnboardingPreferences.markInitialScanCompleted(context, true)
@@ -189,6 +301,7 @@ class GalleryRepository(private val context: Context) {
         personDao.deleteAllFaces()
         personDao.deleteAllPeople()
         mediaDao.resetAllMediaProcessed()
+        clusterManager.invalidateCache()
 
         val cropsDir = File(context.filesDir, "face_crops")
         if (cropsDir.exists()) {

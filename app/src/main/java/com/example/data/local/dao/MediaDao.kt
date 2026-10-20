@@ -25,6 +25,10 @@ interface MediaDao {
     fun getAllMediaWithAuthors(): Flow<List<MediaWithAuthors>>
 
     @Transaction
+    @Query("SELECT * FROM media_items ORDER BY dateAddedSeconds DESC")
+    suspend fun getAllMediaWithAuthorsSync(): List<MediaWithAuthors>
+
+    @Transaction
     @Query("SELECT * FROM media_items WHERE isVideo = 0 ORDER BY dateAddedSeconds DESC")
     fun getPhotosWithAuthors(): Flow<List<MediaWithAuthors>>
 
@@ -33,87 +37,262 @@ interface MediaDao {
     fun getVideosWithAuthors(): Flow<List<MediaWithAuthors>>
 
     @Transaction
-    @Query("SELECT * FROM media_items WHERE isVideo = 0 AND isFavorite = 1 ORDER BY dateAddedSeconds DESC")
+    @Query("SELECT * FROM media_items WHERE isFavorite = 1 ORDER BY dateAddedSeconds DESC")
     fun getFavoritePhotosWithAuthors(): Flow<List<MediaWithAuthors>>
 
     @Transaction
-    @Query("SELECT * FROM media_items WHERE isVideo = 0 AND isBookmarked = 1 ORDER BY dateAddedSeconds DESC")
+    @Query("SELECT * FROM media_items WHERE isBookmarked = 1 ORDER BY dateAddedSeconds DESC")
     fun getBookmarkedPhotosWithAuthors(): Flow<List<MediaWithAuthors>>
 
-    @RewriteQueriesToDropUnusedColumns
     @Transaction
-    @Query("""
-        SELECT media_items.* FROM media_items 
+    @Query("SELECT * FROM media_items WHERE mediaId = :mediaId")
+    fun getMediaById(mediaId: Long): Flow<MediaWithAuthors?>
+
+    @Transaction
+    @Query("SELECT * FROM media_items WHERE mediaId = :mediaId")
+    fun getMediaWithAuthorsById(mediaId: Long): Flow<MediaWithAuthors?>
+
+    @Query("SELECT * FROM media_items WHERE mediaId = :mediaId")
+    suspend fun getMediaByIdSync(mediaId: Long): MediaEntity?
+
+    @Transaction
+    @RewriteQueriesToDropUnusedColumns
+    @Query(
+        """
+        SELECT DISTINCT media_items.* FROM media_items 
         INNER JOIN media_person_cross_ref ON media_items.mediaId = media_person_cross_ref.mediaId 
         WHERE media_person_cross_ref.personId = :personId 
-        ORDER BY dateAddedSeconds DESC
-    """)
+        ORDER BY media_items.dateAddedSeconds DESC
+        """
+    )
     fun getMediaForPerson(personId: Long): Flow<List<MediaWithAuthors>>
 
-    @RewriteQueriesToDropUnusedColumns
     @Transaction
-    @Query("""
-        SELECT media_items.* FROM media_items 
+    @RewriteQueriesToDropUnusedColumns
+    @Query(
+        """
+        SELECT DISTINCT media_items.* FROM media_items 
         INNER JOIN media_person_cross_ref ON media_items.mediaId = media_person_cross_ref.mediaId 
-        WHERE media_person_cross_ref.personId = :personId AND isVideo = 0 
-        ORDER BY dateAddedSeconds DESC
-    """)
+        WHERE media_person_cross_ref.personId = :personId 
+        ORDER BY media_items.dateAddedSeconds DESC
+        """
+    )
+    suspend fun getMediaForPersonSync(personId: Long): List<MediaWithAuthors>
+
+    @Transaction
+    @RewriteQueriesToDropUnusedColumns
+    @Query(
+        """
+        SELECT DISTINCT media_items.* FROM media_items 
+        INNER JOIN media_person_cross_ref ON media_items.mediaId = media_person_cross_ref.mediaId 
+        WHERE media_person_cross_ref.personId = :personId AND media_items.isVideo = 0
+        ORDER BY media_items.dateAddedSeconds DESC
+        """
+    )
     fun getPhotosForPerson(personId: Long): Flow<List<MediaWithAuthors>>
 
-    @RewriteQueriesToDropUnusedColumns
     @Transaction
-    @Query("""
-        SELECT media_items.* FROM media_items 
+    @RewriteQueriesToDropUnusedColumns
+    @Query(
+        """
+        SELECT DISTINCT media_items.* FROM media_items 
         INNER JOIN media_person_cross_ref ON media_items.mediaId = media_person_cross_ref.mediaId 
-        WHERE media_person_cross_ref.personId = :personId AND isVideo = 1 
-        ORDER BY dateAddedSeconds DESC
-    """)
+        WHERE media_person_cross_ref.personId = :personId AND media_items.isVideo = 1
+        ORDER BY media_items.dateAddedSeconds DESC
+        """
+    )
     fun getVideosForPerson(personId: Long): Flow<List<MediaWithAuthors>>
 
     @Transaction
-    @Query("""
+    @RewriteQueriesToDropUnusedColumns
+    @Query(
+        """
+        SELECT DISTINCT media_items.* FROM media_items 
+        INNER JOIN media_person_cross_ref ON media_items.mediaId = media_person_cross_ref.mediaId 
+        WHERE media_person_cross_ref.personId = :personId AND media_items.isVideo = 1
+        ORDER BY media_items.dateAddedSeconds DESC
+        """
+    )
+    fun getReelsForPerson(personId: Long): Flow<List<MediaWithAuthors>>
+
+    @Transaction
+    @Query(
+        """
         SELECT * FROM media_items 
-        WHERE mediaId NOT IN (SELECT DISTINCT mediaId FROM media_person_cross_ref)
+        WHERE NOT EXISTS (
+            SELECT 1 FROM media_person_cross_ref 
+            INNER JOIN people ON people.personId = media_person_cross_ref.personId
+            WHERE media_person_cross_ref.mediaId = media_items.mediaId
+              AND people.isHiddenToOther = 0
+              AND (
+                  people.faceCount >= 2 
+                  OR people.isNamedByUser = 1 
+                  OR NOT EXISTS (
+                      SELECT 1 FROM people p2 
+                      WHERE p2.isHiddenToOther = 0 AND (p2.faceCount >= 2 OR p2.isNamedByUser = 1)
+                  )
+              )
+        ) 
         ORDER BY dateAddedSeconds DESC
-    """)
+        """
+    )
     fun getUnassociatedMedia(): Flow<List<MediaWithAuthors>>
 
     @Transaction
-    @Query("""
+    @Query(
+        """
         SELECT * FROM media_items 
-        WHERE mediaId NOT IN (SELECT DISTINCT mediaId FROM media_person_cross_ref) AND isVideo = 0
+        WHERE isVideo = 0 AND NOT EXISTS (
+            SELECT 1 FROM media_person_cross_ref 
+            INNER JOIN people ON people.personId = media_person_cross_ref.personId
+            WHERE media_person_cross_ref.mediaId = media_items.mediaId
+              AND people.isHiddenToOther = 0
+              AND (
+                  people.faceCount >= 2 
+                  OR people.isNamedByUser = 1 
+                  OR NOT EXISTS (
+                      SELECT 1 FROM people p2 
+                      WHERE p2.isHiddenToOther = 0 AND (p2.faceCount >= 2 OR p2.isNamedByUser = 1)
+                  )
+              )
+        ) 
         ORDER BY dateAddedSeconds DESC
-    """)
+        """
+    )
     fun getUnassociatedPhotos(): Flow<List<MediaWithAuthors>>
 
     @Transaction
-    @Query("""
+    @Query(
+        """
         SELECT * FROM media_items 
-        WHERE mediaId NOT IN (SELECT DISTINCT mediaId FROM media_person_cross_ref) AND isVideo = 1
+        WHERE isVideo = 1 AND NOT EXISTS (
+            SELECT 1 FROM media_person_cross_ref 
+            INNER JOIN people ON people.personId = media_person_cross_ref.personId
+            WHERE media_person_cross_ref.mediaId = media_items.mediaId
+              AND people.isHiddenToOther = 0
+              AND (
+                  people.faceCount >= 2 
+                  OR people.isNamedByUser = 1 
+                  OR NOT EXISTS (
+                      SELECT 1 FROM people p2 
+                      WHERE p2.isHiddenToOther = 0 AND (p2.faceCount >= 2 OR p2.isNamedByUser = 1)
+                  )
+              )
+        ) 
         ORDER BY dateAddedSeconds DESC
-    """)
+        """
+    )
     fun getUnassociatedVideos(): Flow<List<MediaWithAuthors>>
 
-    @Query("""
+    @Transaction
+    @Query(
+        """
+        SELECT * FROM media_items 
+        WHERE isVideo = 1 AND NOT EXISTS (
+            SELECT 1 FROM media_person_cross_ref 
+            INNER JOIN people ON people.personId = media_person_cross_ref.personId
+            WHERE media_person_cross_ref.mediaId = media_items.mediaId
+              AND people.isHiddenToOther = 0
+              AND (
+                  people.faceCount >= 2 
+                  OR people.isNamedByUser = 1 
+                  OR NOT EXISTS (
+                      SELECT 1 FROM people p2 
+                      WHERE p2.isHiddenToOther = 0 AND (p2.faceCount >= 2 OR p2.isNamedByUser = 1)
+                  )
+              )
+        ) 
+        ORDER BY dateAddedSeconds DESC
+        """
+    )
+    fun getUnassociatedReels(): Flow<List<MediaWithAuthors>>
+
+    @Query(
+        """
         SELECT COUNT(*) FROM media_items 
-        WHERE mediaId NOT IN (SELECT DISTINCT mediaId FROM media_person_cross_ref)
-    """)
+        WHERE NOT EXISTS (
+            SELECT 1 FROM media_person_cross_ref 
+            INNER JOIN people ON people.personId = media_person_cross_ref.personId
+            WHERE media_person_cross_ref.mediaId = media_items.mediaId
+              AND people.isHiddenToOther = 0
+              AND (
+                  people.faceCount >= 2 
+                  OR people.isNamedByUser = 1 
+                  OR NOT EXISTS (
+                      SELECT 1 FROM people p2 
+                      WHERE p2.isHiddenToOther = 0 AND (p2.faceCount >= 2 OR p2.isNamedByUser = 1)
+                  )
+              )
+        )
+        """
+    )
     fun getUnassociatedCount(): Flow<Int>
 
-    @Query("""
+    @Query(
+        """
         SELECT COUNT(*) FROM media_items 
-        WHERE mediaId NOT IN (SELECT DISTINCT mediaId FROM media_person_cross_ref) AND isVideo = 0
-    """)
+        WHERE isVideo = 0 AND NOT EXISTS (
+            SELECT 1 FROM media_person_cross_ref 
+            INNER JOIN people ON people.personId = media_person_cross_ref.personId
+            WHERE media_person_cross_ref.mediaId = media_items.mediaId
+              AND people.isHiddenToOther = 0
+              AND (
+                  people.faceCount >= 2 
+                  OR people.isNamedByUser = 1 
+                  OR NOT EXISTS (
+                      SELECT 1 FROM people p2 
+                      WHERE p2.isHiddenToOther = 0 AND (p2.faceCount >= 2 OR p2.isNamedByUser = 1)
+                  )
+              )
+        )
+        """
+    )
     fun getUnassociatedPhotoCount(): Flow<Int>
 
-    @Query("""
+    @Query(
+        """
         SELECT COUNT(*) FROM media_items 
-        WHERE mediaId NOT IN (SELECT DISTINCT mediaId FROM media_person_cross_ref) AND isVideo = 1
-    """)
+        WHERE isVideo = 1 AND NOT EXISTS (
+            SELECT 1 FROM media_person_cross_ref 
+            INNER JOIN people ON people.personId = media_person_cross_ref.personId
+            WHERE media_person_cross_ref.mediaId = media_items.mediaId
+              AND people.isHiddenToOther = 0
+              AND (
+                  people.faceCount >= 2 
+                  OR people.isNamedByUser = 1 
+                  OR NOT EXISTS (
+                      SELECT 1 FROM people p2 
+                      WHERE p2.isHiddenToOther = 0 AND (p2.faceCount >= 2 OR p2.isNamedByUser = 1)
+                  )
+              )
+        )
+        """
+    )
     fun getUnassociatedVideoCount(): Flow<Int>
 
+    @Query(
+        """
+        SELECT COUNT(*) FROM media_items 
+        WHERE isVideo = 1 AND NOT EXISTS (
+            SELECT 1 FROM media_person_cross_ref 
+            INNER JOIN people ON people.personId = media_person_cross_ref.personId
+            WHERE media_person_cross_ref.mediaId = media_items.mediaId
+              AND people.isHiddenToOther = 0
+              AND (
+                  people.faceCount >= 2 
+                  OR people.isNamedByUser = 1 
+                  OR NOT EXISTS (
+                      SELECT 1 FROM people p2 
+                      WHERE p2.isHiddenToOther = 0 AND (p2.faceCount >= 2 OR p2.isNamedByUser = 1)
+                  )
+              )
+        )
+        """
+    )
+    fun getUnassociatedReelCount(): Flow<Int>
+
     @Query("SELECT * FROM media_items WHERE isProcessedForFaces = 0 ORDER BY isVideo ASC, dateAddedSeconds DESC LIMIT :limit")
-    suspend fun getUnindexedMedia(limit: Int = 25): List<MediaEntity>
+    suspend fun getUnindexedMedia(limit: Int = 5000): List<MediaEntity>
 
     @Query("SELECT COUNT(*) FROM media_items WHERE isProcessedForFaces = 0")
     fun getUnindexedCount(): Flow<Int>
@@ -127,27 +306,11 @@ interface MediaDao {
     @Query("SELECT COUNT(*) FROM media_items")
     fun getTotalMediaCount(): Flow<Int>
 
-    @Transaction
-    @Query("SELECT * FROM media_items WHERE mediaId = :mediaId")
-    fun getMediaById(mediaId: Long): Flow<MediaWithAuthors?>
-
-    @Query("SELECT mediaId FROM media_items")
-    suspend fun getAllMediaIds(): List<Long>
-
-    @Query("SELECT mediaId, uri FROM media_items")
-    suspend fun getAllMediaIdsAndUris(): List<MediaIdAndUri>
+    @Query("SELECT COUNT(*) FROM media_items")
+    suspend fun getTotalMediaCountSync(): Int
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun insertMediaList(mediaList: List<MediaEntity>): List<Long>
-
-    @Query("UPDATE media_items SET isProcessedForFaces = :isProcessed, hasFaces = :hasFaces WHERE mediaId = :mediaId")
-    suspend fun updateMediaProcessed(mediaId: Long, isProcessed: Boolean, hasFaces: Boolean)
-
-    @Query("UPDATE media_items SET isProcessedForFaces = 0, hasFaces = 0")
-    suspend fun resetAllMediaProcessed()
-
-    @Query("DELETE FROM media_person_cross_ref")
-    suspend fun clearAllCrossRefs()
+    suspend fun insertMediaList(media: List<MediaEntity>): List<Long>
 
     @Query("UPDATE media_items SET isFavorite = :isFavorite WHERE mediaId = :mediaId")
     suspend fun setFavorite(mediaId: Long, isFavorite: Boolean)
@@ -155,12 +318,58 @@ interface MediaDao {
     @Query("UPDATE media_items SET isBookmarked = :isBookmarked WHERE mediaId = :mediaId")
     suspend fun setBookmarked(mediaId: Long, isBookmarked: Boolean)
 
-    @Query("DELETE FROM media_items WHERE mediaId IN (:deletedIds)")
-    suspend fun deleteMediaByIds(deletedIds: List<Long>)
+    @Query("UPDATE media_items SET isProcessedForFaces = :isProcessed, hasFaces = :hasFaces WHERE mediaId = :mediaId")
+    suspend fun updateMediaProcessed(mediaId: Long, isProcessed: Boolean, hasFaces: Boolean)
 
-    @Query("DELETE FROM media_person_cross_ref WHERE mediaId = :mediaId AND personId = :personId")
-    suspend fun removeMediaFromPerson(mediaId: Long, personId: Long)
+    @Query("UPDATE media_items SET isProcessedForFaces = 1, hasFaces = :hasFaces WHERE mediaId = :mediaId")
+    suspend fun markMediaAsProcessed(mediaId: Long, hasFaces: Boolean)
+
+    @Query(
+        """
+        UPDATE media_items 
+        SET hasFaces = CASE 
+            WHEN EXISTS (
+                SELECT 1 FROM media_person_cross_ref 
+                INNER JOIN people ON people.personId = media_person_cross_ref.personId
+                WHERE media_person_cross_ref.mediaId = media_items.mediaId
+                  AND people.isHiddenToOther = 0
+            ) THEN 1 
+            ELSE 0 
+        END
+        """
+    )
+    suspend fun syncAllMediaHasFaces()
+
+    @Query("UPDATE media_items SET isProcessedForFaces = 0, hasFaces = 0")
+    suspend fun resetAllMediaProcessed()
+
+    @Query("UPDATE media_items SET isProcessedForFaces = 0, hasFaces = 0")
+    suspend fun resetAllMediaProcessedFlags()
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertMediaPersonCrossRef(crossRef: MediaPersonCrossRef)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertMediaPersonCrossRefs(crossRefs: List<MediaPersonCrossRef>)
+
+    @Query("SELECT * FROM media_person_cross_ref")
+    suspend fun getAllCrossRefsSync(): List<MediaPersonCrossRef>
+
+    @Query("DELETE FROM media_person_cross_ref WHERE personId = :personId")
+    suspend fun deleteMediaPersonCrossRefsForPerson(personId: Long)
+
+    @Query("DELETE FROM media_person_cross_ref")
+    suspend fun clearAllCrossRefs()
+
+    @Query("DELETE FROM media_person_cross_ref")
+    suspend fun deleteAllCrossRefs()
+
+    @Query("SELECT mediaId FROM media_items")
+    suspend fun getAllMediaIds(): List<Long>
+
+    @Query("SELECT mediaId, uri FROM media_items")
+    suspend fun getAllMediaIdsAndUris(): List<MediaIdAndUri>
+
+    @Query("DELETE FROM media_items WHERE mediaId IN (:ids)")
+    suspend fun deleteMediaByIds(ids: List<Long>)
 }

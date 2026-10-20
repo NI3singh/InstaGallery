@@ -1,4 +1,5 @@
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
+import java.util.zip.ZipFile
 
 plugins {
   alias(libs.plugins.android.application)
@@ -16,8 +17,8 @@ android {
     applicationId = "com.aistudio.instagallery.pvhq"
     minSdk = 26
     targetSdk = 36
-    versionCode = 5
-    versionName = "1.0.5"
+    versionCode = 6
+    versionName = "1.1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -96,6 +97,31 @@ secrets {
 
 // googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
 
+val tfliteApiAar: Configuration by configurations.creating {
+  isCanBeResolved = true
+  isCanBeConsumed = false
+  isTransitive = false
+}
+
+dependencies {
+  tfliteApiAar("org.tensorflow:tensorflow-lite-api:${libs.versions.tflite.get()}")
+}
+
+val extractedTfliteApiJar: File by lazy {
+  val outFile = layout.buildDirectory.file("extracted-jars/tensorflow-lite-api.jar").get().asFile
+  if (!outFile.exists() || outFile.length() == 0L) {
+    outFile.parentFile.mkdirs()
+    val aarFile = tfliteApiAar.singleFile
+    ZipFile(aarFile).use { zip ->
+      val entry = zip.getEntry("classes.jar") ?: error("classes.jar missing in $aarFile")
+      zip.getInputStream(entry).use { input ->
+        outFile.outputStream().use { output -> input.copyTo(output) }
+      }
+    }
+  }
+  outFile
+}
+
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.
 dependencies {
@@ -127,6 +153,10 @@ dependencies {
   implementation(libs.media3.exoplayer)
   implementation(libs.media3.ui)
   implementation(libs.mlkit.face.detection)
+  implementation(files(extractedTfliteApiJar))
+  implementation(libs.tensorflow.lite) {
+    exclude(group = "org.tensorflow", module = "tensorflow-lite-api")
+  }
   implementation(libs.androidx.work.runtime.ktx)
   // implementation(libs.converter.moshi)
   // implementation(libs.firebase.ai)

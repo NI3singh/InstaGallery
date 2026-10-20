@@ -21,7 +21,10 @@ class FaceIndexingWorker(
         private const val TAG = "FaceIndexingWorker"
         const val PROGRESS_PROCESSED = "processed"
         const val PROGRESS_TOTAL = "total"
+        const val PROGRESS_PROFILES_COUNT = "profilesCount"
         const val PROGRESS_FACES_FOUND = "faces_found"
+        private const val BATCH_CHUNK_SIZE = 20
+        private const val PASS2_CONSOLIDATION_INTERVAL = 40
     }
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
@@ -37,125 +40,121 @@ class FaceIndexingWorker(
             val alreadyProcessed = mediaDao.getProcessedCount().firstOrNull() ?: 0
             val totalMedia = mediaDao.getTotalMediaCount().firstOrNull() ?: 0
             var processedCount = alreadyProcessed
+            var itemsProcessedInThisRun = 0
+
+            suspend fun countVisibleProfiles(): Int {
+                val allActive = personDao.getAllPeopleSync()
+                val multiOrNamed = allActive.count { !it.isHiddenToOther && (it.faceCount >= 2 || it.isNamedByUser) }
+                return if (multiOrNamed > 0) multiOrNamed else allActive.count { !it.isHiddenToOther }
+            }
 
             if (totalMedia > 0) {
+                val initialVisibleCount = countVisibleProfiles()
                 setProgress(
                     workDataOf(
                         PROGRESS_PROCESSED to processedCount,
                         PROGRESS_TOTAL to totalMedia,
-                        PROGRESS_FACES_FOUND to personDao.getAllPeopleSync().size
+                        PROGRESS_PROFILES_COUNT to initialVisibleCount,
+                        PROGRESS_FACES_FOUND to initialVisibleCount
                     )
                 )
             }
 
             while (!isStopped) {
-                val unindexedBatch = mediaDao.getUnindexedMedia(limit = 20)
+                // Queries unindexed media ordered by isVideo ASC (photos first, videos second), dateAddedSeconds DESC
+                val unindexedBatch = mediaDao.getUnindexedMedia(limit = BATCH_CHUNK_SIZE)
                 if (unindexedBatch.isEmpty()) break
 
                 for (media in unindexedBatch) {
                     if (isStopped) break
 
                     try {
-                        var facesFound = false
+                        val detectedFaces = detectorProcessor.processMediaItem(
+                            uriString = media.uri,
+                            isVideo = media.isVideo,
+                            durationMs = media.durationMs
+                        )
 
-                        if (!media.isVideo) {
-                            // Photo processing: high-precision detection + co-occurrence exclusion
-                            val bitmap = detectorProcessor.decodePhotoBitmap(media.uri)
-                            if (bitmap != null) {
-                                val detectedFaces = detectorProcessor.detectFaces(bitmap, isVideo = false)
-                                if (detectedFaces.isNotEmpty()) {
-                                    val matchedInThisPhoto = mutableSetOf<Long>()
-                                    for (face in detectedFaces) {
-                                        val alignedCrop = detectorProcessor.alignFaceCanonical(bitmap, face)
-                                        val avatarCrop = detectorProcessor.cropFaceAvatar(bitmap, face) ?: alignedCrop
-                                        if (alignedCrop != null && avatarCrop != null) {
-                                            val quality = detectorProcessor.computeFaceQuality(face, bitmap.width, bitmap.height)
-                                            val embedding = embeddingExtractor.extractEmbedding(alignedCrop, face)
-                                            val personId = clusterManager.processFace(
-                                                mediaId = media.mediaId,
-                                                face = face,
-                                                avatarBitmap = avatarCrop,
-                                                embedding = embedding,
-                                                faceQuality = quality,
-                                                isVideo = false,
-                                                excludePersonIdsInSameMedia = matchedInThisPhoto
-                                            )
-                                            if (personId != null) {
-                                                matchedInThisPhoto.add(personId)
-                                                facesFound = true
-                                            }
-                                            if (alignedCrop != bitmap) alignedCrop.recycle()
-                                            if (avatarCrop != bitmap && avatarCrop != alignedCrop) avatarCrop.recycle()
-                                        }
-                                    }
-                                }
-                                bitmap.recycle()
+                        val facesAssigned = try {
+                            if (detectedFaces.isNotEmpty()) {
+                                clusterManager.processDetectedFacesForMedia(
+                                    mediaId = media.mediaId,
+                                    detectedFaces = detectedFaces,
+                                    embeddingExtractor = embeddingExtractor,
+                                    isVideo = media.isVideo
+                                )
+                            } else {
+                                false
                             }
-                        } else {
-                            // Video processing: sample keyframes and match to established person clusters
-                            val frames = detectorProcessor.decodeVideoKeyframes(media.uri, media.durationMs)
-                            val matchedInThisVideo = mutableSetOf<Long>()
-                            for (frame in frames) {
-                                val detectedFaces = detectorProcessor.detectFaces(frame, isVideo = true)
-                                for (face in detectedFaces) {
-                                    val alignedCrop = detectorProcessor.alignFaceCanonical(frame, face)
-                                    val avatarCrop = detectorProcessor.cropFaceAvatar(frame, face) ?: alignedCrop
-                                    if (alignedCrop != null && avatarCrop != null) {
-                                        val quality = detectorProcessor.computeFaceQuality(face, frame.width, frame.height)
-                                        val embedding = embeddingExtractor.extractEmbedding(alignedCrop, face)
-                                        val personId = clusterManager.processFace(
-                                            mediaId = media.mediaId,
-                                            face = face,
-                                            avatarBitmap = avatarCrop,
-                                            embedding = embedding,
-                                            faceQuality = quality,
-                                            isVideo = true,
-                                            excludePersonIdsInSameMedia = emptySet()
-                                        )
-                                        if (personId != null) {
-                                            matchedInThisVideo.add(personId)
-                                            facesFound = true
-                                        }
-                                        if (alignedCrop != frame) alignedCrop.recycle()
-                                        if (avatarCrop != frame && avatarCrop != alignedCrop) avatarCrop.recycle()
-                                    }
+                        } finally {
+                            for (face in detectedFaces) {
+                                if (!face.alignedFaceBitmap.isRecycled) {
+                                    face.alignedFaceBitmap.recycle()
                                 }
-                                frame.recycle()
+                                if (face.avatarCropBitmap != face.alignedFaceBitmap && !face.avatarCropBitmap.isRecycled) {
+                                    face.avatarCropBitmap.recycle()
+                                }
                             }
                         }
 
                         mediaDao.updateMediaProcessed(
                             mediaId = media.mediaId,
                             isProcessed = true,
-                            hasFaces = facesFound
+                            hasFaces = facesAssigned
                         )
                     } catch (e: Exception) {
                         Log.e(TAG, "Error processing media ${media.mediaId}", e)
-                        mediaDao.updateMediaProcessed(media.mediaId, isProcessed = true, hasFaces = false)
+                        mediaDao.updateMediaProcessed(
+                            mediaId = media.mediaId,
+                            isProcessed = true,
+                            hasFaces = false
+                        )
                     }
 
                     processedCount++
-                    val latestTotal = (mediaDao.getTotalMediaCount().firstOrNull() ?: totalMedia).coerceAtLeast(processedCount)
+                    itemsProcessedInThisRun++
+
+                    // Every 40 processed items, run Pass-2 Graph Consolidation & Anchor k-NN Sweep
+                    if (itemsProcessedInThisRun % PASS2_CONSOLIDATION_INTERVAL == 0) {
+                        clusterManager.runPass2ConsolidationAndAnchorSweep()
+                    }
+
+                    val totalCount = (mediaDao.getTotalMediaCount().firstOrNull() ?: totalMedia)
+                        .coerceAtLeast(processedCount)
+                    val visiblePeopleCount = countVisibleProfiles()
+
                     setProgress(
                         workDataOf(
                             PROGRESS_PROCESSED to processedCount,
-                            PROGRESS_TOTAL to latestTotal
+                            PROGRESS_TOTAL to totalCount,
+                            PROGRESS_PROFILES_COUNT to visiblePeopleCount,
+                            PROGRESS_FACES_FOUND to visiblePeopleCount
                         )
                     )
                 }
-
-                // Consolidate split clusters after each batch
-                clusterManager.consolidateConvergedClusters()
             }
 
-            // Final cluster consolidation pass & sequential default numbering cleanup
-            clusterManager.consolidateConvergedClusters()
-            OnboardingPreferences.markInitialScanCompleted(applicationContext, true)
+            // Final Pass-2 Graph Consolidation & Anchor k-NN Sweep at the end of doWork()
+            clusterManager.runPass2ConsolidationAndAnchorSweep()
 
+            val finalTotal = mediaDao.getTotalMediaCount().firstOrNull() ?: processedCount
+            val finalVisibleCount = countVisibleProfiles()
+            setProgress(
+                workDataOf(
+                    PROGRESS_PROCESSED to finalTotal,
+                    PROGRESS_TOTAL to finalTotal,
+                    PROGRESS_PROFILES_COUNT to finalVisibleCount,
+                    PROGRESS_FACES_FOUND to finalVisibleCount
+                )
+            )
+
+            OnboardingPreferences.markInitialScanCompleted(applicationContext, true)
             Result.success()
         } catch (e: Exception) {
-            Log.e(TAG, "Worker failed", e)
+            Log.e(TAG, "FaceIndexingWorker failed", e)
             Result.retry()
+        } finally {
+            embeddingExtractor.close()
         }
     }
 }

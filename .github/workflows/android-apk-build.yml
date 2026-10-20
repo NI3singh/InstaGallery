@@ -11,8 +11,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_TAG: v1.0.5
-  APK_FILENAME: InstaGallery-v1.0.5.apk
+  RELEASE_TAG: v1.1.0
+  APK_FILENAME: InstaGallery-v1.1.0.apk
 
 jobs:
   build:
@@ -64,6 +64,51 @@ jobs:
             fi
           fi
 
+      - name: Download & Verify MobileFaceNet TFLite Model (>= 1 MB Gate)
+        run: |
+          mkdir -p app/src/main/assets
+          MODEL_PATH="app/src/main/assets/mobilefacenet.tflite"
+          MIRRORS=(
+            "https://raw.githubusercontent.com/sirius-ai/MobileFaceNet_TF/master/arch/pretrained_model/mobilefacenet.tflite"
+            "https://github.com/MCarlomagno/FaceRecognitionAuth/raw/master/assets/mobilefacenet.tflite"
+            "https://huggingface.co/datasets/Xenova/tflite-models/resolve/main/mobilefacenet.tflite"
+          )
+
+          VERIFIED=0
+          if [ -f "$MODEL_PATH" ]; then
+            EXISTING_SIZE=$(stat -c%s "$MODEL_PATH" 2>/dev/null || echo 0)
+            if [ "$EXISTING_SIZE" -ge 1000000 ]; then
+              echo "Existing verified mobilefacenet.tflite found (${EXISTING_SIZE} bytes)."
+              VERIFIED=1
+            fi
+          fi
+
+          if [ "$VERIFIED" -eq 0 ]; then
+            for URL in "${MIRRORS[@]}"; do
+              echo "Attempting download from: $URL"
+              rm -f "$MODEL_PATH"
+              if curl -L --fail --retry 3 --connect-timeout 15 -o "$MODEL_PATH" "$URL"; then
+                FILE_SIZE=$(stat -c%s "$MODEL_PATH" 2>/dev/null || echo 0)
+                echo "Downloaded size: ${FILE_SIZE} bytes"
+                if [ "$FILE_SIZE" -ge 1000000 ]; then
+                  echo "Successfully verified mobilefacenet.tflite (${FILE_SIZE} bytes >= 1,000,000 bytes)."
+                  VERIFIED=1
+                  break
+                else
+                  echo "Rejected download (${FILE_SIZE} bytes < 1,000,000 bytes). Trying next mirror..."
+                fi
+              else
+                echo "Mirror download failed: $URL"
+              fi
+            done
+          fi
+
+          if [ "$VERIFIED" -ne 1 ]; then
+            echo "ERROR: Failed to obtain a valid mobilefacenet.tflite (>= 1 MB) from all mirrors!"
+            exit 1
+          fi
+          ls -lh "$MODEL_PATH"
+
       - name: Clean Legacy WebP Icons & Build Optimized Signed Phone APK
         run: |
           rm -f app/src/main/res/mipmap-*/ic_launcher.webp app/src/main/res/mipmap-*/ic_launcher_round.webp
@@ -89,7 +134,7 @@ jobs:
       - name: Upload InstaGallery APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: InstaGallery-v1.0.5-APK
+          name: InstaGallery-v1.1.0-APK
           path: dist/${{ env.APK_FILENAME }}
           if-no-files-found: error
 
@@ -100,7 +145,7 @@ jobs:
         run: |
           APK_SIZE=$(du -h "dist/${APK_FILENAME}" | cut -f1)
           cat << EOF > RELEASE_NOTES.md
-          ## 📸 InstaGallery ${RELEASE_TAG} — Reimagined Onboarding, Radial Halo Indexing & 3D Face Carousel
+          ## 📸 InstaGallery ${RELEASE_TAG} — Hybrid Two-Pass Anchor Face Recognition Engine & 3D Setup Carousel
 
           ### ⚡ Fast APK Download (\`${APK_SIZE}\` — Slim Optimized Build)
           - **Option 1 — Direct GitHub Release Asset**: Tap **\`${APK_FILENAME}\`** under **Assets** below.
@@ -111,15 +156,21 @@ jobs:
 
           ### 📲 Installation Steps
           1. Download **\`${APK_FILENAME}\`** on your Android 8.0+ (API 26+) phone.
-          2. Open the \`.apk\` file and allow *Install unknown apps* if prompted (installs cleanly over v1.0.0 while preserving all indexed database profiles).
-          3. Launch **InstaGallery**.
+          2. Open the \`.apk\` file and allow *Install unknown apps* if prompted.
+          3. Launch **InstaGallery** — the upgraded Room v3 schema automatically resets legacy fragmented clusters and runs the new Two-Pass Anchor Face Recognition pipeline.
 
-          ### ✨ What's New in ${RELEASE_TAG}
-          - **Choreographed Stitch Welcome Screen**: 2-stage opening animation with floating 3-card fan showcase, Story-ring avatar bubbles, and smooth crossfade into indexing.
-          - **Radial Halo Processing Screen**: 188.dp Instagram gradient sweep arc with breathing glow, rotating shimmer scan, 28-segment vertical capsule bar, and live overlapping face avatar pill.
-          - **Interactive 3D Horizontal Carousel Setup (\`ProfileSetupScreen\`)**: Swipeable \`HorizontalPager\` with 3-photo context banner, overlapping 96.dp Story-ring avatar, live auto-merge detection, quick-tap name chips, and \`Move to @Other\` / \`Keep Profile\` controls.
-          - **100% Multi-Volume MediaStore Scanner**: Queries \`Images\`, \`Video\`, and \`Files\` across all external storage volumes with 4:5 dimension fallbacks and incremental delta persistence that preserves existing Room records.
-          - **Flicker-Free Reels Player**: Pooled \`ExoPlayer\` with \`TextureView\` surface and thumbnail crossfade overlay.
+          ### 🧠 What's New in ${RELEASE_TAG}
+          - **CI Neural Model Lock (\`mobilefacenet.tflite\` >= 1 MB Gate)**: Multi-mirror download with hard file-size verification and bundled native \`org.tensorflow.lite.Interpreter\` runtime (4 threads) + dynamic tensor shape & DataType inspection.
+          - **ML Kit \`PERFORMANCE_MODE_ACCURATE\` + 2D Affine Eye Alignment**:
+            - High-resolution \`1600px\` EXIF-normalized photo decoding (\`setMinFaceSize(0.045f)\` for group photos).
+            - Strict 5-landmark false-positive filter rejecting screenshots, memes, and invalid geometry.
+            - 2D affine eye-alignment rotation (\`postRotate(-angleDegrees, eyeCenterX, eyeCenterY)\`) producing upright \`112x112\` neural crops and \`180x180\` portrait avatars.
+            - 4-frame video Reel sampling (\`20%\`, \`45%\`, \`70%\`, \`85%\`) with cross-frame spatial deduplication.
+          - **Flip-Augmented Embeddings & Two-Pass Multi-Prototype k-NN Clustering**:
+            - Test-time horizontal flip augmentation ($\hat{v}_{\text{final}} = \text{norm}(\hat{v}_1 + \hat{v}_2)$) eliminating lighting and yaw asymmetry.
+            - Multi-prototype matching across up to 12 anchor exemplars per person (\`0.55 * maxExemplar + 0.30 * top3Avg + 0.15 * centroid\`).
+            - **Pass 1 (Strict Anchor Gate)** + **Pass 2 (Graph Consolidation & Live User-Anchor k-NN Re-Sweep)** that automatically pulls side-angle and unassigned faces into named profiles like \`@Papa\` and \`@Maa\`.
+          - **Interactive 3D Horizontal Carousel Setup (\`ProfileSetupScreen\`)**, **Radial Halo Processing Screen**, and **Choreographed Stitch Welcome Screen**.
           EOF
 
           git tag -f "${RELEASE_TAG}"
@@ -128,12 +179,12 @@ jobs:
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
             gh release upload "${RELEASE_TAG}" "dist/${APK_FILENAME}" --clobber
             gh release edit "${RELEASE_TAG}" \
-              --title "InstaGallery ${RELEASE_TAG} — Slim Android APK (${APK_SIZE})" \
+              --title "InstaGallery ${RELEASE_TAG} — Two-Pass Anchor Face Engine APK (${APK_SIZE})" \
               --notes-file RELEASE_NOTES.md \
               --latest
           else
             gh release create "${RELEASE_TAG}" "dist/${APK_FILENAME}" \
-              --title "InstaGallery ${RELEASE_TAG} — Slim Android APK (${APK_SIZE})" \
+              --title "InstaGallery ${RELEASE_TAG} — Two-Pass Anchor Face Engine APK (${APK_SIZE})" \
               --notes-file RELEASE_NOTES.md \
               --latest
           fi
