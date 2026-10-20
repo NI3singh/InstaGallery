@@ -10,6 +10,10 @@ on:
 permissions:
   contents: write
 
+env:
+  RELEASE_TAG: v1.0.5
+  APK_FILENAME: InstaGallery-v1.0.5.apk
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -68,8 +72,8 @@ jobs:
       - name: Prepare Release APK
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk dist/InstaGallery-v1.0.apk
-          ls -lh dist/InstaGallery-v1.0.apk
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/${APK_FILENAME}"
+          ls -lh "dist/${APK_FILENAME}"
 
       - name: Remove Legacy Throttled Git-Tree APK Blob (if present)
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
@@ -85,8 +89,8 @@ jobs:
       - name: Upload InstaGallery APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: InstaGallery-v1.0-APK
-          path: dist/InstaGallery-v1.0.apk
+          name: InstaGallery-v1.0.5-APK
+          path: dist/${{ env.APK_FILENAME }}
           if-no-files-found: error
 
       - name: Publish Slim APK Package to GitHub Releases
@@ -94,40 +98,42 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          APK_SIZE=$(du -h dist/InstaGallery-v1.0.apk | cut -f1)
+          APK_SIZE=$(du -h "dist/${APK_FILENAME}" | cut -f1)
           cat << EOF > RELEASE_NOTES.md
-          ## 📸 InstaGallery v1.0.0 — Private Offline-First Local Instagram Clone & AI Face Network
+          ## 📸 InstaGallery ${RELEASE_TAG} — Reimagined Onboarding, Radial Halo Indexing & 3D Face Carousel
 
           ### ⚡ Fast APK Download (\`${APK_SIZE}\` — Slim Optimized Build)
-          - **Option 1 — Direct GitHub Release Asset**: Tap **\`InstaGallery-v1.0.apk\`** under **Assets** below.
+          - **Option 1 — Direct GitHub Release Asset**: Tap **\`${APK_FILENAME}\`** under **Assets** below.
           - **Option 2 — High-Speed Cloudflare CDN Mirror 1** *(Use this if GitHub downloads slowly on your mobile network)*:
-            👉 **[⚡ Download via Cloudflare Mirror 1 (\`InstaGallery-v1.0.apk\`)](https://ghfast.top/https://github.com/${GITHUB_REPOSITORY}/releases/download/v1.0.0/InstaGallery-v1.0.apk)**
+            👉 **[⚡ Download via Cloudflare Mirror 1 (\`${APK_FILENAME}\`)](https://ghfast.top/https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${APK_FILENAME})**
           - **Option 3 — High-Speed Global Proxy Mirror 2**:
-            👉 **[⚡ Download via Fast Mirror 2 (\`InstaGallery-v1.0.apk\`)](https://gh-proxy.com/https://github.com/${GITHUB_REPOSITORY}/releases/download/v1.0.0/InstaGallery-v1.0.apk)**
+            👉 **[⚡ Download via Fast Mirror 2 (\`${APK_FILENAME}\`)](https://gh-proxy.com/https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${APK_FILENAME})**
 
           ### 📲 Installation Steps
-          1. Download **\`InstaGallery-v1.0.apk\`** on your Android 8.0+ (API 26+) phone.
-          2. Open the \`.apk\` file and allow *Install unknown apps* if prompted.
-          3. Launch **InstaGallery** and tap **Grant Media Access**.
+          1. Download **\`${APK_FILENAME}\`** on your Android 8.0+ (API 26+) phone.
+          2. Open the \`.apk\` file and allow *Install unknown apps* if prompted (installs cleanly over v1.0.0 while preserving all indexed database profiles).
+          3. Launch **InstaGallery**.
 
-          ### ✨ What's New in This Build
-          - **New Official App Icon**: Implemented the **512×512 Master Squircle Icon Design Spec** (Instagram sunset mesh gradient + dual-frame gallery camera glyph with landscape lens and 4-point AI recognition star \`✦\`) across \`108×108 dp\` adaptive vectors (\`ic_launcher_background.xml\`, \`ic_launcher_foreground.xml\`), Material You monochrome, and all 5 legacy density PNG buckets (\`48px–192px\`).
-          - **>55% Smaller APK Size (\`${APK_SIZE}\`)**: Removed 41.5 MB of unused \`material-icons-extended\` DEX bloat, enabled JNI library compression (\`useLegacyPackaging = true\`), and stripped PC-emulator \`x86\`/\`x86_64\` binaries.
-          - **100% Offline Privacy**: Zero internet permission (\`android.permission.INTERNET\` completely omitted).
+          ### ✨ What's New in ${RELEASE_TAG}
+          - **Choreographed Stitch Welcome Screen**: 2-stage opening animation with floating 3-card fan showcase, Story-ring avatar bubbles, and smooth crossfade into indexing.
+          - **Radial Halo Processing Screen**: 188.dp Instagram gradient sweep arc with breathing glow, rotating shimmer scan, 28-segment vertical capsule bar, and live overlapping face avatar pill.
+          - **Interactive 3D Horizontal Carousel Setup (\`ProfileSetupScreen\`)**: Swipeable \`HorizontalPager\` with 3-photo context banner, overlapping 96.dp Story-ring avatar, live auto-merge detection, quick-tap name chips, and \`Move to @Other\` / \`Keep Profile\` controls.
+          - **100% Multi-Volume MediaStore Scanner**: Queries \`Images\`, \`Video\`, and \`Files\` across all external storage volumes with 4:5 dimension fallbacks and incremental delta persistence that preserves existing Room records.
+          - **Flicker-Free Reels Player**: Pooled \`ExoPlayer\` with \`TextureView\` surface and thumbnail crossfade overlay.
           EOF
 
-          git tag -f v1.0.0
-          git push origin v1.0.0 --force
+          git tag -f "${RELEASE_TAG}"
+          git push origin "${RELEASE_TAG}" --force
 
-          if gh release view v1.0.0 >/dev/null 2>&1; then
-            gh release upload v1.0.0 dist/InstaGallery-v1.0.apk --clobber
-            gh release edit v1.0.0 \
-              --title "InstaGallery v1.0.0 — Slim Android APK (${APK_SIZE})" \
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" "dist/${APK_FILENAME}" --clobber
+            gh release edit "${RELEASE_TAG}" \
+              --title "InstaGallery ${RELEASE_TAG} — Slim Android APK (${APK_SIZE})" \
               --notes-file RELEASE_NOTES.md \
               --latest
           else
-            gh release create v1.0.0 dist/InstaGallery-v1.0.apk \
-              --title "InstaGallery v1.0.0 — Slim Android APK (${APK_SIZE})" \
+            gh release create "${RELEASE_TAG}" "dist/${APK_FILENAME}" \
+              --title "InstaGallery ${RELEASE_TAG} — Slim Android APK (${APK_SIZE})" \
               --notes-file RELEASE_NOTES.md \
               --latest
           fi
