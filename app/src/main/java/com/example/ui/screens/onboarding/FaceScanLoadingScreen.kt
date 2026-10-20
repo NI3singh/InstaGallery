@@ -1,82 +1,70 @@
 // InstaGallery v1.0
 package com.example.ui.screens.onboarding
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.outlined.Face
-import androidx.compose.material.icons.outlined.Lock
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
-import com.example.R
 import com.example.ui.theme.GrandHotelFont
 import com.example.ui.theme.IgBlack
-import com.example.ui.theme.IgBlue
-import com.example.ui.theme.IgBorderNav
 import com.example.ui.theme.IgStoryGradient
-import com.example.ui.theme.IgSurfaceModal
-import com.example.ui.theme.IgSurfacePill
-import com.example.ui.theme.IgTextPrimary
-import com.example.ui.theme.IgTextSecondary
+import com.example.ui.theme.InterFont
 import kotlinx.coroutines.delay
 import java.io.File
+import kotlin.math.cos
+import kotlin.math.sin
 
 @Composable
 fun FaceScanLoadingScreen(
@@ -98,376 +86,640 @@ fun FaceScanLoadingScreen(
         }
     }
 
-    val infiniteTransition = rememberInfiniteTransition(label = "scanner_transition")
-    val radarRotation by infiniteTransition.animateFloat(
+    val processed = uiState.processedCount
+    val total = uiState.totalMediaCount
+    val peopleCount = uiState.detectedPeople.size
+    val rawProgress = if (uiState.isScanFinished) {
+        1f
+    } else if (total > 0) {
+        (processed.toFloat() / total.toFloat()).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+
+    val progress by animateFloatAsState(
+        targetValue = rawProgress,
+        animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing),
+        label = "scan_progress"
+    )
+
+    val infiniteTransition = rememberInfiniteTransition(label = "stitch_loading_transition")
+
+    // Infinite subtle breathing glow (4s ease-in-out infinite)
+    val glowScale by infiniteTransition.animateFloat(
+        initialValue = 0.98f,
+        targetValue = 1.04f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 2000, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "glow_scale"
+    )
+    val glowAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.16f,
+        targetValue = 0.28f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 2000, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "glow_alpha"
+    )
+
+    // Rotating shimmer scan effect (continuous 360 deg rotation)
+    val shimmerRotation by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            animation = tween(2600, easing = LinearEasing),
+            animation = tween(durationMillis = 3200, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
-        label = "radar_rotation"
-    )
-    val pulseScale1 by infiniteTransition.animateFloat(
-        initialValue = 0.85f,
-        targetValue = 1.38f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1800, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "pulse_scale_1"
-    )
-    val pulseAlpha1 by infiniteTransition.animateFloat(
-        initialValue = 0.55f,
-        targetValue = 0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1800, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "pulse_alpha_1"
+        label = "shimmer_rotation"
     )
 
-    val animatedProgress by animateFloatAsState(
-        targetValue = if (uiState.isScanFinished) 1f else uiState.progressFraction,
-        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
-        label = "scan_progress"
+    // Scanning light beam across the front glass card (-56dp to +64dp)
+    val scanBeamOffset by infiniteTransition.animateFloat(
+        initialValue = -56f,
+        targetValue = 64f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 2800, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "scan_beam_offset"
+    )
+    val scanBeamAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.15f,
+        targetValue = 0.85f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1400, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "scan_beam_alpha"
+    )
+
+    // Subtle floating motion for center glassmorphic cards
+    val cardsFloatOffset by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = -4f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 2500, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "cards_float_offset"
+    )
+
+    // Active micro-bar pulse
+    val activeBarAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.75f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1000, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "active_bar_alpha"
     )
 
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(IgBlack)
-            .padding(horizontal = 24.dp, vertical = 20.dp)
-            .testTag("face_scan_loading_screen"),
-        contentAlignment = Alignment.Center
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .testTag("face_scan_loading_screen")
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+        // Top Ambient Subtle Glow (Faint purple-pink gradient at top center)
+        Canvas(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(240.dp)
+                .align(Alignment.TopCenter)
         ) {
-            // Top Brand Title
-            Text(
-                text = "InstaGallery",
-                fontSize = 34.sp,
-                fontFamily = GrandHotelFont,
-                color = IgTextPrimary
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        Color(0xFF8134AF).copy(alpha = 0.12f),
+                        Color(0xFFDD2A7B).copy(alpha = 0.06f),
+                        Color.Transparent
+                    ),
+                    center = Offset(size.width / 2f, 0f),
+                    radius = size.width * 0.65f
+                ),
+                radius = size.width * 0.65f,
+                center = Offset(size.width / 2f, 0f)
             )
+        }
 
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Animated AI Radar Scanner Ring + Center App Logo / Latest Detected Face
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 24.dp, vertical = 28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            // 1. Top Subtle Wordmark
             Box(
-                modifier = Modifier.size(168.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                // Expanding Pulse Ring
-                Box(
-                    modifier = Modifier
-                        .size(136.dp)
-                        .scale(pulseScale1)
-                        .clip(CircleShape)
-                        .border(
-                            width = 2.dp,
-                            color = Color(0xFFDD2A7B).copy(alpha = pulseAlpha1),
-                            shape = CircleShape
-                        )
-                )
-
-                // Rotating Gradient Sweep Arc
-                Canvas(
-                    modifier = Modifier
-                        .size(144.dp)
-                        .rotate(radarRotation)
-                ) {
-                    drawArc(
-                        brush = Brush.sweepGradient(
-                            listOf(
-                                Color.Transparent,
-                                Color(0xFFF58529).copy(alpha = 0.3f),
-                                Color(0xFFDD2A7B),
-                                Color(0xFF8134AF)
-                            )
-                        ),
-                        startAngle = 0f,
-                        sweepAngle = 270f,
-                        useCenter = false,
-                        style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
-                    )
-                }
-
-                // Center Squircle Logo
-                Box(
-                    modifier = Modifier
-                        .size(92.dp)
-                        .clip(RoundedCornerShape(22.dp))
-                        .border(1.5.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(22.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Image(
-                        painter = painterResource(id = R.drawable.ic_launcher_background),
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                    Image(
-                        painter = painterResource(id = R.drawable.ic_launcher_foreground),
-                        contentDescription = "Scanning Gallery",
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-
-                // Badge at bottom-right of scanner
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(14.dp)
-                        .size(34.dp)
-                        .clip(CircleShape)
-                        .background(if (uiState.isScanFinished) Color(0xFF1DB954) else IgBlue)
-                        .border(2.dp, IgBlack, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = if (uiState.isScanFinished) Icons.Default.Check else Icons.Default.AutoAwesome,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Text(
-                text = if (uiState.isScanFinished) {
-                    "AI Face Scan Complete!"
-                } else {
-                    "Detecting Faces in Your Gallery..."
-                },
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = IgTextPrimary,
-                textAlign = TextAlign.Center
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = "ML Kit is analyzing your photos & reels on-device to group unique faces into personal Instagram profiles.",
-                fontSize = 13.sp,
-                color = IgTextSecondary,
-                textAlign = TextAlign.Center,
-                lineHeight = 19.sp,
-                modifier = Modifier.padding(horizontal = 8.dp)
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Live Counting Metrics Card
-            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(IgSurfaceModal)
-                    .border(1.dp, IgBorderNav, RoundedCornerShape(18.dp))
-                    .padding(18.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                    .padding(top = 8.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(
-                            text = "MEDIA ANALYZED",
-                            fontSize = 10.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = IgTextSecondary
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = if (uiState.totalMediaCount > 0) {
-                                "${uiState.processedCount} / ${uiState.totalMediaCount}"
-                            } else {
-                                "Indexing gallery..."
-                            },
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = IgTextPrimary
-                        )
-                    }
+                Text(
+                    text = "InstaGallery",
+                    fontSize = 30.sp,
+                    fontFamily = GrandHotelFont,
+                    color = Color.White.copy(alpha = 0.85f),
+                    letterSpacing = 0.5.sp
+                )
+            }
 
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(IgBlack)
-                            .border(1.dp, IgBorderNav, RoundedCornerShape(50))
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
-                    ) {
-                        Text(
-                            text = "${if (uiState.isScanFinished) 100 else uiState.progressPercent}%",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = IgBlue
-                        )
-                    }
-                }
-
-                // Gradient Progress Bar
+            // 2. Centerpiece Hero Animation & Radial Progress Halo
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(8.dp)
-                        .clip(RoundedCornerShape(50))
-                        .background(IgBlack)
+                    contentAlignment = Alignment.Center
                 ) {
-                    Box(
+                    // Ambient Breathing Glow Behind Ring
+                    Canvas(
                         modifier = Modifier
-                            .fillMaxWidth(animatedProgress.coerceIn(0.04f, 1f))
-                            .height(8.dp)
-                            .clip(RoundedCornerShape(50))
-                            .background(IgStoryGradient)
-                    )
-                }
-
-                // Live Discovered Faces Counter Row
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            .size(240.dp)
+                            .scale(glowScale)
                     ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Face,
-                            contentDescription = null,
-                            tint = Color(0xFFDD2A7B),
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Text(
-                            text = "Unique People Detected:",
-                            fontSize = 13.sp,
-                            color = IgTextSecondary
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                colors = listOf(
+                                    Color(0xFFDD2A7B).copy(alpha = glowAlpha),
+                                    Color(0xFF8134AF).copy(alpha = glowAlpha * 0.85f),
+                                    Color(0xFFFEDA77).copy(alpha = glowAlpha * 0.35f),
+                                    Color.Transparent
+                                ),
+                                center = center,
+                                radius = size.minDimension / 2f
+                            ),
+                            radius = size.minDimension / 2f,
+                            center = center
                         )
                     }
-                    Text(
-                        text = "${uiState.detectedPeople.size} profiles",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = IgTextPrimary
-                    )
-                }
 
-                // Live Discovered Face Bubbles Strip
-                AnimatedVisibility(
-                    visible = uiState.detectedPeople.isNotEmpty(),
-                    enter = fadeIn() + scaleIn(
-                        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy)
-                    )
-                ) {
-                    LazyRow(
-                        contentPadding = PaddingValues(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    // 188.dp Circular Container
+                    Box(
+                        modifier = Modifier.size(188.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        items(
-                            items = uiState.detectedPeople,
-                            key = { it.person.personId }
-                        ) { card ->
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.width(54.dp)
+                        // Radial Progress Halo + Rotating Shimmer Scan Effect
+                        Canvas(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .testTag("radial_progress_canvas")
+                        ) {
+                            val strokeWidthTrack = 2.dp.toPx()
+                            val strokeWidthArc = 3.5.dp.toPx()
+                            val radius = 88.dp.toPx()
+                            val arcTopLeft = Offset(center.x - radius, center.y - radius)
+                            val arcSize = Size(radius * 2f, radius * 2f)
+
+                            // Background Track: 2dp subtle dark gray dashed ring (#222222)
+                            drawCircle(
+                                color = Color(0xFF222222),
+                                radius = radius,
+                                center = center,
+                                style = Stroke(
+                                    width = strokeWidthTrack,
+                                    cap = StrokeCap.Round,
+                                    pathEffect = PathEffect.dashPathEffect(
+                                        intervals = floatArrayOf(4.dp.toPx(), 5.dp.toPx()),
+                                        phase = 0f
+                                    )
+                                )
+                            )
+
+                            // Subtle Rotating Shimmer Scan Halo along the track
+                            rotate(degrees = shimmerRotation, pivot = center) {
+                                drawArc(
+                                    brush = Brush.sweepGradient(
+                                        0.0f to Color.Transparent,
+                                        0.75f to Color.Transparent,
+                                        0.92f to Color(0xFFDD2A7B).copy(alpha = 0.22f),
+                                        1.0f to Color(0xFFFEDA77).copy(alpha = 0.38f),
+                                        center = center
+                                    ),
+                                    startAngle = 0f,
+                                    sweepAngle = 360f,
+                                    useCenter = false,
+                                    topLeft = arcTopLeft,
+                                    size = arcSize,
+                                    style = Stroke(width = strokeWidthTrack, cap = StrokeCap.Round)
+                                )
+                            }
+
+                            // Active Progress Arc: 3.5dp smooth sweeping arc with Brush.sweepGradient & StrokeCap.Round
+                            val sweepAngle = (progress * 360f).coerceIn(0f, 360f)
+                            if (sweepAngle > 0.5f) {
+                                rotate(degrees = -90f, pivot = center) {
+                                    drawArc(
+                                        brush = Brush.sweepGradient(
+                                            0.0f to Color(0xFF8134AF),
+                                            0.32f to Color(0xFFDD2A7B),
+                                            0.72f to Color(0xFFF58529),
+                                            1.0f to Color(0xFFFEDA77),
+                                            center = center
+                                        ),
+                                        startAngle = 0f,
+                                        sweepAngle = sweepAngle,
+                                        useCenter = false,
+                                        topLeft = arcTopLeft,
+                                        size = arcSize,
+                                        style = Stroke(
+                                            width = strokeWidthArc,
+                                            cap = StrokeCap.Round
+                                        )
+                                    )
+                                }
+
+                                // Glowing White-Pink Leading Comet Dot at tip of arc
+                                val endAngleRad = Math.toRadians((-90.0 + sweepAngle.toDouble()))
+                                val tipX = center.x + radius * cos(endAngleRad).toFloat()
+                                val tipY = center.y + radius * sin(endAngleRad).toFloat()
+                                val tipOffset = Offset(tipX, tipY)
+
+                                drawCircle(
+                                    color = Color(0xFFDD2A7B).copy(alpha = 0.42f),
+                                    radius = 9.dp.toPx(),
+                                    center = tipOffset
+                                )
+                                drawCircle(
+                                    color = Color.White.copy(alpha = 0.5f),
+                                    radius = 6.dp.toPx(),
+                                    center = tipOffset
+                                )
+                                drawCircle(
+                                    color = Color.White,
+                                    radius = 4.5.dp.toPx(),
+                                    center = tipOffset
+                                )
+                                drawCircle(
+                                    color = Color(0xFFFFF5FB),
+                                    radius = 3.dp.toPx(),
+                                    center = tipOffset
+                                )
+                            }
+                        }
+
+                        // Inside the Radial Ring: Minimalist Overlapping Glassmorphic Photo Cards
+                        Box(
+                            modifier = Modifier
+                                .size(116.dp)
+                                .offset(y = cardsFloatOffset.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            // Back Card (Tilted +6 deg)
+                            Box(
+                                modifier = Modifier
+                                    .size(width = 82.dp, height = 100.dp)
+                                    .offset(x = 12.dp, y = (-4).dp)
+                                    .rotate(6f)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(Color(0xFF141414).copy(alpha = 0.90f))
+                                    .border(
+                                        width = 1.dp,
+                                        color = Color.White.copy(alpha = 0.12f),
+                                        shape = RoundedCornerShape(14.dp)
+                                    )
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(48.dp)
-                                        .clip(CircleShape)
-                                        .background(IgStoryGradient),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    val path = card.person.avatarCropPath
-                                    if (path.isNotBlank() && File(path).exists()) {
-                                        AsyncImage(
-                                            model = File(path),
-                                            contentDescription = card.person.name,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier
-                                                .size(44.dp)
-                                                .clip(CircleShape)
+                                        .fillMaxWidth()
+                                        .height(62.dp)
+                                        .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
+                                        .background(Color(0xFF1A1A1A).copy(alpha = 0.6f))
+                                )
+                            }
+
+                            // Front Card (Tilted -6 deg)
+                            Box(
+                                modifier = Modifier
+                                    .size(width = 86.dp, height = 104.dp)
+                                    .offset(x = (-4).dp)
+                                    .rotate(-6f)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(Color(0xFF161616).copy(alpha = 0.95f))
+                                    .border(
+                                        width = 1.dp,
+                                        color = Color.White.copy(alpha = 0.18f),
+                                        shape = RoundedCornerShape(14.dp)
+                                    )
+                            ) {
+                                // Diagonal Glass Reflection
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(
+                                            Brush.verticalGradient(
+                                                colors = listOf(
+                                                    Color.White.copy(alpha = 0.08f),
+                                                    Color.Transparent
+                                                )
+                                            )
                                         )
-                                    } else {
-                                        Icon(
-                                            imageVector = Icons.Outlined.Face,
-                                            contentDescription = null,
-                                            tint = Color.White,
-                                            modifier = Modifier.size(22.dp)
+                                )
+
+                                // Soft Horizontal Gradient Light-Beam Scanning Across Card
+                                Box(
+                                    modifier = Modifier
+                                        .width(130.dp)
+                                        .height(28.dp)
+                                        .align(Alignment.Center)
+                                        .offset(y = scanBeamOffset.dp)
+                                        .rotate(15f)
+                                        .alpha(scanBeamAlpha)
+                                        .background(
+                                            Brush.verticalGradient(
+                                                colors = listOf(
+                                                    Color.Transparent,
+                                                    Color(0xFFDD2A7B).copy(alpha = 0.35f),
+                                                    Color.White.copy(alpha = 0.80f),
+                                                    Color(0xFFDD2A7B).copy(alpha = 0.35f),
+                                                    Color.Transparent
+                                                )
+                                            )
+                                        )
+                                )
+
+                                // Front Card Inner Content
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(10.dp),
+                                    verticalArrangement = Arrangement.SpaceBetween,
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    // Top Camera Status Indicator Dot & Pill
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 2.dp, vertical = 2.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(6.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(0xFFDD2A7B).copy(alpha = 0.85f))
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .width(16.dp)
+                                                .height(4.dp)
+                                                .clip(RoundedCornerShape(50))
+                                                .background(Color.White.copy(alpha = 0.20f))
+                                        )
+                                    }
+
+                                    // Centered Minimalist White Instagram Gallery-Camera Vector Outline
+                                    Canvas(
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        val sx = size.width / 24f
+                                        val sy = size.height / 24f
+                                        val strokePx = 1.8f * sx
+
+                                        // Outer rounded rectangle: x=2.5, y=4, w=19, h=16, rx=4.5
+                                        drawRoundRect(
+                                            color = Color.White,
+                                            topLeft = Offset(2.5f * sx, 4f * sy),
+                                            size = Size(19f * sx, 16f * sy),
+                                            cornerRadius = CornerRadius(4.5f * sx, 4.5f * sy),
+                                            style = Stroke(width = strokePx, cap = StrokeCap.Round)
+                                        )
+
+                                        // Center lens circle: cx=12, cy=12, r=4.2
+                                        drawCircle(
+                                            color = Color.White,
+                                            radius = 4.2f * sx,
+                                            center = Offset(12f * sx, 12f * sy),
+                                            style = Stroke(width = strokePx)
+                                        )
+
+                                        // Inner mountain path: M10 13.5 l1.5 -1.5 2.5 2.5
+                                        val mountainPath = Path().apply {
+                                            moveTo(10f * sx, 13.5f * sy)
+                                            lineTo(11.5f * sx, 12f * sy)
+                                            lineTo(14f * sx, 14.5f * sy)
+                                        }
+                                        drawPath(
+                                            path = mountainPath,
+                                            color = Color.White,
+                                            style = Stroke(
+                                                width = 1.4f * sx,
+                                                cap = StrokeCap.Round,
+                                                join = StrokeJoin.Round
+                                            )
+                                        )
+
+                                        // Top-right indicator dot: cx=17.2, cy=7.2, r=0.9
+                                        drawCircle(
+                                            color = Color.White,
+                                            radius = 0.9f * sx,
+                                            center = Offset(17.2f * sx, 7.2f * sy)
+                                        )
+                                    }
+
+                                    // Bottom Miniature Photo Card Label Lines
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 2.dp, vertical = 2.dp),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                                        horizontalAlignment = Alignment.Start
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .width(36.dp)
+                                                .height(6.dp)
+                                                .clip(RoundedCornerShape(50))
+                                                .background(Color.White.copy(alpha = 0.30f))
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .width(20.dp)
+                                                .height(4.dp)
+                                                .clip(RoundedCornerShape(50))
+                                                .background(Color.White.copy(alpha = 0.15f))
                                         )
                                     }
                                 }
-                                Spacer(modifier = Modifier.height(3.dp))
-                                Text(
-                                    text = "${card.person.faceCount}",
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = IgTextSecondary
-                                )
                             }
                         }
                     }
                 }
-            }
 
-            Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(24.dp))
 
-            // Privacy Note
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(IgSurfacePill)
-                    .padding(horizontal = 14.dp, vertical = 7.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Lock,
-                    contentDescription = null,
-                    tint = IgBlue,
-                    modifier = Modifier.size(14.dp)
-                )
-                Text(
-                    text = "100% On-Device ML Kit • Zero cloud uploads",
-                    fontSize = 11.5.sp,
-                    color = IgTextSecondary
-                )
-            }
-
-            // Optional button to proceed to setup early if user has a huge library and some faces are already found
-            if (uiState.processedCount >= 20 || uiState.isScanFinished) {
-                Spacer(modifier = Modifier.height(20.dp))
-                Button(
-                    onClick = {
-                        viewModel.finishEarlyAndGoToSetup()
-                        onScanCompleted()
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = IgBlue),
-                    shape = RoundedCornerShape(50),
+                // 3. Live Discovered People Pill (Directly below radial ring, 24dp gap)
+                Row(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(46.dp)
-                        .testTag("proceed_to_setup_button")
+                        .clip(RoundedCornerShape(50))
+                        .background(Color(0xFF121212))
+                        .border(1.dp, Color(0xFF262626), RoundedCornerShape(50))
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                        .testTag("discovered_people_pill"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text(
-                        text = if (uiState.isScanFinished) {
-                            "Continue to Name Profiles (${uiState.detectedPeople.size})"
-                        } else {
-                            "Setup ${uiState.detectedPeople.size} Detected Profiles Now"
-                        },
-                        fontSize = 13.5.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White
+                    // 3 Tiny Overlapping 23dp Circular Face Avatars Wrapped in 1dp Sunset Gradient Rings
+                    val previewPeople = uiState.detectedPeople.take(3)
+                    val avatarBgColors = listOf(
+                        Color(0xFF202024),
+                        Color(0xFF2A1E28),
+                        Color(0xFF1E2430)
                     )
+                    val avatarTintColors = listOf(
+                        Color(0xFFD4D4D8),
+                        Color(0xFFFBCFE8),
+                        Color(0xFFC7D2FE)
+                    )
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy((-6).dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        for (index in 0 until 3) {
+                            val personCard = previewPeople.getOrNull(index)
+                            val cropPath = personCard?.person?.avatarCropPath.orEmpty()
+                            Box(
+                                modifier = Modifier
+                                    .size(23.dp)
+                                    .clip(CircleShape)
+                                    .background(IgStoryGradient)
+                                    .padding(1.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clip(CircleShape)
+                                        .background(avatarBgColors[index]),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (cropPath.isNotBlank() && File(cropPath).exists()) {
+                                        AsyncImage(
+                                            model = File(cropPath),
+                                            contentDescription = personCard?.person?.name,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .clip(CircleShape)
+                                        )
+                                    } else {
+                                        // Clean silhouette vector matching Stitch SVG
+                                        Canvas(modifier = Modifier.size(14.dp)) {
+                                            val w = size.width
+                                            val h = size.height
+                                            drawCircle(
+                                                color = avatarTintColors[index],
+                                                radius = w * 0.20f,
+                                                center = Offset(w * 0.5f, h * 0.34f)
+                                            )
+                                            drawArc(
+                                                color = avatarTintColors[index],
+                                                startAngle = 180f,
+                                                sweepAngle = 180f,
+                                                useCenter = true,
+                                                topLeft = Offset(w * 0.16f, h * 0.58f),
+                                                size = Size(w * 0.68f, h * 0.52f)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Text(
+                        text = "$peopleCount profiles created",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        fontFamily = InterFont,
+                        color = Color(0xFFE0E0E0),
+                        modifier = Modifier.padding(end = 2.dp)
+                    )
+                }
+            }
+
+            // 4. Minimalist Typography & 28-Segment Vertical Capsule Progress Bar (Bottom section)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Large Clean Percentage Readout
+                Text(
+                    text = "${(progress * 100).toInt()}%",
+                    fontSize = 38.sp,
+                    fontWeight = FontWeight.Light,
+                    fontFamily = InterFont,
+                    color = Color.White,
+                    letterSpacing = (-1).sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.testTag("progress_percentage_text")
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Primary Status Text
+                Text(
+                    text = "Organizing your memories...",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium,
+                    fontFamily = InterFont,
+                    color = Color.White,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // Secondary Photo Counter Text
+                Text(
+                    text = "$processed of $total photos",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Normal,
+                    fontFamily = InterFont,
+                    color = Color(0xFF737373),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.testTag("photo_counter_text")
+                )
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // 28-Segment Vertical Capsule Progress Bar
+                val litSegments = (progress * 28).toInt().coerceIn(0, 28)
+                Row(
+                    modifier = Modifier
+                        .width(220.dp)
+                        .testTag("capsule_progress_bar"),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    for (index in 0 until 28) {
+                        val isLit = index < litSegments
+                        val isLeadingLit = index == litSegments - 1
+                        Box(
+                            modifier = Modifier
+                                .width(3.dp)
+                                .height(10.dp)
+                                .alpha(if (isLeadingLit) activeBarAlpha else 1f)
+                                .clip(RoundedCornerShape(50))
+                                .then(
+                                    if (isLit) {
+                                        Modifier.background(IgStoryGradient)
+                                    } else {
+                                        Modifier.background(Color(0xFF262626))
+                                    }
+                                )
+                        )
+                    }
                 }
             }
         }

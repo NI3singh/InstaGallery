@@ -64,8 +64,7 @@ class ReelsViewModel(application: Application) : AndroidViewModel(application) {
         filterConfigFlow
     ) { videos, people, config ->
         val validVideos = videos.filter { item ->
-            !config.brokenIds.contains(item.media.mediaId) &&
-                (item.media.durationMs == null || item.media.durationMs >= 400L)
+            !config.brokenIds.contains(item.media.mediaId)
         }
 
         val favFiltered = if (config.onlyFavs) {

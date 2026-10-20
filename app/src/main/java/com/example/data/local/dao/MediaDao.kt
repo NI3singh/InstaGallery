@@ -12,6 +12,11 @@ import com.example.data.local.entity.MediaPersonCrossRef
 import com.example.data.local.entity.MediaWithAuthors
 import kotlinx.coroutines.flow.Flow
 
+data class MediaIdAndUri(
+    val mediaId: Long,
+    val uri: String
+)
+
 @Dao
 interface MediaDao {
 
@@ -24,7 +29,7 @@ interface MediaDao {
     fun getPhotosWithAuthors(): Flow<List<MediaWithAuthors>>
 
     @Transaction
-    @Query("SELECT * FROM media_items WHERE isVideo = 1 AND (durationMs IS NULL OR durationMs >= 400) ORDER BY dateAddedSeconds DESC")
+    @Query("SELECT * FROM media_items WHERE isVideo = 1 ORDER BY dateAddedSeconds DESC")
     fun getVideosWithAuthors(): Flow<List<MediaWithAuthors>>
 
     @Transaction
@@ -113,6 +118,9 @@ interface MediaDao {
     @Query("SELECT COUNT(*) FROM media_items WHERE isProcessedForFaces = 0")
     fun getUnindexedCount(): Flow<Int>
 
+    @Query("SELECT COUNT(*) FROM media_items WHERE isProcessedForFaces = 0")
+    suspend fun getUnindexedCountSync(): Int
+
     @Query("SELECT COUNT(*) FROM media_items WHERE isProcessedForFaces = 1")
     fun getProcessedCount(): Flow<Int>
 
@@ -126,8 +134,11 @@ interface MediaDao {
     @Query("SELECT mediaId FROM media_items")
     suspend fun getAllMediaIds(): List<Long>
 
+    @Query("SELECT mediaId, uri FROM media_items")
+    suspend fun getAllMediaIdsAndUris(): List<MediaIdAndUri>
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun insertMediaList(mediaList: List<MediaEntity>)
+    suspend fun insertMediaList(mediaList: List<MediaEntity>): List<Long>
 
     @Query("UPDATE media_items SET isProcessedForFaces = :isProcessed, hasFaces = :hasFaces WHERE mediaId = :mediaId")
     suspend fun updateMediaProcessed(mediaId: Long, isProcessed: Boolean, hasFaces: Boolean)

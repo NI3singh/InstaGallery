@@ -122,6 +122,12 @@ fun InstaGalleryNavGraph(
         ) {
             composable(Screen.PermissionGate.route) {
                 PermissionGateScreen(
+                    onboardingViewModel = onboardingViewModel,
+                    onScanCompleted = {
+                        navController.navigate(Screen.ProfileSetup.route) {
+                            popUpTo(Screen.PermissionGate.route) { inclusive = true }
+                        }
+                    },
                     onPermissionsGranted = {
                         val nextRoute = when {
                             !OnboardingPreferences.isInitialScanDone(context) -> Screen.FaceScanning.route

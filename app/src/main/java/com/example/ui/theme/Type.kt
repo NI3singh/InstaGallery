@@ -1,3 +1,4 @@
+// InstaGallery v1.0
 package com.example.ui.theme
 
 import androidx.compose.material3.Typography
@@ -17,6 +18,13 @@ val InterFont = FontFamily(
     Font(R.font.inter, FontWeight.Medium),
     Font(R.font.inter, FontWeight.SemiBold),
     Font(R.font.inter, FontWeight.Bold)
+)
+
+val PlusJakartaSansFont = FontFamily(
+    Font(R.font.plus_jakarta_sans, FontWeight.Normal),
+    Font(R.font.plus_jakarta_sans, FontWeight.Medium),
+    Font(R.font.plus_jakarta_sans, FontWeight.SemiBold),
+    Font(R.font.plus_jakarta_sans, FontWeight.Bold)
 )
 
 val Typography = Typography(
