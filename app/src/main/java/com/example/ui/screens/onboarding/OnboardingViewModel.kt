@@ -10,10 +10,15 @@ import com.example.data.local.entity.MediaEntity
 import com.example.data.local.entity.PersonEntity
 import com.example.data.repository.GalleryRepository
 import com.example.ml.FaceIndexingWorker
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -21,7 +26,7 @@ data class PersonPreviewCard(
     val person: PersonEntity,
     val sampleMedia: List<MediaEntity>,
     val photoCount: Int,
-    val reelCount: Int
+    val reelCount: Int = 0
 )
 
 data class OnboardingUiState(
@@ -44,6 +49,7 @@ data class OnboardingUiState(
         get() = (progressFraction * 100).toInt().coerceIn(0, 100)
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class OnboardingViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = GalleryRepository(application)
@@ -69,30 +75,33 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         ScanMetrics(processed, total, unindexed, workInfo)
     }
 
-    private val peoplePreviewFlow = combine(
-        repository.allPeople,
-        repository.allMediaWithAuthors,
-        repository.unassociatedCount
-    ) { people, allMedia, unassociatedCount ->
-        val mediaByPerson = mutableMapOf<Long, MutableList<MediaEntity>>()
-        for (item in allMedia) {
-            for (author in item.authors) {
-                mediaByPerson.getOrPut(author.personId) { mutableListOf() }.add(item.media)
+    private val peopleCardsFlow: Flow<List<PersonPreviewCard>> = repository.allPeople.flatMapLatest { people ->
+        if (people.isEmpty()) {
+            flowOf(emptyList())
+        } else {
+            val perPersonFlows = people.map { person ->
+                repository.getMediaWithAuthorsForPersonFlow(person.personId).map { mediaWithAuthors ->
+                    val photosOnly = mediaWithAuthors
+                        .map { it.media }
+                        .filter { !it.isVideo }
+                    PersonPreviewCard(
+                        person = person,
+                        sampleMedia = photosOnly.take(3),
+                        photoCount = photosOnly.size,
+                        reelCount = 0
+                    )
+                }
+            }
+            combine(perPersonFlows) { cardsArray ->
+                cardsArray.toList()
             }
         }
+    }
 
-        val cards = people.map { person ->
-            val personMedia = mediaByPerson[person.personId] ?: emptyList()
-            val photos = personMedia.count { !it.isVideo }
-            val reels = personMedia.count { it.isVideo }
-            val topThreeMedia = personMedia.sortedBy { it.isVideo }.take(3)
-            PersonPreviewCard(
-                person = person,
-                sampleMedia = topThreeMedia,
-                photoCount = photos,
-                reelCount = reels
-            )
-        }
+    private val peoplePreviewFlow = combine(
+        peopleCardsFlow,
+        repository.unassociatedCount
+    ) { cards, unassociatedCount ->
         cards to unassociatedCount
     }
 

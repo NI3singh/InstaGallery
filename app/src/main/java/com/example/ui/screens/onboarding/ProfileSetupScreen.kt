@@ -388,7 +388,7 @@ private fun CarouselFaceCard(
     val focusManager = LocalFocusManager.current
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
-    val mediaCount = (card.photoCount + card.reelCount).coerceAtLeast(card.person.faceCount)
+    val photoCount = card.photoCount.coerceAtLeast(card.person.faceCount)
 
     val inputBorderColor by animateColorAsState(
         targetValue = when {
@@ -472,7 +472,7 @@ private fun CarouselFaceCard(
                         )
                 )
 
-                // Top-Right Translucent Pill: "$mediaCount Photos & Reels"
+                // Top-Right Translucent Pill: "$photoCount Photos"
                 Row(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
@@ -489,7 +489,7 @@ private fun CarouselFaceCard(
                         modifier = Modifier.size(12.dp)
                     )
                     Text(
-                        text = "$mediaCount Photos & Reels",
+                        text = "$photoCount Photos",
                         fontFamily = PlusJakartaSansFont,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,

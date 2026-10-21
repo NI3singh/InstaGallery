@@ -145,18 +145,20 @@ interface PersonDao {
 
     @Query(
         """
-        SELECT COUNT(DISTINCT mediaId) 
+        SELECT COUNT(DISTINCT media_person_cross_ref.mediaId) 
         FROM media_person_cross_ref 
-        WHERE personId = :personId
+        INNER JOIN media_items ON media_items.mediaId = media_person_cross_ref.mediaId 
+        WHERE media_person_cross_ref.personId = :personId AND media_items.isVideo = 0
         """
     )
     fun getTotalCountForPerson(personId: Long): Flow<Int>
 
     @Query(
         """
-        SELECT COUNT(DISTINCT mediaId) 
+        SELECT COUNT(DISTINCT media_person_cross_ref.mediaId) 
         FROM media_person_cross_ref 
-        WHERE personId = :personId
+        INNER JOIN media_items ON media_items.mediaId = media_person_cross_ref.mediaId 
+        WHERE media_person_cross_ref.personId = :personId AND media_items.isVideo = 0
         """
     )
     suspend fun countDistinctMediaForPerson(personId: Long): Int
@@ -229,7 +231,7 @@ interface PersonDao {
             deletePerson(sourceId)
         }
 
-        // Update target person name and distinct media post count
+        // Update target person name and distinct photo count
         val totalMedia = countDistinctMediaForPerson(targetPersonId).coerceAtLeast(1)
         val resolvedName = newName.trim().ifBlank { target.name }
         updatePerson(
@@ -245,7 +247,14 @@ interface PersonDao {
     @Query("UPDATE detected_faces SET personId = :targetPersonId WHERE personId = :sourcePersonId")
     suspend fun reassignFaces(sourcePersonId: Long, targetPersonId: Long)
 
-    @Query("SELECT mediaId FROM media_person_cross_ref WHERE personId = :personId")
+    @Query(
+        """
+        SELECT DISTINCT media_person_cross_ref.mediaId 
+        FROM media_person_cross_ref 
+        INNER JOIN media_items ON media_items.mediaId = media_person_cross_ref.mediaId
+        WHERE media_person_cross_ref.personId = :personId AND media_items.isVideo = 0
+        """
+    )
     suspend fun getMediaIdsForPerson(personId: Long): List<Long>
 
     @Query("INSERT OR IGNORE INTO media_person_cross_ref (mediaId, personId) VALUES (:mediaId, :personId)")

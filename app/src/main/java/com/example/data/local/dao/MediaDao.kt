@@ -37,11 +37,11 @@ interface MediaDao {
     fun getVideosWithAuthors(): Flow<List<MediaWithAuthors>>
 
     @Transaction
-    @Query("SELECT * FROM media_items WHERE isFavorite = 1 ORDER BY dateAddedSeconds DESC")
+    @Query("SELECT * FROM media_items WHERE isVideo = 0 AND isFavorite = 1 ORDER BY dateAddedSeconds DESC")
     fun getFavoritePhotosWithAuthors(): Flow<List<MediaWithAuthors>>
 
     @Transaction
-    @Query("SELECT * FROM media_items WHERE isBookmarked = 1 ORDER BY dateAddedSeconds DESC")
+    @Query("SELECT * FROM media_items WHERE isVideo = 0 AND isBookmarked = 1 ORDER BY dateAddedSeconds DESC")
     fun getBookmarkedPhotosWithAuthors(): Flow<List<MediaWithAuthors>>
 
     @Transaction
@@ -59,10 +59,22 @@ interface MediaDao {
     @RewriteQueriesToDropUnusedColumns
     @Query(
         """
-        SELECT DISTINCT media_items.* FROM media_items 
-        INNER JOIN media_person_cross_ref ON media_items.mediaId = media_person_cross_ref.mediaId 
-        WHERE media_person_cross_ref.personId = :personId 
-        ORDER BY media_items.dateAddedSeconds DESC
+        SELECT DISTINCT m.* FROM media_items m
+        INNER JOIN media_person_cross_ref ref ON m.mediaId = ref.mediaId
+        WHERE ref.personId = :personId AND m.isVideo = 0
+        ORDER BY m.dateAddedSeconds DESC
+        """
+    )
+    fun getMediaWithAuthorsForPersonFlow(personId: Long): Flow<List<MediaWithAuthors>>
+
+    @Transaction
+    @RewriteQueriesToDropUnusedColumns
+    @Query(
+        """
+        SELECT DISTINCT m.* FROM media_items m
+        INNER JOIN media_person_cross_ref ref ON m.mediaId = ref.mediaId
+        WHERE ref.personId = :personId AND m.isVideo = 0
+        ORDER BY m.dateAddedSeconds DESC
         """
     )
     fun getMediaForPerson(personId: Long): Flow<List<MediaWithAuthors>>
@@ -71,10 +83,10 @@ interface MediaDao {
     @RewriteQueriesToDropUnusedColumns
     @Query(
         """
-        SELECT DISTINCT media_items.* FROM media_items 
-        INNER JOIN media_person_cross_ref ON media_items.mediaId = media_person_cross_ref.mediaId 
-        WHERE media_person_cross_ref.personId = :personId 
-        ORDER BY media_items.dateAddedSeconds DESC
+        SELECT DISTINCT m.* FROM media_items m
+        INNER JOIN media_person_cross_ref ref ON m.mediaId = ref.mediaId
+        WHERE ref.personId = :personId AND m.isVideo = 0
+        ORDER BY m.dateAddedSeconds DESC
         """
     )
     suspend fun getMediaForPersonSync(personId: Long): List<MediaWithAuthors>
@@ -83,10 +95,10 @@ interface MediaDao {
     @RewriteQueriesToDropUnusedColumns
     @Query(
         """
-        SELECT DISTINCT media_items.* FROM media_items 
-        INNER JOIN media_person_cross_ref ON media_items.mediaId = media_person_cross_ref.mediaId 
-        WHERE media_person_cross_ref.personId = :personId AND media_items.isVideo = 0
-        ORDER BY media_items.dateAddedSeconds DESC
+        SELECT DISTINCT m.* FROM media_items m
+        INNER JOIN media_person_cross_ref ref ON m.mediaId = ref.mediaId
+        WHERE ref.personId = :personId AND m.isVideo = 0
+        ORDER BY m.dateAddedSeconds DESC
         """
     )
     fun getPhotosForPerson(personId: Long): Flow<List<MediaWithAuthors>>
@@ -118,22 +130,29 @@ interface MediaDao {
     @Transaction
     @Query(
         """
-        SELECT * FROM media_items 
-        WHERE NOT EXISTS (
-            SELECT 1 FROM media_person_cross_ref 
-            INNER JOIN people ON people.personId = media_person_cross_ref.personId
-            WHERE media_person_cross_ref.mediaId = media_items.mediaId
-              AND people.isHiddenToOther = 0
-              AND (
-                  people.faceCount >= 2 
-                  OR people.isNamedByUser = 1 
-                  OR NOT EXISTS (
-                      SELECT 1 FROM people p2 
-                      WHERE p2.isHiddenToOther = 0 AND (p2.faceCount >= 2 OR p2.isNamedByUser = 1)
-                  )
-              )
-        ) 
-        ORDER BY dateAddedSeconds DESC
+        SELECT * FROM media_items m
+        WHERE m.isVideo = 0
+          AND NOT EXISTS (
+              SELECT 1 FROM media_person_cross_ref ref
+              INNER JOIN people p ON p.personId = ref.personId
+              WHERE ref.mediaId = m.mediaId AND p.isHiddenToOther = 0
+          )
+        ORDER BY m.dateAddedSeconds DESC
+        """
+    )
+    fun getUnassignedPhotosWithAuthorsFlow(): Flow<List<MediaWithAuthors>>
+
+    @Transaction
+    @Query(
+        """
+        SELECT * FROM media_items m
+        WHERE m.isVideo = 0
+          AND NOT EXISTS (
+              SELECT 1 FROM media_person_cross_ref ref
+              INNER JOIN people p ON p.personId = ref.personId
+              WHERE ref.mediaId = m.mediaId AND p.isHiddenToOther = 0
+          )
+        ORDER BY m.dateAddedSeconds DESC
         """
     )
     fun getUnassociatedMedia(): Flow<List<MediaWithAuthors>>
@@ -141,22 +160,14 @@ interface MediaDao {
     @Transaction
     @Query(
         """
-        SELECT * FROM media_items 
-        WHERE isVideo = 0 AND NOT EXISTS (
-            SELECT 1 FROM media_person_cross_ref 
-            INNER JOIN people ON people.personId = media_person_cross_ref.personId
-            WHERE media_person_cross_ref.mediaId = media_items.mediaId
-              AND people.isHiddenToOther = 0
-              AND (
-                  people.faceCount >= 2 
-                  OR people.isNamedByUser = 1 
-                  OR NOT EXISTS (
-                      SELECT 1 FROM people p2 
-                      WHERE p2.isHiddenToOther = 0 AND (p2.faceCount >= 2 OR p2.isNamedByUser = 1)
-                  )
-              )
-        ) 
-        ORDER BY dateAddedSeconds DESC
+        SELECT * FROM media_items m
+        WHERE m.isVideo = 0
+          AND NOT EXISTS (
+              SELECT 1 FROM media_person_cross_ref ref
+              INNER JOIN people p ON p.personId = ref.personId
+              WHERE ref.mediaId = m.mediaId AND p.isHiddenToOther = 0
+          )
+        ORDER BY m.dateAddedSeconds DESC
         """
     )
     fun getUnassociatedPhotos(): Flow<List<MediaWithAuthors>>
@@ -170,14 +181,6 @@ interface MediaDao {
             INNER JOIN people ON people.personId = media_person_cross_ref.personId
             WHERE media_person_cross_ref.mediaId = media_items.mediaId
               AND people.isHiddenToOther = 0
-              AND (
-                  people.faceCount >= 2 
-                  OR people.isNamedByUser = 1 
-                  OR NOT EXISTS (
-                      SELECT 1 FROM people p2 
-                      WHERE p2.isHiddenToOther = 0 AND (p2.faceCount >= 2 OR p2.isNamedByUser = 1)
-                  )
-              )
         ) 
         ORDER BY dateAddedSeconds DESC
         """
@@ -193,14 +196,6 @@ interface MediaDao {
             INNER JOIN people ON people.personId = media_person_cross_ref.personId
             WHERE media_person_cross_ref.mediaId = media_items.mediaId
               AND people.isHiddenToOther = 0
-              AND (
-                  people.faceCount >= 2 
-                  OR people.isNamedByUser = 1 
-                  OR NOT EXISTS (
-                      SELECT 1 FROM people p2 
-                      WHERE p2.isHiddenToOther = 0 AND (p2.faceCount >= 2 OR p2.isNamedByUser = 1)
-                  )
-              )
         ) 
         ORDER BY dateAddedSeconds DESC
         """
@@ -209,42 +204,26 @@ interface MediaDao {
 
     @Query(
         """
-        SELECT COUNT(*) FROM media_items 
-        WHERE NOT EXISTS (
-            SELECT 1 FROM media_person_cross_ref 
-            INNER JOIN people ON people.personId = media_person_cross_ref.personId
-            WHERE media_person_cross_ref.mediaId = media_items.mediaId
-              AND people.isHiddenToOther = 0
-              AND (
-                  people.faceCount >= 2 
-                  OR people.isNamedByUser = 1 
-                  OR NOT EXISTS (
-                      SELECT 1 FROM people p2 
-                      WHERE p2.isHiddenToOther = 0 AND (p2.faceCount >= 2 OR p2.isNamedByUser = 1)
-                  )
-              )
-        )
+        SELECT COUNT(*) FROM media_items m
+        WHERE m.isVideo = 0
+          AND NOT EXISTS (
+              SELECT 1 FROM media_person_cross_ref ref
+              INNER JOIN people p ON p.personId = ref.personId
+              WHERE ref.mediaId = m.mediaId AND p.isHiddenToOther = 0
+          )
         """
     )
     fun getUnassociatedCount(): Flow<Int>
 
     @Query(
         """
-        SELECT COUNT(*) FROM media_items 
-        WHERE isVideo = 0 AND NOT EXISTS (
-            SELECT 1 FROM media_person_cross_ref 
-            INNER JOIN people ON people.personId = media_person_cross_ref.personId
-            WHERE media_person_cross_ref.mediaId = media_items.mediaId
-              AND people.isHiddenToOther = 0
-              AND (
-                  people.faceCount >= 2 
-                  OR people.isNamedByUser = 1 
-                  OR NOT EXISTS (
-                      SELECT 1 FROM people p2 
-                      WHERE p2.isHiddenToOther = 0 AND (p2.faceCount >= 2 OR p2.isNamedByUser = 1)
-                  )
-              )
-        )
+        SELECT COUNT(*) FROM media_items m
+        WHERE m.isVideo = 0
+          AND NOT EXISTS (
+              SELECT 1 FROM media_person_cross_ref ref
+              INNER JOIN people p ON p.personId = ref.personId
+              WHERE ref.mediaId = m.mediaId AND p.isHiddenToOther = 0
+          )
         """
     )
     fun getUnassociatedPhotoCount(): Flow<Int>
@@ -257,14 +236,6 @@ interface MediaDao {
             INNER JOIN people ON people.personId = media_person_cross_ref.personId
             WHERE media_person_cross_ref.mediaId = media_items.mediaId
               AND people.isHiddenToOther = 0
-              AND (
-                  people.faceCount >= 2 
-                  OR people.isNamedByUser = 1 
-                  OR NOT EXISTS (
-                      SELECT 1 FROM people p2 
-                      WHERE p2.isHiddenToOther = 0 AND (p2.faceCount >= 2 OR p2.isNamedByUser = 1)
-                  )
-              )
         )
         """
     )
@@ -278,35 +249,33 @@ interface MediaDao {
             INNER JOIN people ON people.personId = media_person_cross_ref.personId
             WHERE media_person_cross_ref.mediaId = media_items.mediaId
               AND people.isHiddenToOther = 0
-              AND (
-                  people.faceCount >= 2 
-                  OR people.isNamedByUser = 1 
-                  OR NOT EXISTS (
-                      SELECT 1 FROM people p2 
-                      WHERE p2.isHiddenToOther = 0 AND (p2.faceCount >= 2 OR p2.isNamedByUser = 1)
-                  )
-              )
         )
         """
     )
     fun getUnassociatedReelCount(): Flow<Int>
 
-    @Query("SELECT * FROM media_items WHERE isProcessedForFaces = 0 ORDER BY isVideo ASC, dateAddedSeconds DESC LIMIT :limit")
+    @Query("SELECT * FROM media_items WHERE isVideo = 0 AND isProcessedForFaces = 0 ORDER BY dateAddedSeconds DESC LIMIT :limit")
     suspend fun getUnindexedMedia(limit: Int = 5000): List<MediaEntity>
 
-    @Query("SELECT COUNT(*) FROM media_items WHERE isProcessedForFaces = 0")
+    @Query("SELECT * FROM media_items WHERE isVideo = 0 AND isProcessedForFaces = 0 ORDER BY dateAddedSeconds DESC LIMIT :limit")
+    suspend fun getUnindexedPhotos(limit: Int = 5000): List<MediaEntity>
+
+    @Query("UPDATE media_items SET isProcessedForFaces = 1, hasFaces = 0 WHERE isVideo = 1 AND isProcessedForFaces = 0")
+    suspend fun markAllVideosProcessed()
+
+    @Query("SELECT COUNT(*) FROM media_items WHERE isVideo = 0 AND isProcessedForFaces = 0")
     fun getUnindexedCount(): Flow<Int>
 
-    @Query("SELECT COUNT(*) FROM media_items WHERE isProcessedForFaces = 0")
+    @Query("SELECT COUNT(*) FROM media_items WHERE isVideo = 0 AND isProcessedForFaces = 0")
     suspend fun getUnindexedCountSync(): Int
 
-    @Query("SELECT COUNT(*) FROM media_items WHERE isProcessedForFaces = 1")
+    @Query("SELECT COUNT(*) FROM media_items WHERE isVideo = 0 AND isProcessedForFaces = 1")
     fun getProcessedCount(): Flow<Int>
 
-    @Query("SELECT COUNT(*) FROM media_items")
+    @Query("SELECT COUNT(*) FROM media_items WHERE isVideo = 0")
     fun getTotalMediaCount(): Flow<Int>
 
-    @Query("SELECT COUNT(*) FROM media_items")
+    @Query("SELECT COUNT(*) FROM media_items WHERE isVideo = 0")
     suspend fun getTotalMediaCountSync(): Int
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)

@@ -253,13 +253,9 @@ fun InstaGalleryNavGraph(
                 )
 
                 val uiState by profileViewModel.uiState.collectAsStateWithLifecycle()
-                val combinedMedia = remember(uiState.photos, uiState.videos, initialMediaId) {
-                    val isInitialVideo = uiState.videos.any { it.media.mediaId == initialMediaId }
-                    if (isInitialVideo) uiState.videos else uiState.photos
-                }
 
                 PostDetailScreen(
-                    mediaList = combinedMedia,
+                    mediaList = uiState.photos,
                     initialMediaId = initialMediaId,
                     onBackClick = { navController.popBackStack() },
                     onPersonClick = { clickedPersonId ->

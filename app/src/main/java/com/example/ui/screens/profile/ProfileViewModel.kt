@@ -26,10 +26,8 @@ data class ProfileUiState(
     val faces: List<FaceEntity> = emptyList(),
     val allPeople: List<PersonEntity> = emptyList(),
     val otherPeople: List<PersonEntity> = emptyList(),
-    val selectedTab: Int = 0 // 0 = Photos grid, 1 = Reels grid
+    val selectedTab: Int = 0
 )
-
-data class MemoryCounts(val photos: Int, val reels: Int, val total: Int)
 
 class ProfileViewModel(
     application: Application,
@@ -39,40 +37,30 @@ class ProfileViewModel(
     private val repository = GalleryRepository(application)
     private val _selectedTab = MutableStateFlow(0)
 
-    private val countsFlow = combine(
-        repository.getPhotoCountForPerson(personId),
-        repository.getReelCountForPerson(personId),
-        repository.getTotalCountForPerson(personId)
-    ) { p, r, t -> MemoryCounts(p, r, t) }
-
-    private val mediaFlow = combine(
-        repository.getPhotosForPerson(personId),
-        repository.getVideosForPerson(personId),
-        _selectedTab
-    ) { photos, videos, tab -> Triple(photos, videos, tab) }
-
-    private val personFlow = if (personId == -1L) MutableStateFlow<PersonEntity?>(null) else repository.getPersonById(personId)
+    private val personFlow = if (personId == -1L) {
+        MutableStateFlow<PersonEntity?>(null)
+    } else {
+        repository.getPersonById(personId)
+    }
 
     val uiState: StateFlow<ProfileUiState> = combine(
         personFlow,
-        mediaFlow,
-        countsFlow,
+        repository.getMediaWithAuthorsForPersonFlow(personId),
         repository.getFacesForPerson(personId),
-        repository.allPeople
-    ) { person, mediaTuple, counts, faces, allPeople ->
-        val photos = mediaTuple.first
-        val videos = mediaTuple.second
-        val tab = mediaTuple.third
+        repository.allPeople,
+        _selectedTab
+    ) { person, photos, faces, allPeople, tab ->
+        val stillPhotos = photos.filter { !it.media.isVideo }
         val candidateOthers = allPeople.filter { it.personId != personId }
 
         ProfileUiState(
             personId = personId,
             person = person,
-            photos = photos,
-            videos = videos,
-            photoCount = counts.photos,
-            reelCount = counts.reels,
-            totalCount = counts.total,
+            photos = stillPhotos,
+            videos = emptyList(),
+            photoCount = stillPhotos.size,
+            reelCount = 0,
+            totalCount = stillPhotos.size,
             faces = faces,
             allPeople = allPeople,
             otherPeople = candidateOthers,

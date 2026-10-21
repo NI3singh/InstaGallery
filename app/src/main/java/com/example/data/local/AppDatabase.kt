@@ -19,7 +19,7 @@ import com.example.data.local.entity.PersonEntity
         FaceEntity::class,
         MediaPersonCrossRef::class
     ],
-    version = 3,
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

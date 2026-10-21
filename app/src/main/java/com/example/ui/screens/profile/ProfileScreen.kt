@@ -27,7 +27,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.outlined.AddAPhoto
 import androidx.compose.material.icons.outlined.DeleteOutline
@@ -36,10 +35,8 @@ import androidx.compose.material.icons.outlined.Face
 import androidx.compose.material.icons.outlined.FolderShared
 import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.GroupAdd
-import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.PhotoCamera
-import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -99,14 +96,13 @@ fun ProfileScreen(
 
     val profileName = if (isOther) "Other" else person?.name ?: "Person"
     val avatarCropPath = person?.avatarCropPath ?: ""
+    val photos = uiState.photos
 
     var showEditNameDialog by remember { mutableStateOf(false) }
     var showMergePickerSheet by remember { mutableStateOf(false) }
     var showAvatarPickerSheet by remember { mutableStateOf(false) }
     var selectedMediaForAction by remember { mutableStateOf<MediaWithAuthors?>(null) }
     var showActionSheet by remember { mutableStateOf(false) }
-
-    val activeMediaList = if (uiState.selectedTab == 0) uiState.photos else uiState.videos
 
     Column(
         modifier = modifier
@@ -254,25 +250,15 @@ fun ProfileScreen(
                 }
             }
 
-            // Memory Metrics (Posts, Reels, Total)
+            // Memory Metrics: ONLY "Posts" counter (exact count of still photos linked to this profile)
             Row(
                 modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.SpaceEvenly,
+                horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 StatColumn(
-                    number = uiState.photoCount.toString(),
-                    label = "Posts",
-                    onClick = { viewModel.selectTab(0) }
-                )
-                StatColumn(
-                    number = uiState.reelCount.toString(),
-                    label = "Reels",
-                    onClick = { viewModel.selectTab(1) }
-                )
-                StatColumn(
-                    number = uiState.totalCount.toString(),
-                    label = "Total"
+                    number = photos.size.toString(),
+                    label = "Posts"
                 )
             }
         }
@@ -310,7 +296,7 @@ fun ProfileScreen(
             Spacer(modifier = Modifier.height(2.dp))
 
             Text(
-                text = "Auto-generated local profile • ${uiState.totalCount} memories on device",
+                text = "Auto-generated local profile • ${photos.size} photos on device",
                 fontSize = 12.sp,
                 color = IgTextSecondary
             )
@@ -399,74 +385,15 @@ fun ProfileScreen(
                     }
                 }
             }
+        } else {
+            Spacer(modifier = Modifier.height(8.dp))
         }
 
-        // Tab Switcher Header (Grid vs Reels)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(44.dp)
-                .background(IgBlack)
-        ) {
-            // Tab 0: Photos Grid
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable { viewModel.selectTab(0) }
-                    .padding(vertical = 8.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        imageVector = Icons.Default.GridOn,
-                        contentDescription = "Photos",
-                        tint = if (uiState.selectedTab == 0) IgTextPrimary else IgTextSecondary,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    if (uiState.selectedTab == 0) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(1.5.dp)
-                                .background(IgTextPrimary)
-                        )
-                    }
-                }
-            }
+        // Single clean 1.dp divider (#1F1F1F) followed directly by the 3-column square photo grid
+        HorizontalDivider(color = Color(0xFF1F1F1F), thickness = 1.dp)
 
-            // Tab 1: Reels
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable { viewModel.selectTab(1) }
-                    .padding(vertical = 8.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        imageVector = Icons.Outlined.Movie,
-                        contentDescription = "Reels",
-                        tint = if (uiState.selectedTab == 1) IgTextPrimary else IgTextSecondary,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    if (uiState.selectedTab == 1) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(1.5.dp)
-                                .background(IgTextPrimary)
-                        )
-                    }
-                }
-            }
-        }
-
-        HorizontalDivider(color = IgBorderNav, thickness = 0.5.dp)
-
-        // 3-Column Square Media Grid or Empty State
-        if (activeMediaList.isEmpty()) {
+        // 3-Column Square Photo Grid or Empty State
+        if (photos.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -485,26 +412,22 @@ fun ProfileScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = if (uiState.selectedTab == 0) Icons.Outlined.PhotoCamera else Icons.Outlined.Movie,
-                            contentDescription = "No media",
+                            imageVector = Icons.Outlined.PhotoCamera,
+                            contentDescription = "No photos",
                             tint = IgTextSecondary,
                             modifier = Modifier.size(30.dp)
                         )
                     }
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = if (uiState.selectedTab == 0) "No Photos Yet" else "No Reels Yet",
+                        text = "No Photos Yet",
                         fontSize = 16.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = IgTextPrimary
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = if (uiState.selectedTab == 0) {
-                            "Photos featuring @$profileName will appear in this grid."
-                        } else {
-                            "Videos featuring @$profileName will appear here."
-                        },
+                        text = "Photos featuring @$profileName will appear in this grid.",
                         fontSize = 12.5.sp,
                         color = IgTextSecondary,
                         textAlign = TextAlign.Center
@@ -521,7 +444,7 @@ fun ProfileScreen(
                     .testTag("profile_media_grid")
             ) {
                 items(
-                    items = activeMediaList,
+                    items = photos,
                     key = { it.media.mediaId }
                 ) { item ->
                     Box(
@@ -553,39 +476,6 @@ fun ProfileScreen(
                                     .padding(6.dp)
                                     .size(14.dp)
                             )
-                        }
-
-                        // Video overlay badge
-                        if (item.media.isVideo) {
-                            Icon(
-                                imageVector = Icons.Outlined.Movie,
-                                contentDescription = "Video",
-                                tint = Color.White,
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .padding(6.dp)
-                                    .size(16.dp)
-                            )
-                            Row(
-                                modifier = Modifier
-                                    .align(Alignment.BottomStart)
-                                    .padding(6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(2.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.PlayArrow,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(12.dp)
-                                )
-                                val durationSec = (item.media.durationMs ?: 0L) / 1000L
-                                Text(
-                                    text = "${durationSec}s",
-                                    fontSize = 11.sp,
-                                    color = Color.White
-                                )
-                            }
                         }
                     }
                 }
@@ -889,7 +779,7 @@ fun ProfileScreen(
                                 color = IgRed
                             )
                             Text(
-                                text = "Removes @$profileName profile and moves their media into @Other",
+                                text = "Removes @$profileName profile and moves their photos into @Other",
                                 fontSize = 12.sp,
                                 color = IgTextSecondary
                             )
@@ -920,7 +810,7 @@ fun ProfileScreen(
                             color = IgTextPrimary
                         )
                         Text(
-                            text = "${uiState.totalCount} items auto-clustered on device",
+                            text = "${photos.size} photos auto-clustered on device",
                             fontSize = 12.sp,
                             color = IgTextSecondary
                         )

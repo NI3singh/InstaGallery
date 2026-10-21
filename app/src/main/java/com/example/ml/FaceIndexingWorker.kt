@@ -37,8 +37,11 @@ class FaceIndexingWorker(
         val clusterManager = FaceClusterManager(applicationContext, personDao, mediaDao)
 
         try {
+            // Photos-only human face detection: immediately mark all videos as processed
+            mediaDao.markAllVideosProcessed()
+
             val alreadyProcessed = mediaDao.getProcessedCount().firstOrNull() ?: 0
-            val totalMedia = mediaDao.getTotalMediaCount().firstOrNull() ?: 0
+            val totalPhotos = mediaDao.getTotalMediaCount().firstOrNull() ?: 0
             var processedCount = alreadyProcessed
             var itemsProcessedInThisRun = 0
 
@@ -48,12 +51,12 @@ class FaceIndexingWorker(
                 return if (multiOrNamed > 0) multiOrNamed else allActive.count { !it.isHiddenToOther }
             }
 
-            if (totalMedia > 0) {
+            if (totalPhotos > 0) {
                 val initialVisibleCount = countVisibleProfiles()
                 setProgress(
                     workDataOf(
                         PROGRESS_PROCESSED to processedCount,
-                        PROGRESS_TOTAL to totalMedia,
+                        PROGRESS_TOTAL to totalPhotos,
                         PROGRESS_PROFILES_COUNT to initialVisibleCount,
                         PROGRESS_FACES_FOUND to initialVisibleCount
                     )
@@ -61,19 +64,24 @@ class FaceIndexingWorker(
             }
 
             while (!isStopped) {
-                // Queries unindexed media ordered by isVideo ASC (photos first, videos second), dateAddedSeconds DESC
-                val unindexedBatch = mediaDao.getUnindexedMedia(limit = BATCH_CHUNK_SIZE)
+                // Queries unindexed photos only (isVideo = 0 AND isProcessedForFaces = 0)
+                val unindexedBatch = mediaDao.getUnindexedPhotos(limit = BATCH_CHUNK_SIZE)
                 if (unindexedBatch.isEmpty()) break
 
                 for (media in unindexedBatch) {
                     if (isStopped) break
 
-                    try {
-                        val detectedFaces = detectorProcessor.processMediaItem(
-                            uriString = media.uri,
-                            isVideo = media.isVideo,
-                            durationMs = media.durationMs
+                    if (media.isVideo) {
+                        mediaDao.updateMediaProcessed(
+                            mediaId = media.mediaId,
+                            isProcessed = true,
+                            hasFaces = false
                         )
+                        continue
+                    }
+
+                    try {
+                        val detectedFaces = detectorProcessor.processMedia(media)
 
                         val facesAssigned = try {
                             if (detectedFaces.isNotEmpty()) {
@@ -81,7 +89,7 @@ class FaceIndexingWorker(
                                     mediaId = media.mediaId,
                                     detectedFaces = detectedFaces,
                                     embeddingExtractor = embeddingExtractor,
-                                    isVideo = media.isVideo
+                                    isVideo = false
                                 )
                             } else {
                                 false
@@ -103,7 +111,7 @@ class FaceIndexingWorker(
                             hasFaces = facesAssigned
                         )
                     } catch (e: Exception) {
-                        Log.e(TAG, "Error processing media ${media.mediaId}", e)
+                        Log.e(TAG, "Error processing photo ${media.mediaId}", e)
                         mediaDao.updateMediaProcessed(
                             mediaId = media.mediaId,
                             isProcessed = true,
@@ -114,12 +122,11 @@ class FaceIndexingWorker(
                     processedCount++
                     itemsProcessedInThisRun++
 
-                    // Every 40 processed items, run Pass-2 Graph Consolidation & Anchor k-NN Sweep
                     if (itemsProcessedInThisRun % PASS2_CONSOLIDATION_INTERVAL == 0) {
                         clusterManager.runPass2ConsolidationAndAnchorSweep()
                     }
 
-                    val totalCount = (mediaDao.getTotalMediaCount().firstOrNull() ?: totalMedia)
+                    val totalCount = (mediaDao.getTotalMediaCount().firstOrNull() ?: totalPhotos)
                         .coerceAtLeast(processedCount)
                     val visiblePeopleCount = countVisibleProfiles()
 
@@ -134,7 +141,6 @@ class FaceIndexingWorker(
                 }
             }
 
-            // Final Pass-2 Graph Consolidation & Anchor k-NN Sweep at the end of doWork()
             clusterManager.runPass2ConsolidationAndAnchorSweep()
 
             val finalTotal = mediaDao.getTotalMediaCount().firstOrNull() ?: processedCount

@@ -27,7 +27,7 @@ class GalleryRepository(private val context: Context) {
     private val clusterManager = FaceClusterManager(context, personDao, mediaDao)
 
     /**
-     * Section 3.1: Primary people Flow observed by ProfileSetupScreen, HomeFeedScreen, and PeopleDirectoryScreen.
+     * Primary people Flow observed by ProfileSetupScreen, HomeFeedScreen, and PeopleDirectoryScreen.
      * Uses `personDao.getVisiblePeopleFlow()` (`isHiddenToOther = 0 AND (faceCount >= 2 OR isNamedByUser = 1)`),
      * falling back to `faceCount >= 1` ONLY if the entire device has 0 clusters with `faceCount >= 2 || isNamedByUser`.
      */
@@ -69,7 +69,7 @@ class GalleryRepository(private val context: Context) {
     val unindexedCount: Flow<Int> = mediaDao.getUnindexedCount()
     val processedCount: Flow<Int> = mediaDao.getProcessedCount()
     val totalMediaCount: Flow<Int> = mediaDao.getTotalMediaCount()
-    val unassociatedCount: Flow<Int> = mediaDao.getUnassociatedCount()
+    val unassociatedCount: Flow<Int> = mediaDao.getUnassociatedPhotoCount()
 
     // Work progress
     val indexingWorkInfo: Flow<WorkInfo?> = WorkManager.getInstance(context)
@@ -94,22 +94,25 @@ class GalleryRepository(private val context: Context) {
 
     fun getPersonById(personId: Long): Flow<PersonEntity?> = personDao.getPersonById(personId)
 
-    fun getMediaForPerson(personId: Long): Flow<List<MediaWithAuthors>> {
+    /**
+     * Strict photo-only query for a specific person (`personId > 0`) or `@Other` (`personId == -1L`).
+     * Never falls back to random or unrelated gallery media.
+     */
+    fun getMediaWithAuthorsForPersonFlow(personId: Long): Flow<List<MediaWithAuthors>> {
         val rawFlow = if (personId == -1L) {
-            mediaDao.getUnassociatedMedia()
+            mediaDao.getUnassignedPhotosWithAuthorsFlow()
         } else {
-            mediaDao.getMediaForPerson(personId)
+            mediaDao.getMediaWithAuthorsForPersonFlow(personId)
         }
         return filterMediaAuthorsToVisible(rawFlow)
     }
 
+    fun getMediaForPerson(personId: Long): Flow<List<MediaWithAuthors>> {
+        return getMediaWithAuthorsForPersonFlow(personId)
+    }
+
     fun getPhotosForPerson(personId: Long): Flow<List<MediaWithAuthors>> {
-        val rawFlow = if (personId == -1L) {
-            mediaDao.getUnassociatedPhotos()
-        } else {
-            mediaDao.getPhotosForPerson(personId)
-        }
-        return filterMediaAuthorsToVisible(rawFlow)
+        return getMediaWithAuthorsForPersonFlow(personId)
     }
 
     fun getVideosForPerson(personId: Long): Flow<List<MediaWithAuthors>> {
@@ -138,11 +141,7 @@ class GalleryRepository(private val context: Context) {
     }
 
     fun getTotalCountForPerson(personId: Long): Flow<Int> {
-        return if (personId == -1L) {
-            mediaDao.getUnassociatedCount()
-        } else {
-            personDao.getTotalCountForPerson(personId)
-        }
+        return getPhotoCountForPerson(personId)
     }
 
     fun getFacesForPerson(personId: Long): Flow<List<FaceEntity>> = personDao.getFacesForPerson(personId)
@@ -159,15 +158,6 @@ class GalleryRepository(private val context: Context) {
         mediaDao.setBookmarked(mediaId, !currentBookmarked)
     }
 
-    /**
-     * Section 3.2: Live Auto-Merge & Instant Anchor Re-Sweep When User Names a Profile:
-     * 1. Trims and strips any leading '@'.
-     * 2. Checks if another PersonEntity already has `name.equals(newName, ignoreCase = true)`:
-     *    - If a match exists: automatically merges the two profiles into one.
-     *    - If no match exists: marks the person as named by user (`personDao.markPersonNamedByUser(personId, newName)`).
-     * 3. Immediately triggers `clusterManager.runPass2ConsolidationAndAnchorSweep()` on `Dispatchers.Default`
-     *    so all unassigned/angled faces and video frames matching this named anchor (>= 0.55f) are swept in!
-     */
     suspend fun updatePersonName(personId: Long, rawName: String) = withContext(Dispatchers.IO) {
         val newName = rawName.trim().removePrefix("@").trim()
         if (newName.isBlank()) {
@@ -223,24 +213,14 @@ class GalleryRepository(private val context: Context) {
         clusterManager.invalidateCache()
     }
 
-    /**
-     * Completes the Profile Setup step:
-     * 1. Hides any clusters marked as Unknown/Skip into @Other (`personDao.hidePersonToOther`).
-     * 2. Saves user-assigned or default names for active profiles (stripping any leading `@`).
-     * 3. Automatically merges any profiles given the exact same name by the user.
-     * 4. Immediately runs `clusterManager.runPass2ConsolidationAndAnchorSweep()` on `Dispatchers.Default`
-     *    so newly named anchors (e.g. `@Papa`, `@Maa`) sweep unassigned/side-angle faces before the feed opens.
-     */
     suspend fun applyProfileSetup(
         namedProfiles: Map<Long, String>,
         unknownPersonIds: Set<Long>
     ) = withContext(Dispatchers.IO) {
-        // 1. Move unknown / skipped face clusters into @Other
         for (unknownId in unknownPersonIds) {
             personDao.hidePersonToOther(unknownId)
         }
 
-        // 2. Group remaining profiles by normalized name so duplicate names auto-merge
         val activeGroups = mutableMapOf<String, MutableList<Pair<Long, String>>>()
         for ((personId, rawName) in namedProfiles) {
             if (unknownPersonIds.contains(personId)) continue
@@ -256,7 +236,6 @@ class GalleryRepository(private val context: Context) {
         val allExistingInDb = personDao.getAllPeopleIncludeHiddenSync().associateBy { it.personId }
 
         for ((normalizedKey, group) in activeGroups) {
-            // Also check if another active person in DB (outside this setup batch) already has this name
             val externalMatch = allExistingInDb.values.firstOrNull { existing ->
                 !existing.isHiddenToOther &&
                     !unknownPersonIds.contains(existing.personId) &&
@@ -283,7 +262,6 @@ class GalleryRepository(private val context: Context) {
             }
         }
 
-        // 3. Trigger immediate Pass-2 Anchor Sweep so named profiles sweep unassigned/side-angle faces
         withContext(Dispatchers.Default) {
             clusterManager.runPass2ConsolidationAndAnchorSweep()
         }
@@ -292,9 +270,6 @@ class GalleryRepository(private val context: Context) {
         OnboardingPreferences.markProfileSetupCompleted(context, true)
     }
 
-    /**
-     * Clears all existing face clusters and triggers a fresh AI face scan across the gallery.
-     */
     suspend fun resetAndRescanAllFaces() = withContext(Dispatchers.IO) {
         WorkManager.getInstance(context).cancelUniqueWork(MediaStoreScanner.FACE_INDEXING_WORK_NAME)
         mediaDao.clearAllCrossRefs()

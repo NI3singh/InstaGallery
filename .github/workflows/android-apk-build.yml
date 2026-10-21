@@ -11,8 +11,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_TAG: v1.1.0
-  APK_FILENAME: InstaGallery-v1.1.0.apk
+  RELEASE_TAG: v1.1.2
+  APK_FILENAME: InstaGallery-v1.1.2.apk
 
 jobs:
   build:
@@ -49,9 +49,7 @@ jobs:
       - name: Ensure debug.keystore exists for signing
         run: |
           if [ ! -f "debug.keystore" ]; then
-            if [ -f "debug.keystore.base64" ]; then
-              base64 -d debug.keystore.base64 > debug.keystore
-            else
+            if [ ! -f "debug.keystore.base64" ]; then
               keytool -genkeypair -v \
                 -keystore debug.keystore \
                 -storepass android \
@@ -61,53 +59,36 @@ jobs:
                 -keysize 2048 \
                 -validity 10000 \
                 -dname "CN=Android Debug,O=Android,C=US"
+            else
+              base64 -d debug.keystore.base64 > debug.keystore
             fi
           fi
 
-      - name: Download & Verify MobileFaceNet TFLite Model (>= 1 MB Gate)
+      - name: Download and Verify MobileFaceNet TFLite Model
         run: |
           mkdir -p app/src/main/assets
-          MODEL_PATH="app/src/main/assets/mobilefacenet.tflite"
-          MIRRORS=(
-            "https://raw.githubusercontent.com/sirius-ai/MobileFaceNet_TF/master/arch/pretrained_model/mobilefacenet.tflite"
-            "https://github.com/MCarlomagno/FaceRecognitionAuth/raw/master/assets/mobilefacenet.tflite"
-            "https://huggingface.co/datasets/Xenova/tflite-models/resolve/main/mobilefacenet.tflite"
+          URLS=(
+            "https://raw.githubusercontent.com/MCarlomagno/FaceRecognitionAuth/master/assets/mobilefacenet.tflite"
+            "https://raw.githubusercontent.com/kuru0777/face-recognition-with-flutter/main/assets/mobilefacenet.tflite"
+            "https://raw.githubusercontent.com/ngtrphuong/facerecognition/master/assets/mobilefacenet.tflite"
           )
-
-          VERIFIED=0
-          if [ -f "$MODEL_PATH" ]; then
-            EXISTING_SIZE=$(stat -c%s "$MODEL_PATH" 2>/dev/null || echo 0)
-            if [ "$EXISTING_SIZE" -ge 1000000 ]; then
-              echo "Existing verified mobilefacenet.tflite found (${EXISTING_SIZE} bytes)."
-              VERIFIED=1
-            fi
-          fi
-
-          if [ "$VERIFIED" -eq 0 ]; then
-            for URL in "${MIRRORS[@]}"; do
-              echo "Attempting download from: $URL"
-              rm -f "$MODEL_PATH"
-              if curl -L --fail --retry 3 --connect-timeout 15 -o "$MODEL_PATH" "$URL"; then
-                FILE_SIZE=$(stat -c%s "$MODEL_PATH" 2>/dev/null || echo 0)
-                echo "Downloaded size: ${FILE_SIZE} bytes"
-                if [ "$FILE_SIZE" -ge 1000000 ]; then
-                  echo "Successfully verified mobilefacenet.tflite (${FILE_SIZE} bytes >= 1,000,000 bytes)."
-                  VERIFIED=1
-                  break
-                else
-                  echo "Rejected download (${FILE_SIZE} bytes < 1,000,000 bytes). Trying next mirror..."
-                fi
-              else
-                echo "Mirror download failed: $URL"
+          SUCCESS=0
+          for url in "${URLS[@]}"; do
+            echo "Trying $url ..."
+            curl -L --fail --retry 3 --connect-timeout 15 -o app/src/main/assets/mobilefacenet.tflite "$url" || true
+            if [ -f app/src/main/assets/mobilefacenet.tflite ]; then
+              SIZE=$(stat -c%s app/src/main/assets/mobilefacenet.tflite 2>/dev/null || wc -c < app/src/main/assets/mobilefacenet.tflite)
+              if [ "$SIZE" -ge 1000000 ]; then
+                echo "Verified mobilefacenet.tflite ($SIZE bytes)"
+                SUCCESS=1
+                break
               fi
-            done
-          fi
-
-          if [ "$VERIFIED" -ne 1 ]; then
-            echo "ERROR: Failed to obtain a valid mobilefacenet.tflite (>= 1 MB) from all mirrors!"
+            fi
+          done
+          if [ "$SUCCESS" -ne 1 ]; then
+            echo "ERROR: Failed to download valid mobilefacenet.tflite"
             exit 1
           fi
-          ls -lh "$MODEL_PATH"
 
       - name: Clean Legacy WebP Icons & Build Optimized Signed Phone APK
         run: |
@@ -134,7 +115,7 @@ jobs:
       - name: Upload InstaGallery APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: InstaGallery-v1.1.0-APK
+          name: InstaGallery-v1.1.2-APK
           path: dist/${{ env.APK_FILENAME }}
           if-no-files-found: error
 
@@ -145,7 +126,7 @@ jobs:
         run: |
           APK_SIZE=$(du -h "dist/${APK_FILENAME}" | cut -f1)
           cat << EOF > RELEASE_NOTES.md
-          ## 📸 InstaGallery ${RELEASE_TAG} — Hybrid Two-Pass Anchor Face Recognition Engine & 3D Setup Carousel
+          ## 📸 InstaGallery ${RELEASE_TAG} — Photo-Only High-Precision MobileFaceNet Engine & Clean Profile Grids
 
           ### ⚡ Fast APK Download (\`${APK_SIZE}\` — Slim Optimized Build)
           - **Option 1 — Direct GitHub Release Asset**: Tap **\`${APK_FILENAME}\`** under **Assets** below.
@@ -157,20 +138,20 @@ jobs:
           ### 📲 Installation Steps
           1. Download **\`${APK_FILENAME}\`** on your Android 8.0+ (API 26+) phone.
           2. Open the \`.apk\` file and allow *Install unknown apps* if prompted.
-          3. Launch **InstaGallery** — the upgraded Room v3 schema automatically resets legacy fragmented clusters and runs the new Two-Pass Anchor Face Recognition pipeline.
+          3. Launch **InstaGallery** — the Room v5 schema automatically resets legacy clusters and runs the high-precision photo-only MobileFaceNet pipeline.
 
           ### 🧠 What's New in ${RELEASE_TAG}
-          - **CI Neural Model Lock (\`mobilefacenet.tflite\` >= 1 MB Gate)**: Multi-mirror download with hard file-size verification and bundled native \`org.tensorflow.lite.Interpreter\` runtime (4 threads) + dynamic tensor shape & DataType inspection.
-          - **ML Kit \`PERFORMANCE_MODE_ACCURATE\` + 2D Affine Eye Alignment**:
-            - High-resolution \`1600px\` EXIF-normalized photo decoding (\`setMinFaceSize(0.045f)\` for group photos).
-            - Strict 5-landmark false-positive filter rejecting screenshots, memes, and invalid geometry.
-            - 2D affine eye-alignment rotation (\`postRotate(-angleDegrees, eyeCenterX, eyeCenterY)\`) producing upright \`112x112\` neural crops and \`180x180\` portrait avatars.
-            - 4-frame video Reel sampling (\`20%\`, \`45%\`, \`70%\`, \`85%\`) with cross-frame spatial deduplication.
-          - **Flip-Augmented Embeddings & Two-Pass Multi-Prototype k-NN Clustering**:
-            - Test-time horizontal flip augmentation ($\hat{v}_{\text{final}} = \text{norm}(\hat{v}_1 + \hat{v}_2)$) eliminating lighting and yaw asymmetry.
-            - Multi-prototype matching across up to 12 anchor exemplars per person (\`0.55 * maxExemplar + 0.30 * top3Avg + 0.15 * centroid\`).
-            - **Pass 1 (Strict Anchor Gate)** + **Pass 2 (Graph Consolidation & Live User-Anchor k-NN Re-Sweep)** that automatically pulls side-angle and unassigned faces into named profiles like \`@Papa\` and \`@Maa\`.
-          - **Interactive 3D Horizontal Carousel Setup (\`ProfileSetupScreen\`)**, **Radial Halo Processing Screen**, and **Choreographed Stitch Welcome Screen**.
+          - **Hard-Verified MobileFaceNet TFLite Model (\`>= 1 MB\` CI Gate)**:
+            - Guarantees \`mobilefacenet.tflite\` is embedded in every built APK before packaging.
+          - **Photo-Only 5-Landmark Human Face Gate & Origin-Centered Crop Math**:
+            - Scans only still photos (\`isVideo = 0\`) for faces — videos remain exclusively in the main Reels tab, cutting scan time in half.
+            - Enforces a 5-landmark + open-eye + anatomical geometry gate to eliminate non-human objects and screenshots.
+            - Generates unrotated \`200x200\` portrait avatars and origin-centered \`112x112\` affine-aligned crops for TFLite.
+          - **Calibrated High-Precision MobileFaceNet Thresholds (\`0.74f\` exemplar / \`0.70f\` centroid)**:
+            - Prevents false merges between distinct people while keeping same-person photos grouped accurately.
+          - **Strict Photo-Only Profile Queries & Clean Profile Layout**:
+            - Person profiles and the 3-photo setup carousel banner strictly query still photos via \`INNER JOIN media_person_cross_ref\` (\`isVideo = 0\`).
+            - Removed the Reels tab and Reels/Total counters from \`ProfileScreen\`, showing only the \`Posts\` photo counter and 3-column photo grid.
           EOF
 
           git tag -f "${RELEASE_TAG}"
@@ -179,12 +160,12 @@ jobs:
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
             gh release upload "${RELEASE_TAG}" "dist/${APK_FILENAME}" --clobber
             gh release edit "${RELEASE_TAG}" \
-              --title "InstaGallery ${RELEASE_TAG} — Two-Pass Anchor Face Engine APK (${APK_SIZE})" \
+              --title "InstaGallery ${RELEASE_TAG} — Photo-Only MobileFaceNet APK (${APK_SIZE})" \
               --notes-file RELEASE_NOTES.md \
               --latest
           else
             gh release create "${RELEASE_TAG}" "dist/${APK_FILENAME}" \
-              --title "InstaGallery ${RELEASE_TAG} — Two-Pass Anchor Face Engine APK (${APK_SIZE})" \
+              --title "InstaGallery ${RELEASE_TAG} — Photo-Only MobileFaceNet APK (${APK_SIZE})" \
               --notes-file RELEASE_NOTES.md \
               --latest
           fi
