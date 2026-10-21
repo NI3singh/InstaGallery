@@ -23,13 +23,12 @@ import kotlin.math.sqrt
 
 /**
  * Extracts flip-augmented L2-normalized facial identity embeddings using MobileFaceNet TFLite
- * (`mobilefacenet.tflite`) with dynamic tensor shape & DataType inspection.
+ * (`mobilefacenet.tflite`) with dynamic batch size (`[2, 112, 112, 3]` or `[1, 112, 112, 3]`),
+ * tensor shape, and DataType inspection.
  *
- * For every 112x112 alignedFaceBitmap:
- * 1. Runs TFLite inference on the original alignedFaceBitmap -> v1 -> L2-normalized v1_hat.
- * 2. Horizontally flips alignedFaceBitmap -> runs TFLite inference -> v2 -> L2-normalized v2_hat.
- * 3. Sums v_sum = v1_hat + v2_hat and L2-normalizes to produce the final illumination- and
- *    yaw-invariant identity embedding.
+ * When `inputBatchSize >= 2 && outputBatchSize >= 2` (standard MobileFaceNet `[2, 112, 112, 3]` -> `[2, 192]`):
+ * - Packs both `scaledOriginal` (slot 0) and `scaledFlipped` (slot 1) into a single batch `ByteBuffer`
+ *   and runs both flip-augmented views in a single TFLite pass!
  */
 class FaceEmbeddingExtractor(private val context: Context) {
 
@@ -39,17 +38,19 @@ class FaceEmbeddingExtractor(private val context: Context) {
         const val FALLBACK_EMBEDDING_DIM = 192
     }
 
+    private val lock = Any()
     private var interpreter: Interpreter? = null
     private var modelInitAttempted = false
+    private var inputBatchSize = 1
     private var inputHeight = 112
     private var inputWidth = 112
     private var inputChannels = 3
-    private var inputDataType: DataType = DataType.FLOAT32
-    private var outputEmbeddingDim = FALLBACK_EMBEDDING_DIM
+    private var isQuantizedInput = false
+    private var outputBatchSize = 1
+    private var embeddingDim = FALLBACK_EMBEDDING_DIM
     private var outputDataType: DataType = DataType.FLOAT32
 
-    @Synchronized
-    private fun getOrInitInterpreter(): Interpreter? {
+    private fun getOrInitInterpreter(): Interpreter? = synchronized(lock) {
         if (modelInitAttempted) return interpreter
         modelInitAttempted = true
 
@@ -60,31 +61,31 @@ class FaceEmbeddingExtractor(private val context: Context) {
             }
             val tflite = Interpreter(modelBuffer, options)
 
-            // Dynamically inspect input tensor [1, inputHeight, inputWidth, 3] and DataType
             val inputTensor = tflite.getInputTensor(0)
-            val inShape = inputTensor.shape()
-            if (inShape.size >= 4) {
-                inputHeight = inShape[1].coerceAtLeast(32)
-                inputWidth = inShape[2].coerceAtLeast(32)
-                inputChannels = inShape[3].coerceAtLeast(1)
-            } else if (inShape.size == 3) {
-                inputHeight = inShape[0].coerceAtLeast(32)
-                inputWidth = inShape[1].coerceAtLeast(32)
-                inputChannels = inShape[2].coerceAtLeast(1)
-            }
-            inputDataType = inputTensor.dataType()
+            val inShape = inputTensor.shape() // e.g., [2, 112, 112, 3] or [1, 112, 112, 3]
+            inputBatchSize = if (inShape.size == 4) inShape[0].coerceAtLeast(1) else 1
+            inputHeight = if (inShape.size == 4) inShape[1].coerceAtLeast(32) else 112
+            inputWidth = if (inShape.size == 4) inShape[2].coerceAtLeast(32) else 112
+            inputChannels = if (inShape.size == 4) inShape[3].coerceAtLeast(1) else 3
+            isQuantizedInput = (inputTensor.dataType() == DataType.UINT8)
 
-            // Dynamically inspect output tensor [1, embeddingDim] (e.g., 192 or 512)
             val outputTensor = tflite.getOutputTensor(0)
-            val outShape = outputTensor.shape()
-            outputEmbeddingDim = if (outShape.size >= 2) {
-                outShape.last().coerceAtLeast(64)
+            val outShape = outputTensor.shape() // e.g., [2, 192] or [1, 192]
+            outputBatchSize = if (outShape.size >= 2) outShape[0].coerceAtLeast(1) else 1
+            embeddingDim = if (outShape.size >= 2) {
+                outShape[1].coerceAtLeast(64)
             } else if (outShape.isNotEmpty()) {
                 outShape[0].coerceAtLeast(64)
             } else {
                 FALLBACK_EMBEDDING_DIM
             }
             outputDataType = outputTensor.dataType()
+
+            Log.i(
+                TAG,
+                "Loaded mobilefacenet.tflite: input=[$inputBatchSize, $inputHeight, $inputWidth, $inputChannels] " +
+                    "(quantized=$isQuantizedInput), output=[$outputBatchSize, $embeddingDim]"
+            )
 
             interpreter = tflite
             tflite
@@ -110,39 +111,162 @@ class FaceEmbeddingExtractor(private val context: Context) {
     }
 
     /**
-     * Extracts a flip-augmented L2-normalized embedding from a 2D eye-aligned 112x112 face bitmap.
+     * Extracts a flip-augmented L2-normalized embedding from a 112x112 aligned face bitmap.
+     * Supports both batch-2 (`[2, 112, 112, 3]` -> `[2, 192]`) and batch-1 (`[1, 112, 112, 3]` -> `[1, 192]`)
+     * TFLite models seamlessly.
      */
     fun extractEmbedding(alignedFaceBitmap: Bitmap, face: Face? = null): FloatArray {
-        val mirroredBitmap = createHorizontallyMirroredBitmap(alignedFaceBitmap)
+        val tflite = getOrInitInterpreter()
+        val targetW = inputWidth
+        val targetH = inputHeight
+
+        val scaledOriginal = if (alignedFaceBitmap.width == targetW && alignedFaceBitmap.height == targetH) {
+            alignedFaceBitmap
+        } else {
+            Bitmap.createScaledBitmap(alignedFaceBitmap, targetW, targetH, true)
+        }
+        val scaledFlipped = createHorizontallyMirroredBitmap(scaledOriginal)
+
         return try {
-            val tflite = getOrInitInterpreter()
             if (tflite != null) {
-                val raw1 = runSingleTfliteInference(tflite, alignedFaceBitmap)
-                val v1Hat = l2Normalize(raw1)
-
-                val raw2 = runSingleTfliteInference(tflite, mirroredBitmap)
-                val v2Hat = l2Normalize(raw2)
-
-                combineAndNormalize(v1Hat, v2Hat)
+                if (inputBatchSize >= 2 && outputBatchSize >= 2) {
+                    runBatchTfliteInference(tflite, scaledOriginal, scaledFlipped)
+                } else {
+                    val raw1 = runSingleSlotTfliteInference(tflite, scaledOriginal)
+                    val norm1 = l2Normalize(raw1)
+                    val raw2 = runSingleSlotTfliteInference(tflite, scaledFlipped)
+                    val norm2 = l2Normalize(raw2)
+                    combineAndNormalize(norm1, norm2)
+                }
             } else {
-                val raw1 = extractStructuralLbpHog192D(alignedFaceBitmap)
-                val v1Hat = l2Normalize(raw1)
-
-                val raw2 = extractStructuralLbpHog192D(mirroredBitmap)
-                val v2Hat = l2Normalize(raw2)
-
-                combineAndNormalize(v1Hat, v2Hat)
+                val norm1 = l2Normalize(extractStructuralLbpHog192D(scaledOriginal))
+                val norm2 = l2Normalize(extractStructuralLbpHog192D(scaledFlipped))
+                combineAndNormalize(norm1, norm2)
             }
         } catch (e: Exception) {
             Log.e(TAG, "TFLite inference error, using 192-D LBP+HOG structural fallback", e)
-            val v1Hat = l2Normalize(extractStructuralLbpHog192D(alignedFaceBitmap))
-            val v2Hat = l2Normalize(extractStructuralLbpHog192D(mirroredBitmap))
-            combineAndNormalize(v1Hat, v2Hat)
+            val norm1 = l2Normalize(extractStructuralLbpHog192D(scaledOriginal))
+            val norm2 = l2Normalize(extractStructuralLbpHog192D(scaledFlipped))
+            combineAndNormalize(norm1, norm2)
         } finally {
-            if (mirroredBitmap != alignedFaceBitmap && !mirroredBitmap.isRecycled) {
-                mirroredBitmap.recycle()
+            if (scaledFlipped != scaledOriginal && scaledFlipped != alignedFaceBitmap && !scaledFlipped.isRecycled) {
+                scaledFlipped.recycle()
+            }
+            if (scaledOriginal != alignedFaceBitmap && !scaledOriginal.isRecycled) {
+                scaledOriginal.recycle()
             }
         }
+    }
+
+    private fun runBatchTfliteInference(
+        tflite: Interpreter,
+        scaledOriginal: Bitmap,
+        scaledFlipped: Bitmap
+    ): FloatArray {
+        val bytesPerChannel = if (isQuantizedInput) 1 else 4
+        val byteBuffer = ByteBuffer.allocateDirect(
+            inputBatchSize * inputHeight * inputWidth * inputChannels * bytesPerChannel
+        ).order(ByteOrder.nativeOrder())
+
+        val numPixels = inputWidth * inputHeight
+        val origPixels = IntArray(numPixels)
+        val flipPixels = IntArray(numPixels)
+        scaledOriginal.getPixels(origPixels, 0, inputWidth, 0, 0, inputWidth, inputHeight)
+        scaledFlipped.getPixels(flipPixels, 0, inputWidth, 0, 0, inputWidth, inputHeight)
+
+        // Slot 0: scaledOriginal
+        writePixelsToBuffer(byteBuffer, origPixels)
+        // Slot 1: scaledFlipped
+        writePixelsToBuffer(byteBuffer, flipPixels)
+        // Remaining slots if inputBatchSize > 2: repeat scaledOriginal
+        for (slot in 2 until inputBatchSize) {
+            writePixelsToBuffer(byteBuffer, origPixels)
+        }
+        byteBuffer.rewind()
+
+        return if (outputDataType == DataType.UINT8) {
+            val outBytes = Array(outputBatchSize) { ByteArray(embeddingDim) }
+            synchronized(lock) {
+                tflite.run(byteBuffer, outBytes)
+            }
+            val raw0 = dequantizeRow(outBytes[0])
+            val raw1 = dequantizeRow(outBytes[1])
+            val norm1 = l2Normalize(raw0)
+            val norm2 = l2Normalize(raw1)
+            combineAndNormalize(norm1, norm2)
+        } else {
+            val output = Array(outputBatchSize) { FloatArray(embeddingDim) }
+            synchronized(lock) {
+                tflite.run(byteBuffer, output)
+            }
+            val norm1 = l2Normalize(output[0])
+            val norm2 = l2Normalize(output[1])
+            combineAndNormalize(norm1, norm2)
+        }
+    }
+
+    private fun runSingleSlotTfliteInference(tflite: Interpreter, bitmap: Bitmap): FloatArray {
+        val bytesPerChannel = if (isQuantizedInput) 1 else 4
+        val byteBuffer = ByteBuffer.allocateDirect(
+            inputBatchSize * inputHeight * inputWidth * inputChannels * bytesPerChannel
+        ).order(ByteOrder.nativeOrder())
+
+        val numPixels = inputWidth * inputHeight
+        val pixels = IntArray(numPixels)
+        bitmap.getPixels(pixels, 0, inputWidth, 0, 0, inputWidth, inputHeight)
+
+        for (slot in 0 until inputBatchSize) {
+            writePixelsToBuffer(byteBuffer, pixels)
+        }
+        byteBuffer.rewind()
+
+        return if (outputDataType == DataType.UINT8) {
+            val outBytes = Array(outputBatchSize) { ByteArray(embeddingDim) }
+            synchronized(lock) {
+                tflite.run(byteBuffer, outBytes)
+            }
+            dequantizeRow(outBytes[0])
+        } else {
+            val output = Array(outputBatchSize) { FloatArray(embeddingDim) }
+            synchronized(lock) {
+                tflite.run(byteBuffer, output)
+            }
+            output[0]
+        }
+    }
+
+    private fun writePixelsToBuffer(buffer: ByteBuffer, pixels: IntArray) {
+        if (isQuantizedInput) {
+            for (pixel in pixels) {
+                val r = (pixel shr 16) and 0xFF
+                val g = (pixel shr 8) and 0xFF
+                val b = pixel and 0xFF
+                buffer.put(r.toByte())
+                if (inputChannels >= 3) {
+                    buffer.put(g.toByte())
+                    buffer.put(b.toByte())
+                }
+            }
+        } else {
+            for (pixel in pixels) {
+                val r = ((pixel shr 16) and 0xFF).toFloat()
+                val g = ((pixel shr 8) and 0xFF).toFloat()
+                val b = (pixel and 0xFF).toFloat()
+                buffer.putFloat((r - 127.5f) / 128.0f)
+                if (inputChannels >= 3) {
+                    buffer.putFloat((g - 127.5f) / 128.0f)
+                    buffer.putFloat((b - 127.5f) / 128.0f)
+                }
+            }
+        }
+    }
+
+    private fun dequantizeRow(row: ByteArray): FloatArray {
+        val floatOut = FloatArray(row.size)
+        for (i in row.indices) {
+            floatOut[i] = ((row[i].toInt() and 0xFF) - 127.5f) / 128.0f
+        }
+        return floatOut
     }
 
     private fun createHorizontallyMirroredBitmap(source: Bitmap): Bitmap {
@@ -161,70 +285,9 @@ class FaceEmbeddingExtractor(private val context: Context) {
         return l2Normalize(vSum)
     }
 
-    @Synchronized
-    private fun runSingleTfliteInference(tflite: Interpreter, bitmap: Bitmap): FloatArray {
-        val scaled = if (bitmap.width == inputWidth && bitmap.height == inputHeight) {
-            bitmap
-        } else {
-            Bitmap.createScaledBitmap(bitmap, inputWidth, inputHeight, true)
-        }
-
-        val numPixels = inputWidth * inputHeight
-        val pixels = IntArray(numPixels)
-        scaled.getPixels(pixels, 0, inputWidth, 0, 0, inputWidth, inputHeight)
-        if (scaled != bitmap && !scaled.isRecycled) {
-            scaled.recycle()
-        }
-
-        val bytesPerChannel = if (inputDataType == DataType.UINT8) 1 else 4
-        val inputBuffer = ByteBuffer.allocateDirect(bytesPerChannel * inputHeight * inputWidth * inputChannels)
-            .order(ByteOrder.nativeOrder())
-
-        if (inputDataType == DataType.UINT8) {
-            for (pixel in pixels) {
-                val r = (pixel shr 16) and 0xFF
-                val g = (pixel shr 8) and 0xFF
-                val b = pixel and 0xFF
-                inputBuffer.put(r.toByte())
-                if (inputChannels >= 3) {
-                    inputBuffer.put(g.toByte())
-                    inputBuffer.put(b.toByte())
-                }
-            }
-        } else {
-            // FLOAT32: normalize RGB pixels via (channel - 127.5f) / 128.0f
-            for (pixel in pixels) {
-                val r = ((pixel shr 16) and 0xFF).toFloat()
-                val g = ((pixel shr 8) and 0xFF).toFloat()
-                val b = (pixel and 0xFF).toFloat()
-                inputBuffer.putFloat((r - 127.5f) / 128.0f)
-                if (inputChannels >= 3) {
-                    inputBuffer.putFloat((g - 127.5f) / 128.0f)
-                    inputBuffer.putFloat((b - 127.5f) / 128.0f)
-                }
-            }
-        }
-        inputBuffer.rewind()
-
-        return if (outputDataType == DataType.UINT8) {
-            val outBytes = Array(1) { ByteArray(outputEmbeddingDim) }
-            tflite.run(inputBuffer, outBytes)
-            val floatOut = FloatArray(outputEmbeddingDim)
-            for (i in 0 until outputEmbeddingDim) {
-                floatOut[i] = ((outBytes[0][i].toInt() and 0xFF) - 127.5f) / 128.0f
-            }
-            floatOut
-        } else {
-            val outFloats = Array(1) { FloatArray(outputEmbeddingDim) }
-            tflite.run(inputBuffer, outFloats)
-            outFloats[0]
-        }
-    }
-
     /**
-     * Section 2.3: Deterministic Multi-Scale 192-D Local Binary Pattern (LBP) + HOG facial grid
-     * descriptor on the grayscale eye-aligned crop (never uses RGB color histograms).
-     * Used ONLY if mobilefacenet.tflite is absent in a web preview environment.
+     * Deterministic Multi-Scale 192-D Local Binary Pattern (LBP) + HOG facial grid
+     * descriptor on the grayscale aligned crop. Used ONLY if mobilefacenet.tflite is absent.
      */
     private fun extractStructuralLbpHog192D(bitmap: Bitmap): FloatArray {
         val gridDim = 96
@@ -240,7 +303,6 @@ class FaceEmbeddingExtractor(private val context: Context) {
             scaled.recycle()
         }
 
-        // Convert to grayscale luminance [0..1]
         val gray = FloatArray(gridDim * gridDim)
         for (i in pixels.indices) {
             val p = pixels[i]
@@ -250,16 +312,13 @@ class FaceEmbeddingExtractor(private val context: Context) {
             gray[i] = 0.299f * r + 0.587f * g + 0.114f * b
         }
 
-        // Local contrast normalization (removes illumination gradients)
         val normGray = localContrastNormalize(gray, gridDim, radius = 4)
 
-        // Compute over a 4x4 spatial grid across the inner aligned face region [8..88, 8..88]
-        // 16 cells * 12 structural features (8-bin HOG + 4-bin CS-LBP multi-scale) = 192 dimensions
         val gridCells = 4
         val margin = 8
-        val cellSize = (gridDim - 2 * margin) / gridCells // 20px per cell
+        val cellSize = (gridDim - 2 * margin) / gridCells
         val featuresPerCell = 12
-        val numCells = gridCells * gridCells // 16
+        val numCells = gridCells * gridCells
         val cellFeatures = Array(featuresPerCell) { FloatArray(numCells) }
 
         var cellIdx = 0
@@ -277,18 +336,16 @@ class FaceEmbeddingExtractor(private val context: Context) {
                 for (y in yStart until yEnd) {
                     val row = y * gridDim
                     for (x in xStart until xEnd) {
-                        // 1. 8-orientation HOG accumulation (radius 1 & 2 multi-scale)
                         val dx = (normGray[row + (x + 1)] - normGray[row + (x - 1)]) +
                             0.5f * (normGray[row + (x + 2)] - normGray[row + (x - 2)])
                         val dy = (normGray[(y + 1) * gridDim + x] - normGray[(y - 1) * gridDim + x]) +
                             0.5f * (normGray[(y + 2) * gridDim + x] - normGray[(y - 2) * gridDim + x])
                         val mag = hypot(dx, dy)
-                        var angle = atan2(dy, dx) // -pi..pi
+                        var angle = atan2(dy, dx)
                         if (angle < 0f) angle += (2.0 * Math.PI).toFloat()
                         val bin = ((angle / (2.0 * Math.PI).toFloat()) * 8f).toInt().coerceIn(0, 7)
                         hogBins[bin] += mag
 
-                        // 2. Center-Symmetric Local Binary Pattern (CS-LBP) across 4 opposing pairs
                         val tau = 0.04f
                         val n0 = normGray[(y - 2) * gridDim + x] - normGray[(y + 2) * gridDim + x]
                         val n1 = normGray[(y - 2) * gridDim + (x + 2)] - normGray[(y + 2) * gridDim + (x - 2)]
@@ -314,8 +371,7 @@ class FaceEmbeddingExtractor(private val context: Context) {
             }
         }
 
-        // Zero-center and Z-score normalize each feature channel across the 16 spatial cells
-        val descriptor = FloatArray(FALLBACK_EMBEDDING_DIM) // 192-D
+        val descriptor = FloatArray(FALLBACK_EMBEDDING_DIM)
         var outIndex = 0
         for (f in 0 until featuresPerCell) {
             val channel = cellFeatures[f]
@@ -381,8 +437,7 @@ class FaceEmbeddingExtractor(private val context: Context) {
         return normalized
     }
 
-    @Synchronized
-    fun close() {
+    fun close() = synchronized(lock) {
         try {
             interpreter?.close()
         } catch (ignored: Exception) {

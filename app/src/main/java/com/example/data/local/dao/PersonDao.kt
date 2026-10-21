@@ -23,7 +23,21 @@ interface PersonDao {
     @Query("SELECT * FROM people")
     suspend fun getAllPeopleIncludeHiddenSync(): List<PersonEntity>
 
-    @Query("SELECT * FROM people WHERE isHiddenToOther = 0 AND (faceCount >= 2 OR isNamedByUser = 1) ORDER BY isNamedByUser DESC, faceCount DESC")
+    @Query(
+        """
+        SELECT p.* FROM people p
+        WHERE p.isHiddenToOther = 0
+          AND (
+            p.isNamedByUser = 1
+            OR (SELECT COUNT(DISTINCT ref.mediaId) FROM media_person_cross_ref ref INNER JOIN media_items m ON m.mediaId = ref.mediaId WHERE ref.personId = p.personId AND m.isVideo = 0) >= 2
+            OR (
+              (SELECT COUNT(*) FROM people p2 WHERE p2.isHiddenToOther = 0 AND p2.faceCount >= 2) < 3
+              AND (SELECT COUNT(DISTINCT ref.mediaId) FROM media_person_cross_ref ref INNER JOIN media_items m ON m.mediaId = ref.mediaId WHERE ref.personId = p.personId AND m.isVideo = 0) >= 1
+            )
+          )
+        ORDER BY p.isNamedByUser DESC, p.faceCount DESC, p.bestQualityScore DESC
+        """
+    )
     fun getVisiblePeopleFlow(): Flow<List<PersonEntity>>
 
     @Query("SELECT * FROM people WHERE personId = :personId")

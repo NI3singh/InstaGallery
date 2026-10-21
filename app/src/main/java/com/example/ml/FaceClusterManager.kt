@@ -23,14 +23,12 @@ import kotlin.math.min
 import kotlin.math.sqrt
 
 /**
- * High-Precision MobileFaceNet Face Clustering Engine.
+ * True MobileFaceNet Euclidean/Cosine Clustering Engine.
  *
- * Uses calibrated cosine similarity thresholds for L2-normalized MobileFaceNet embeddings:
- * - Same person across photos requires `maxExemplarSim >= 0.74f` AND `centroidSim >= 0.70f`
- *   (or `centroidSim >= 0.72f` when matching against a multi-exemplar cluster).
- * - Co-occurrence constraint: two faces detected in the same photo (`mediaId`) can never be
- *   assigned to the same person cluster.
- * - Saves 200x200 unrotated portrait avatar crops (`AVATAR_CROP_SIZE = 200`).
+ * In 192-D MobileFaceNet, Euclidean distance <= 0.90 corresponds to Cosine Similarity >= 0.60f (cos = 1 - d^2 / 2).
+ * - Matches a face to `bestCluster` whenever `maxExemplarSim >= 0.60f || (maxExemplarSim >= 0.57f && centroidSim >= 0.56f)`.
+ * - When no existing cluster matches, creates a new `PersonEntity` if `face.qualityScore >= 0.45f && box.width() >= 52`.
+ * - Enforces same-photo co-occurrence exclusion.
  */
 class FaceClusterManager(
     private val context: Context,
@@ -38,20 +36,21 @@ class FaceClusterManager(
     private val mediaDao: MediaDao
 ) {
     companion object {
-        const val EXEMPLAR_MATCH_THRESHOLD = 0.74f
-        const val CENTROID_MATCH_THRESHOLD = 0.70f
-        const val PASS1_STRONG_MATCH_THRESHOLD = 0.72f
+        private const val EXEMPLAR_MATCH_THRESHOLD = 0.60f
+        private const val CENTROID_MATCH_THRESHOLD = 0.56f
+        private const val SECONDARY_EXEMPLAR_THRESHOLD = 0.57f
+        const val PASS1_STRONG_MATCH_THRESHOLD = 0.60f
 
-        const val EXEMPLAR_QUALITY_GATE = 0.65f
+        const val EXEMPLAR_QUALITY_GATE = 0.55f
         const val MAX_EXEMPLARS_PER_PERSON = 12
 
-        const val PASS2_MERGE_MULTI_THRESHOLD = 0.75f
-        const val PASS2_MERGE_SINGLETON_THRESHOLD = 0.73f
+        const val PASS2_MERGE_MULTI_THRESHOLD = 0.61f
+        const val PASS2_MERGE_SINGLETON_THRESHOLD = 0.58f
 
-        const val PASS2_NAMED_ANCHOR_SWEEP_THRESHOLD = 0.70f
-        const val PASS2_MULTI_ANCHOR_SWEEP_THRESHOLD = 0.72f
+        const val PASS2_NAMED_ANCHOR_SWEEP_THRESHOLD = 0.54f
+        const val PASS2_MULTI_ANCHOR_SWEEP_THRESHOLD = 0.56f
 
-        const val DUPLICATE_MIN_THRESHOLD = 0.66f
+        const val DUPLICATE_MIN_THRESHOLD = 0.52f
         private const val AVATAR_TARGET_SIZE = 200
     }
 
@@ -115,9 +114,6 @@ class FaceClusterManager(
         isCacheLoaded = true
     }
 
-    /**
-     * Computes multi-prototype similarity score and individual exemplar/centroid similarities.
-     */
     fun computePersonMatchScore(embedding: FloatArray, cluster: PersonCluster): Float {
         if (embedding.isEmpty() || cluster.centroid.isEmpty()) return -1f
         val centroidSim = dotProduct(embedding, cluster.centroid)
@@ -134,7 +130,7 @@ class FaceClusterManager(
         return (maxExemplarSim * 0.55f) + (top3AvgSim * 0.30f) + (centroidSim * 0.15f)
     }
 
-    private fun passesHighPrecisionMatchGate(embedding: FloatArray, cluster: PersonCluster): Pair<Boolean, Float> {
+    private fun evaluateClusterMatch(embedding: FloatArray, cluster: PersonCluster): Pair<Boolean, Float> {
         if (embedding.isEmpty() || cluster.centroid.isEmpty()) return false to -1f
         val centroidSim = dotProduct(embedding, cluster.centroid)
         val exemplarSims = cluster.exemplars
@@ -148,7 +144,8 @@ class FaceClusterManager(
             centroidSim
         }
         val combinedScore = (maxExemplarSim * 0.55f) + (top3AvgSim * 0.30f) + (centroidSim * 0.15f)
-        val isMatch = maxExemplarSim >= EXEMPLAR_MATCH_THRESHOLD && centroidSim >= CENTROID_MATCH_THRESHOLD
+        val isMatch = maxExemplarSim >= EXEMPLAR_MATCH_THRESHOLD ||
+            (maxExemplarSim >= SECONDARY_EXEMPLAR_THRESHOLD && centroidSim >= CENTROID_MATCH_THRESHOLD)
         return isMatch to combinedScore
     }
 
@@ -168,7 +165,6 @@ class FaceClusterManager(
         val matchedPersonIdsInThisMedia = mutableSetOf<Long>()
         var anyAssignedToPerson = false
 
-        // Process highest quality faces in the photo first
         val sortedFaces = detectedFaces.sortedByDescending { it.qualityScore }
 
         for (face in sortedFaces) {
@@ -202,10 +198,8 @@ class FaceClusterManager(
         if (isVideo) return@withContext null
         ensureCacheLoaded()
 
-        // 1. Save the 200x200 unrotated avatarCropBitmap to context.filesDir/face_crops/face_${UUID}.jpg
         val cropPath = saveFaceCrop(face.avatarCropBitmap)
 
-        // 2. Evaluate high-precision match gate (maxExemplarSim >= 0.74f && centroidSim >= 0.70f)
         var bestScore = -1f
         var bestCluster: PersonCluster? = null
 
@@ -213,8 +207,8 @@ class FaceClusterManager(
             if (excludePersonIdsInSameMedia.contains(cluster.personId) || cluster.mediaIds.contains(mediaId)) {
                 continue
             }
-            val (passesGate, score) = passesHighPrecisionMatchGate(embedding, cluster)
-            if (passesGate && score > bestScore) {
+            val (isMatch, score) = evaluateClusterMatch(embedding, cluster)
+            if (isMatch && score > bestScore) {
                 bestScore = score
                 bestCluster = cluster
             }
@@ -222,7 +216,7 @@ class FaceClusterManager(
 
         val box = face.boundingBox
 
-        // Case A — High-Precision Match (maxExemplarSim >= 0.74f && centroidSim >= 0.70f)
+        // Case A — Match to existing PersonCluster
         if (bestCluster != null) {
             val isExemplar = face.qualityScore >= EXEMPLAR_QUALITY_GATE &&
                 bestCluster.exemplars.size < MAX_EXEMPLARS_PER_PERSON
@@ -231,7 +225,6 @@ class FaceClusterManager(
                 bestCluster.exemplars.add(embedding)
             }
 
-            // Update running L2-normalized centroid
             val oldWeight = bestCluster.faceCount.coerceAtLeast(1).toFloat()
             val newWeight = if (face.isStrictAnchorCandidate) 1.0f else 0.75f
             bestCluster.centroid = updateCentroid(bestCluster.centroid, oldWeight, embedding, newWeight)
@@ -278,8 +271,9 @@ class FaceClusterManager(
             return@withContext bestCluster.personId
         }
 
-        // Case B — New Person Profile
-        if (face.isStrictAnchorCandidate) {
+        // Case B — Create a new PersonEntity if face.qualityScore >= 0.45f && box.width() >= 52
+        val canSpawnNewPerson = (face.qualityScore >= 0.45f && box.width() >= 52) || face.isStrictAnchorCandidate
+        if (canSpawnNewPerson) {
             val nextNumber = computeNextPersonNumber()
             val newPersonName = "Person $nextNumber"
             val centroidBlob = floatArrayToBlob(embedding)
@@ -331,7 +325,7 @@ class FaceClusterManager(
             return@withContext newPersonId
         }
 
-        // Case C — Unassigned Face (only if caller explicitly passed isStrictAnchorCandidate = false)
+        // Case C — Unassigned Face awaiting Pass-2 Anchor Sweep
         personDao.insertFace(
             FaceEntity(
                 mediaId = mediaId,
@@ -352,9 +346,6 @@ class FaceClusterManager(
         null
     }
 
-    /**
-     * Backward-compatible wrapper for legacy callers.
-     */
     suspend fun processFace(
         mediaId: Long,
         face: Face,
@@ -365,9 +356,7 @@ class FaceClusterManager(
         excludePersonIdsInSameMedia: Set<Long> = emptySet()
     ): Long? {
         if (isVideo) return null
-        val isStrictAnchor = abs(face.headEulerAngleY) <= 30f &&
-            abs(face.headEulerAngleZ) <= 25f &&
-            face.boundingBox.width() >= 68
+        val isStrictAnchor = faceQuality >= 0.45f && face.boundingBox.width() >= 52
 
         val alignedFace = DetectedAlignedFace(
             alignedFaceBitmap = avatarBitmap,
@@ -389,15 +378,12 @@ class FaceClusterManager(
     }
 
     /**
-     * High-Precision Consolidation & Anchor Sweep:
-     * Uses calibrated MobileFaceNet thresholds (>= 0.70f..0.75f) so distinct individuals
-     * are never falsely merged while still consolidating genuine high-similarity clusters
-     * and assigning any pending unassigned faces.
+     * Global Graph Consolidation & Anchor k-NN Sweep using calibrated MobileFaceNet thresholds.
      */
     suspend fun runPass2ConsolidationAndAnchorSweep() = withContext(Dispatchers.IO) {
         ensureCacheLoaded(forceReload = true)
 
-        // STEP A — Consolidate split clusters only when both centroid & exemplar similarity are high
+        // STEP A — Auto-Merge Over-Split Clusters
         if (clusterCache.size >= 2) {
             var mergedInPass = true
             while (mergedInPass) {
@@ -418,9 +404,6 @@ class FaceClusterManager(
                         if (cA.isNamedByUser && cB.isNamedByUser && !cA.name.equals(cB.name, ignoreCase = true)) {
                             continue
                         }
-
-                        val centroidSim = dotProduct(cA.centroid, cB.centroid)
-                        if (centroidSim < CENTROID_MATCH_THRESHOLD) continue
 
                         val sim = computeClusterToClusterSimilarity(cA, cB)
                         val requiredThreshold = if (cA.faceCount == 1 || cB.faceCount == 1) {
@@ -458,7 +441,7 @@ class FaceClusterManager(
             }
         }
 
-        // STEP B — Sweep any unassigned (personId == null) faces into confirmed anchors at >= 0.70f
+        // STEP B — Sweep Unassigned (personId == null) & Singleton Faces Into Confirmed Anchors
         val anchorClusters = clusterCache.filter { it.faceCount >= 2 || it.isNamedByUser }
         if (anchorClusters.isNotEmpty()) {
             val unassignedFaces = personDao.getUnassignedFacesSync()
