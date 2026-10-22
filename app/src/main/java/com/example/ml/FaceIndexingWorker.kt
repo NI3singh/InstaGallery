@@ -40,6 +40,15 @@ class FaceIndexingWorker(
             // Photos-only human face detection: immediately mark all videos as processed
             mediaDao.markAllVideosProcessed()
 
+            // Self-heal if all photos were previously marked processed but 0 people exist in DB
+            val totalPhotosInitial = mediaDao.getTotalMediaCountSync()
+            val unindexedInitial = mediaDao.getUnindexedCountSync()
+            if (totalPhotosInitial > 0 && unindexedInitial == 0 && personDao.getAllPeopleIncludeHiddenSync().isEmpty()) {
+                Log.i(TAG, "Self-healing: resetting processed flags for $totalPhotosInitial photos because 0 people exist")
+                mediaDao.resetAllMediaProcessed()
+                mediaDao.markAllVideosProcessed()
+            }
+
             val alreadyProcessed = mediaDao.getProcessedCount().firstOrNull() ?: 0
             val totalPhotos = mediaDao.getTotalMediaCount().firstOrNull() ?: 0
             var processedCount = alreadyProcessed
@@ -48,7 +57,7 @@ class FaceIndexingWorker(
             suspend fun countVisibleProfiles(): Int {
                 val allActive = personDao.getAllPeopleSync()
                 val multiOrNamed = allActive.count { !it.isHiddenToOther && (it.faceCount >= 2 || it.isNamedByUser) }
-                return if (multiOrNamed > 0) multiOrNamed else allActive.count { !it.isHiddenToOther }
+                return if (multiOrNamed >= 3) multiOrNamed else allActive.count { !it.isHiddenToOther }
             }
 
             if (totalPhotos > 0) {
@@ -110,8 +119,8 @@ class FaceIndexingWorker(
                             isProcessed = true,
                             hasFaces = facesAssigned
                         )
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error processing photo ${media.mediaId}", e)
+                    } catch (t: Throwable) {
+                        Log.e(TAG, "Error processing photo ${media.mediaId}", t)
                         mediaDao.updateMediaProcessed(
                             mediaId = media.mediaId,
                             isProcessed = true,
@@ -156,8 +165,8 @@ class FaceIndexingWorker(
 
             OnboardingPreferences.markInitialScanCompleted(applicationContext, true)
             Result.success()
-        } catch (e: Exception) {
-            Log.e(TAG, "FaceIndexingWorker failed", e)
+        } catch (t: Throwable) {
+            Log.e(TAG, "FaceIndexingWorker failed", t)
             Result.retry()
         } finally {
             embeddingExtractor.close()

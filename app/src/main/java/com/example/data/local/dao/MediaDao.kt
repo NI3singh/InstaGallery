@@ -103,6 +103,18 @@ interface MediaDao {
     )
     fun getPhotosForPerson(personId: Long): Flow<List<MediaWithAuthors>>
 
+    @RewriteQueriesToDropUnusedColumns
+    @Query(
+        """
+        SELECT DISTINCT m.* FROM media_items m
+        INNER JOIN media_person_cross_ref ref ON m.mediaId = ref.mediaId
+        WHERE ref.personId = :personId AND m.isVideo = 0
+        ORDER BY m.dateAddedSeconds DESC
+        LIMIT :limit
+        """
+    )
+    suspend fun getSamplePhotosForPersonSync(personId: Long, limit: Int = 3): List<MediaEntity>
+
     @Transaction
     @RewriteQueriesToDropUnusedColumns
     @Query(

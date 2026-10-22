@@ -4,9 +4,11 @@ package com.example.ml
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
 import android.graphics.Matrix
 import android.graphics.Rect
 import android.net.Uri
+import android.os.Build
 import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import com.example.data.local.entity.MediaEntity
@@ -42,9 +44,9 @@ class FaceDetectorProcessor(private val context: Context) {
         private const val MIN_DECODED_DIMENSION = 1280
         private const val MAX_DECODED_DIMENSION = 1920
 
-        private const val MIN_FACE_BOX_PX = 48
-        private const val MAX_YAW_DEGREES = 38f
-        private const val MAX_ROLL_DEGREES = 32f
+        private const val MIN_FACE_BOX_PX = 36
+        private const val MAX_YAW_DEGREES = 45f
+        private const val MAX_ROLL_DEGREES = 42f
 
         const val CANONICAL_FACE_SIZE = 112
         const val AVATAR_CROP_SIZE = 200
@@ -55,7 +57,7 @@ class FaceDetectorProcessor(private val context: Context) {
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
             .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
             .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
-            .setMinFaceSize(0.045f)
+            .setMinFaceSize(0.035f)
             .build()
         FaceDetection.getClient(options)
     }
@@ -99,7 +101,7 @@ class FaceDetectorProcessor(private val context: Context) {
 
             val (aligned112, avatar200) = cropFaultTolerantFacePair(bitmap, face) ?: continue
             val qualityScore = computeFaceQuality(face, bitmap.width, bitmap.height)
-            val isAnchor = qualityScore >= 0.45f && face.boundingBox.width() >= 52
+            val isAnchor = qualityScore >= 0.35f && face.boundingBox.width() >= MIN_FACE_BOX_PX
 
             results.add(
                 DetectedAlignedFace(
@@ -129,19 +131,19 @@ class FaceDetectorProcessor(private val context: Context) {
                         if (cont.isActive) cont.resumeWithException(e)
                     }
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "ML Kit face detection error", e)
+        } catch (t: Throwable) {
+            Log.e(TAG, "ML Kit face detection error", t)
             emptyList()
         }
     }
 
     /**
-     * Section 2: Fault-tolerant human face validation gate so real family photos and group shots are NOT dropped:
-     * 1. Minimum Size: box.width() >= 48 && box.height() >= 48 on the 1600px decoded bitmap.
-     * 2. Pose Angles: abs(face.headEulerAngleY) <= 38f && abs(face.headEulerAngleZ) <= 32f (no filter on X).
-     * 3. Landmarks Required: LEFT_EYE != null && RIGHT_EYE != null && NOSE_BASE != null AND at least one mouth landmark.
-     * 4. Eye Open Probability: Do NOT reject when null! Only reject if BOTH are non-null and both < 0.08f.
-     * 5. Anatomical Order: Verify eyeMidY < noseBase.y && noseBase.y < mouthMidY.
+     * Fault-tolerant human face validation gate:
+     * 1. Minimum Size: box.width() >= 36 && box.height() >= 36 (supports group & full-body WhatsApp/camera photos).
+     * 2. Pose Angles: abs(face.headEulerAngleY) <= 45f && abs(face.headEulerAngleZ) <= 42f.
+     * 3. Landmarks: Requires both eyes (or eye + nose base) so real human faces pass reliably.
+     * 4. Eye Open Probability: Never rejects null! Only rejects if both eyes are non-null and < 0.05f.
+     * 5. Anatomical Order: Verifies eyeMidY < noseBase.y < mouthMidY when upright (abs(roll) <= 28f).
      */
     private fun passesHumanFaceGate(face: Face): Boolean {
         val box = face.boundingBox
@@ -155,34 +157,42 @@ class FaceDetectorProcessor(private val context: Context) {
             return false
         }
 
-        val leftEye = face.getLandmark(FaceLandmark.LEFT_EYE)?.position ?: return false
-        val rightEye = face.getLandmark(FaceLandmark.RIGHT_EYE)?.position ?: return false
-        val noseBase = face.getLandmark(FaceLandmark.NOSE_BASE)?.position ?: return false
+        val leftEye = face.getLandmark(FaceLandmark.LEFT_EYE)?.position
+        val rightEye = face.getLandmark(FaceLandmark.RIGHT_EYE)?.position
+        val noseBase = face.getLandmark(FaceLandmark.NOSE_BASE)?.position
 
-        val mouthBottom = face.getLandmark(FaceLandmark.MOUTH_BOTTOM)?.position
-        val mouthLeft = face.getLandmark(FaceLandmark.MOUTH_LEFT)?.position
-        val mouthRight = face.getLandmark(FaceLandmark.MOUTH_RIGHT)?.position
-        if (mouthBottom == null && mouthLeft == null && mouthRight == null) {
+        // Require at least both eyes, or one eye + nose base for side-angled faces
+        val hasCoreLandmarks = (leftEye != null && rightEye != null) ||
+            (noseBase != null && (leftEye != null || rightEye != null))
+        if (!hasCoreLandmarks) {
             return false
         }
 
         val leftOpen = face.leftEyeOpenProbability
         val rightOpen = face.rightEyeOpenProbability
-        if (leftOpen != null && rightOpen != null && leftOpen < 0.08f && rightOpen < 0.08f) {
+        if (leftOpen != null && rightOpen != null && leftOpen < 0.05f && rightOpen < 0.05f) {
             return false
         }
 
-        val eyeMidY = (leftEye.y + rightEye.y) * 0.5f
-        val mouthMidY = when {
-            mouthBottom != null -> mouthBottom.y
-            mouthLeft != null && mouthRight != null -> (mouthLeft.y + mouthRight.y) * 0.5f
-            mouthLeft != null -> mouthLeft.y
-            mouthRight != null -> mouthRight.y
-            else -> return false
-        }
-
-        if (!(eyeMidY < noseBase.y && noseBase.y < mouthMidY)) {
-            return false
+        // When upright and all landmarks are present, verify vertical anatomical order
+        if (leftEye != null && rightEye != null && noseBase != null && abs(face.headEulerAngleZ) <= 28f) {
+            val eyeMidY = (leftEye.y + rightEye.y) * 0.5f
+            val mouthBottom = face.getLandmark(FaceLandmark.MOUTH_BOTTOM)?.position
+            val mouthLeft = face.getLandmark(FaceLandmark.MOUTH_LEFT)?.position
+            val mouthRight = face.getLandmark(FaceLandmark.MOUTH_RIGHT)?.position
+            val mouthMidY = when {
+                mouthBottom != null -> mouthBottom.y
+                mouthLeft != null && mouthRight != null -> (mouthLeft.y + mouthRight.y) * 0.5f
+                mouthLeft != null -> mouthLeft.y
+                mouthRight != null -> mouthRight.y
+                else -> null
+            }
+            if (mouthMidY != null) {
+                val tolerance = box.height() * 0.06f
+                if (eyeMidY > noseBase.y + tolerance || noseBase.y > mouthMidY + tolerance) {
+                    return false
+                }
+            }
         }
 
         return true
@@ -196,8 +206,6 @@ class FaceDetectorProcessor(private val context: Context) {
      * - For alignedFaceBitmap (112x112): crop the tight face square around (box.exactCenterX(), box.exactCenterY())
      *   with halfSide = max(box.width(), box.height()) * 0.52f, clamped to [0, bitmap.width] and [0, bitmap.height],
      *   and scale to 112x112 using Bitmap.createScaledBitmap(tightCrop, 112, 112, true).
-     *   (If abs(angleDeg) in 5f..25f, rotate tightCrop around (tightCrop.width / 2f, tightCrop.height / 2f)
-     *   and take the inner 85% square before scaling to 112x112).
      */
     private fun cropFaultTolerantFacePair(bitmap: Bitmap, face: Face): Pair<Bitmap, Bitmap>? {
         val box = face.boundingBox
@@ -322,8 +330,8 @@ class FaceDetectorProcessor(private val context: Context) {
     suspend fun decodePhotoBitmap(uriString: String): Bitmap? {
         return try {
             decodePhoto(Uri.parse(uriString))
-        } catch (e: Exception) {
-            Log.e(TAG, "Error decoding photo $uriString", e)
+        } catch (t: Throwable) {
+            Log.e(TAG, "Error decoding photo $uriString", t)
             null
         }
     }
@@ -332,52 +340,92 @@ class FaceDetectorProcessor(private val context: Context) {
         val contentResolver = context.contentResolver
 
         val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        contentResolver.openInputStream(uri)?.use { stream ->
-            BitmapFactory.decodeStream(stream, null, boundsOptions)
-        } ?: return null
+        try {
+            contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, boundsOptions)
+            }
+        } catch (_: Throwable) {
+        }
 
         val width = boundsOptions.outWidth
         val height = boundsOptions.outHeight
-        if (width <= 0 || height <= 0) return null
 
-        val longestEdge = max(width, height)
-        var inSampleSize = 1
-        while (longestEdge / (inSampleSize * 2) >= MIN_DECODED_DIMENSION) {
-            inSampleSize *= 2
-        }
+        var decodedBitmap: Bitmap? = null
+        if (width > 0 && height > 0) {
+            val longestEdge = max(width, height)
+            var inSampleSize = 1
+            while (longestEdge / (inSampleSize * 2) >= MIN_DECODED_DIMENSION) {
+                inSampleSize *= 2
+            }
 
-        val decodeOptions = BitmapFactory.Options().apply {
-            this.inSampleSize = inSampleSize
-            inPreferredConfig = Bitmap.Config.ARGB_8888
-        }
-        var decodedBitmap = contentResolver.openInputStream(uri)?.use { stream ->
-            BitmapFactory.decodeStream(stream, null, decodeOptions)
-        } ?: return null
-
-        val decodedLongest = max(decodedBitmap.width, decodedBitmap.height)
-        if (decodedLongest > MAX_DECODED_DIMENSION) {
-            val scale = TARGET_MAX_DIMENSION.toFloat() / decodedLongest.toFloat()
-            val targetW = (decodedBitmap.width * scale).toInt().coerceAtLeast(1)
-            val targetH = (decodedBitmap.height * scale).toInt().coerceAtLeast(1)
-            val rescaled = Bitmap.createScaledBitmap(decodedBitmap, targetW, targetH, true)
-            if (rescaled != decodedBitmap) {
-                decodedBitmap.recycle()
-                decodedBitmap = rescaled
+            val decodeOptions = BitmapFactory.Options().apply {
+                this.inSampleSize = inSampleSize
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            try {
+                decodedBitmap = contentResolver.openInputStream(uri)?.use { stream ->
+                    BitmapFactory.decodeStream(stream, null, decodeOptions)
+                }
+            } catch (_: Throwable) {
             }
         }
 
-        val orientation = try {
-            contentResolver.openInputStream(uri)?.use { stream ->
-                ExifInterface(stream).getAttributeInt(
-                    ExifInterface.TAG_ORIENTATION,
-                    ExifInterface.ORIENTATION_NORMAL
-                )
-            } ?: ExifInterface.ORIENTATION_NORMAL
-        } catch (e: Exception) {
-            ExifInterface.ORIENTATION_NORMAL
+        if (decodedBitmap != null) {
+            val orientation = try {
+                contentResolver.openInputStream(uri)?.use { stream ->
+                    ExifInterface(stream).getAttributeInt(
+                        ExifInterface.TAG_ORIENTATION,
+                        ExifInterface.ORIENTATION_NORMAL
+                    )
+                } ?: ExifInterface.ORIENTATION_NORMAL
+            } catch (_: Throwable) {
+                ExifInterface.ORIENTATION_NORMAL
+            }
+            decodedBitmap = rotateBitmap(decodedBitmap, orientation)
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            // Fallback for HEIC / WebP / content streams where BitmapFactory returns null
+            try {
+                val source = ImageDecoder.createSource(contentResolver, uri)
+                decodedBitmap = ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+                    decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                    val srcLongest = max(info.size.width, info.size.height)
+                    if (srcLongest > TARGET_MAX_DIMENSION) {
+                        val scale = TARGET_MAX_DIMENSION.toFloat() / srcLongest.toFloat()
+                        decoder.setTargetSize(
+                            (info.size.width * scale).toInt().coerceAtLeast(1),
+                            (info.size.height * scale).toInt().coerceAtLeast(1)
+                        )
+                    }
+                }
+            } catch (_: Throwable) {
+            }
         }
 
-        return rotateBitmap(decodedBitmap, orientation)
+        val validBitmap = decodedBitmap ?: return null
+
+        val argbBitmap = if (validBitmap.config == Bitmap.Config.ARGB_8888) {
+            validBitmap
+        } else {
+            val copy = validBitmap.copy(Bitmap.Config.ARGB_8888, false)
+            if (copy != null && copy != validBitmap && !validBitmap.isRecycled) {
+                validBitmap.recycle()
+            }
+            copy ?: validBitmap
+        }
+
+        val decodedLongest = max(argbBitmap.width, argbBitmap.height)
+        if (decodedLongest > MAX_DECODED_DIMENSION) {
+            val scale = TARGET_MAX_DIMENSION.toFloat() / decodedLongest.toFloat()
+            val targetW = (argbBitmap.width * scale).toInt().coerceAtLeast(1)
+            val targetH = (argbBitmap.height * scale).toInt().coerceAtLeast(1)
+            val rescaled = Bitmap.createScaledBitmap(argbBitmap, targetW, targetH, true)
+            if (rescaled != argbBitmap && !argbBitmap.isRecycled) {
+                argbBitmap.recycle()
+            }
+            return rescaled
+        }
+
+        return argbBitmap
     }
 
     private fun rotateBitmap(bitmap: Bitmap, orientation: Int): Bitmap {
@@ -412,14 +460,14 @@ class FaceDetectorProcessor(private val context: Context) {
     }
 
     fun computeFaceQuality(face: Face, bitmapWidth: Int = 0, bitmapHeight: Int = 0): Float {
-        val yawScore = (1f - (abs(face.headEulerAngleY) / 38f)).coerceIn(0f, 1f)
-        val rollScore = (1f - (abs(face.headEulerAngleZ) / 32f)).coerceIn(0f, 1f)
-        val sizeScore = ((face.boundingBox.width() - 48f) / 140f).coerceIn(0.15f, 1f)
-        val leftOpen = (face.leftEyeOpenProbability ?: 0.75f).coerceIn(0f, 1f)
-        val rightOpen = (face.rightEyeOpenProbability ?: 0.75f).coerceIn(0f, 1f)
+        val yawScore = (1f - (abs(face.headEulerAngleY) / 45f)).coerceIn(0.15f, 1f)
+        val rollScore = (1f - (abs(face.headEulerAngleZ) / 42f)).coerceIn(0.15f, 1f)
+        val sizeScore = ((face.boundingBox.width() - 32f) / 120f).coerceIn(0.25f, 1f)
+        val leftOpen = (face.leftEyeOpenProbability ?: 0.80f).coerceIn(0f, 1f)
+        val rightOpen = (face.rightEyeOpenProbability ?: 0.80f).coerceIn(0f, 1f)
         val eyeOpenScore = (leftOpen + rightOpen) * 0.5f
 
         return (yawScore * 0.45f + sizeScore * 0.30f + rollScore * 0.15f + eyeOpenScore * 0.10f)
-            .coerceIn(0.1f, 1.0f)
+            .coerceIn(0.25f, 1.0f)
     }
 }

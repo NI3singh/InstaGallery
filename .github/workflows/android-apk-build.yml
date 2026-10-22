@@ -9,8 +9,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_TAG: v1.1.2
-  APK_FILENAME: InstaGallery-v1.1.2.apk
+  RELEASE_TAG: v1.1.3
+  APK_FILENAME: InstaGallery-v1.1.3.apk
 
 jobs:
   build:
@@ -113,7 +113,7 @@ jobs:
       - name: Upload InstaGallery APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: InstaGallery-v1.1.2-APK
+          name: InstaGallery-v1.1.3-APK
           path: dist/${{ env.APK_FILENAME }}
           if-no-files-found: error
 
@@ -136,20 +136,15 @@ jobs:
           ### 📲 Installation Steps
           1. Download **\`${APK_FILENAME}\`** on your Android 8.0+ (API 26+) phone.
           2. Open the \`.apk\` file and allow *Install unknown apps* if prompted.
-          3. Launch **InstaGallery** — the Room v5 schema automatically resets legacy clusters and runs the high-precision photo-only MobileFaceNet pipeline.
+          3. Launch **InstaGallery** — the Room v7 schema automatically resets legacy 0-profile state and runs the fixed Batch-2 MobileFaceNet pipeline.
 
           ### 🧠 What's New in ${RELEASE_TAG}
-          - **Hard-Verified MobileFaceNet TFLite Model (\`>= 1 MB\` CI Gate)**:
-            - Guarantees \`mobilefacenet.tflite\` is embedded in every built APK before packaging.
-          - **Photo-Only 5-Landmark Human Face Gate & Origin-Centered Crop Math**:
-            - Scans only still photos (\`isVideo = 0\`) for faces — videos remain exclusively in the main Reels tab, cutting scan time in half.
-            - Enforces a 5-landmark + open-eye + anatomical geometry gate to eliminate non-human objects and screenshots.
-            - Generates unrotated \`200x200\` portrait avatars and origin-centered \`112x112\` affine-aligned crops for TFLite.
-          - **Calibrated High-Precision MobileFaceNet Thresholds (\`0.74f\` exemplar / \`0.70f\` centroid)**:
-            - Prevents false merges between distinct people while keeping same-person photos grouped accurately.
-          - **Strict Photo-Only Profile Queries & Clean Profile Layout**:
-            - Person profiles and the 3-photo setup carousel banner strictly query still photos via \`INNER JOIN media_person_cross_ref\` (\`isVideo = 0\`).
-            - Removed the Reels tab and Reels/Total counters from \`ProfileScreen\`, showing only the \`Posts\` photo counter and 3-column photo grid.
+          - **Fixed TFLite Batch-2 (\`[2, 112, 112, 3]\` -> \`[2, 192]\`) Inference Crash**:
+            - Dynamically inspects all 4 input tensor dimensions and packs both the original \`112x112\` face crop and its horizontally flipped copy into a single batch \`ByteBuffer\`, eliminating the \`IllegalArgumentException\` buffer size crash that caused 0 profiles in v1.1.2.
+          - **Fixed Null Eye-Probability & Group/WhatsApp Photo Face Gate**:
+            - No longer rejects faces when ML Kit returns \`null\` for \`leftEyeOpenProbability\` / \`rightEyeOpenProbability\`, and supports \`>= 36px\` faces for full-body and group photos.
+          - **Fixed Onboarding Scan Race Condition & Self-Healing Re-Index**:
+            - Prevents \`OnboardingViewModel\` from jumping to \`ProfileSetupScreen\` before all unindexed photos finish scanning, and automatically self-heals if photos were previously marked processed with 0 profiles.
           EOF
 
           git tag -f "${RELEASE_TAG}"

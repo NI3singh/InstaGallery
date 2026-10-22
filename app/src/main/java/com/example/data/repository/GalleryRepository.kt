@@ -115,6 +115,10 @@ class GalleryRepository(private val context: Context) {
         return getMediaWithAuthorsForPersonFlow(personId)
     }
 
+    suspend fun getSamplePhotosForPersonSync(personId: Long, limit: Int = 3): List<com.example.data.local.entity.MediaEntity> {
+        return mediaDao.getSamplePhotosForPersonSync(personId, limit)
+    }
+
     fun getVideosForPerson(personId: Long): Flow<List<MediaWithAuthors>> {
         val rawFlow = if (personId == -1L) {
             mediaDao.getUnassociatedVideos()

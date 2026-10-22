@@ -271,8 +271,8 @@ class FaceClusterManager(
             return@withContext bestCluster.personId
         }
 
-        // Case B — Create a new PersonEntity if face.qualityScore >= 0.45f && box.width() >= 52
-        val canSpawnNewPerson = (face.qualityScore >= 0.45f && box.width() >= 52) || face.isStrictAnchorCandidate
+        // Case B — Create a new PersonEntity if face.qualityScore >= 0.35f && box.width() >= 36
+        val canSpawnNewPerson = (face.qualityScore >= 0.35f && box.width() >= 36) || face.isStrictAnchorCandidate
         if (canSpawnNewPerson) {
             val nextNumber = computeNextPersonNumber()
             val newPersonName = "Person $nextNumber"
@@ -356,7 +356,7 @@ class FaceClusterManager(
         excludePersonIdsInSameMedia: Set<Long> = emptySet()
     ): Long? {
         if (isVideo) return null
-        val isStrictAnchor = faceQuality >= 0.45f && face.boundingBox.width() >= 52
+        val isStrictAnchor = faceQuality >= 0.35f && face.boundingBox.width() >= 36
 
         val alignedFace = DetectedAlignedFace(
             alignedFaceBitmap = avatarBitmap,
@@ -441,8 +441,8 @@ class FaceClusterManager(
             }
         }
 
-        // STEP B — Sweep Unassigned (personId == null) & Singleton Faces Into Confirmed Anchors
-        val anchorClusters = clusterCache.filter { it.faceCount >= 2 || it.isNamedByUser }
+        // STEP B — Sweep Unassigned (personId == null) Faces Into Active Clusters
+        val anchorClusters = clusterCache.toList()
         if (anchorClusters.isNotEmpty()) {
             val unassignedFaces = personDao.getUnassignedFacesSync()
             for (face in unassignedFaces) {
@@ -456,10 +456,10 @@ class FaceClusterManager(
                     if (anchor.mediaIds.contains(face.mediaId)) continue
 
                     val score = computePersonMatchScore(faceEmb, anchor)
-                    val threshold = if (anchor.isNamedByUser) {
-                        PASS2_NAMED_ANCHOR_SWEEP_THRESHOLD
-                    } else {
-                        PASS2_MULTI_ANCHOR_SWEEP_THRESHOLD
+                    val threshold = when {
+                        anchor.isNamedByUser -> PASS2_NAMED_ANCHOR_SWEEP_THRESHOLD
+                        anchor.faceCount >= 2 -> PASS2_MULTI_ANCHOR_SWEEP_THRESHOLD
+                        else -> PASS2_MERGE_SINGLETON_THRESHOLD
                     }
 
                     if (score >= threshold && score > bestScore) {

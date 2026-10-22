@@ -10,6 +10,7 @@ import com.example.data.local.entity.MediaEntity
 import com.example.data.local.entity.MediaPersonCrossRef
 import com.example.data.local.entity.PersonEntity
 import com.example.ml.FaceClusterManager
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -202,6 +203,86 @@ class ExampleRobolectricTest {
 
         val papaMediaIds = personDao.getMediaIdsForPerson(papaId)
         assertTrue(papaMediaIds.containsAll(listOf(10L, 11L)))
+    }
+
+    @Test
+    fun `embedding extractor and cluster manager create visible profiles from detected faces`() = runBlocking {
+        val mediaDao = db.mediaDao()
+        val personDao = db.personDao()
+        val extractor = com.example.ml.FaceEmbeddingExtractor(context)
+
+        try {
+            mediaDao.insertMediaList(
+                listOf(
+                    MediaEntity(
+                        mediaId = 101L,
+                        uri = "content://media/101",
+                        dateAddedSeconds = 1000L,
+                        mimeType = "image/jpeg",
+                        isVideo = false,
+                        width = 1080,
+                        height = 1350,
+                        durationMs = null,
+                        displayName = "person_a_1.jpg"
+                    ),
+                    MediaEntity(
+                        mediaId = 102L,
+                        uri = "content://media/102",
+                        dateAddedSeconds = 2000L,
+                        mimeType = "image/jpeg",
+                        isVideo = false,
+                        width = 1080,
+                        height = 1350,
+                        durationMs = null,
+                        displayName = "person_a_2.jpg"
+                    )
+                )
+            )
+
+            val faceBitmap1 = android.graphics.Bitmap.createBitmap(112, 112, android.graphics.Bitmap.Config.ARGB_8888)
+            val faceBitmap2 = android.graphics.Bitmap.createBitmap(200, 200, android.graphics.Bitmap.Config.ARGB_8888)
+            for (y in 0 until 112) {
+                for (x in 0 until 112) {
+                    val v = ((x * 2 + y) % 255)
+                    faceBitmap1.setPixel(x, y, android.graphics.Color.rgb(v, (v + 40) % 255, (v + 80) % 255))
+                }
+            }
+
+            val alignedFace = com.example.ml.DetectedAlignedFace(
+                alignedFaceBitmap = faceBitmap1,
+                avatarCropBitmap = faceBitmap2,
+                boundingBox = android.graphics.Rect(100, 100, 144, 144), // 44px group-photo face
+                qualityScore = 0.40f,
+                headEulerY = 12f,
+                headEulerZ = -4f,
+                isStrictAnchorCandidate = true
+            )
+
+            val assigned1 = clusterManager.processDetectedFacesForMedia(
+                mediaId = 101L,
+                detectedFaces = listOf(alignedFace),
+                embeddingExtractor = extractor,
+                isVideo = false
+            )
+            val assigned2 = clusterManager.processDetectedFacesForMedia(
+                mediaId = 102L,
+                detectedFaces = listOf(alignedFace),
+                embeddingExtractor = extractor,
+                isVideo = false
+            )
+
+            assertTrue(assigned1)
+            assertTrue(assigned2)
+
+            val visiblePeople = personDao.getVisiblePeopleFlow().firstOrNull().orEmpty()
+            assertEquals(1, visiblePeople.size)
+            assertEquals(2, visiblePeople[0].faceCount)
+
+            val samplePhotos = mediaDao.getSamplePhotosForPersonSync(visiblePeople[0].personId, limit = 3)
+            assertEquals(2, samplePhotos.size)
+        } finally {
+            extractor.close()
+        }
     }
 
     private fun norm(vec: FloatArray) {

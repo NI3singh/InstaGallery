@@ -109,9 +109,20 @@ class MediaStoreScanner(
                 }
             }
 
-            // Trigger FaceIndexingWorker with ExistingWorkPolicy.APPEND_OR_REPLACE if any newly inserted rows
-            // (or existing pending rows) have isProcessedForFaces = false
-            if (anyNewUnprocessedInserted || mediaDao.getUnindexedCountSync() > 0) {
+            // Self-healing check: if photos exist in DB and all are marked processed, but 0 people exist,
+            // reset photo processed flags so FaceIndexingWorker re-indexes them with the fixed pipeline.
+            val personDao = com.example.data.local.AppDatabase.getInstance(context).personDao()
+            if (mediaDao.getTotalMediaCountSync() > 0 &&
+                mediaDao.getUnindexedCountSync() == 0 &&
+                personDao.getAllPeopleIncludeHiddenSync().isEmpty()
+            ) {
+                Log.i(TAG, "Detected 0 profiles with processed photos; resetting photo processed flags for re-indexing")
+                mediaDao.resetAllMediaProcessed()
+                mediaDao.markAllVideosProcessed()
+                enqueueFaceIndexingWorker(ExistingWorkPolicy.REPLACE)
+            } else if (anyNewUnprocessedInserted || mediaDao.getUnindexedCountSync() > 0) {
+                // Trigger FaceIndexingWorker with ExistingWorkPolicy.APPEND_OR_REPLACE if any newly inserted rows
+                // (or existing pending rows) have isProcessedForFaces = false
                 enqueueFaceIndexingWorker(ExistingWorkPolicy.APPEND_OR_REPLACE)
             }
 

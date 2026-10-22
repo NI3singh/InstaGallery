@@ -211,6 +211,10 @@ fun ProfileSetupScreen(
             if (peopleCards.isEmpty()) {
                 EmptyFacesCard(
                     unassociatedMediaCount = uiState.unassociatedMediaCount,
+                    isScanning = uiState.isScanning,
+                    processedCount = uiState.processedCount,
+                    totalMediaCount = uiState.totalMediaCount,
+                    onRescanClick = { viewModel.triggerFullRescan() },
                     modifier = Modifier.padding(horizontal = 36.dp)
                 )
             } else {
@@ -942,6 +946,10 @@ private fun CarouselPaginationControls(
 @Composable
 private fun EmptyFacesCard(
     unassociatedMediaCount: Int,
+    isScanning: Boolean = false,
+    processedCount: Int = 0,
+    totalMediaCount: Int = 0,
+    onRescanClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -952,7 +960,7 @@ private fun EmptyFacesCard(
             .border(1.dp, CardBorderColor, RoundedCornerShape(24.dp))
             .padding(28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Icon(
             imageVector = Icons.Outlined.Face,
@@ -961,7 +969,11 @@ private fun EmptyFacesCard(
             modifier = Modifier.size(48.dp)
         )
         Text(
-            text = "No Clear Human Faces Found Yet",
+            text = if (isScanning && totalMediaCount > 0) {
+                "Scanning Photos ($processedCount / $totalMediaCount)..."
+            } else {
+                "No Clear Human Faces Found Yet"
+            },
             fontFamily = PlusJakartaSansFont,
             fontSize = 17.sp,
             fontWeight = FontWeight.Bold,
@@ -976,5 +988,26 @@ private fun EmptyFacesCard(
             textAlign = TextAlign.Center,
             lineHeight = 18.sp
         )
+        if (!isScanning) {
+            Box(
+                modifier = Modifier
+                    .padding(top = 6.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(InputFillColor)
+                    .border(1.dp, IgBlue.copy(alpha = 0.7f), RoundedCornerShape(50))
+                    .clickable(onClick = onRescanClick)
+                    .padding(horizontal = 18.dp, vertical = 10.dp)
+                    .testTag("empty_faces_rescan_button"),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Rescan Gallery Photos",
+                    fontFamily = PlusJakartaSansFont,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = IgBlue
+                )
+            }
+        }
     }
 }

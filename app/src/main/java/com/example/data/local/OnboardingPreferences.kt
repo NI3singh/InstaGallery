@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 object OnboardingPreferences {
-    private const val PREFS_NAME = "instagallery_onboarding_prefs_v2"
+    private const val PREFS_NAME = "instagallery_onboarding_prefs_v4"
     private const val KEY_SCAN_COMPLETED = "initial_scan_completed"
     private const val KEY_SETUP_COMPLETED = "profile_setup_completed"
 

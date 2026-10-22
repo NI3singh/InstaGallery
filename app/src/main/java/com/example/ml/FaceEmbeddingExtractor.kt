@@ -12,7 +12,6 @@ import java.io.FileInputStream
 import java.io.FileNotFoundException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -28,7 +27,7 @@ import kotlin.math.sqrt
  *
  * When `inputBatchSize >= 2 && outputBatchSize >= 2` (standard MobileFaceNet `[2, 112, 112, 3]` -> `[2, 192]`):
  * - Packs both `scaledOriginal` (slot 0) and `scaledFlipped` (slot 1) into a single batch `ByteBuffer`
- *   and runs both flip-augmented views in a single TFLite pass!
+ *   and runs both flip-augmented views in a single TFLite pass.
  */
 class FaceEmbeddingExtractor(private val context: Context) {
 
@@ -55,7 +54,7 @@ class FaceEmbeddingExtractor(private val context: Context) {
         modelInitAttempted = true
 
         return try {
-            val modelBuffer = loadModelFile(MODEL_ASSET_NAME)
+            val modelBuffer = loadModelBuffer(MODEL_ASSET_NAME)
             val options = Interpreter.Options().apply {
                 setNumThreads(4)
             }
@@ -92,21 +91,41 @@ class FaceEmbeddingExtractor(private val context: Context) {
         } catch (fnf: FileNotFoundException) {
             Log.e(TAG, "CRITICAL: mobilefacenet.tflite missing", fnf)
             null
-        } catch (e: Exception) {
-            Log.e(TAG, "CRITICAL: mobilefacenet.tflite missing or failed to initialize", e)
+        } catch (t: Throwable) {
+            Log.e(TAG, "CRITICAL: mobilefacenet.tflite failed to initialize", t)
             null
         }
     }
 
-    private fun loadModelFile(assetName: String): MappedByteBuffer {
-        val assetFd = context.assets.openFd(assetName)
-        FileInputStream(assetFd.fileDescriptor).use { inputStream ->
-            val fileChannel = inputStream.channel
-            return fileChannel.map(
-                FileChannel.MapMode.READ_ONLY,
-                assetFd.startOffset,
-                assetFd.declaredLength
-            )
+    /**
+     * Loads the TFLite model buffer from assets via memory-mapped file descriptor when uncompressed,
+     * or falls back to reading the asset stream into a direct ByteBuffer so it works in all APK/test environments.
+     */
+    private fun loadModelBuffer(assetName: String): ByteBuffer {
+        return try {
+            val assetFd = context.assets.openFd(assetName)
+            FileInputStream(assetFd.fileDescriptor).use { inputStream ->
+                val fileChannel = inputStream.channel
+                fileChannel.map(
+                    FileChannel.MapMode.READ_ONLY,
+                    assetFd.startOffset,
+                    assetFd.declaredLength
+                )
+            }
+        } catch (_: Throwable) {
+            val bytes = context.assets.open(assetName).use { it.readBytes() }
+            ByteBuffer.allocateDirect(bytes.size).order(ByteOrder.nativeOrder()).apply {
+                put(bytes)
+                rewind()
+            }
+        }
+    }
+
+    private fun ensureSoftwareArgbBitmap(src: Bitmap): Bitmap {
+        return if (src.config == Bitmap.Config.ARGB_8888) {
+            src
+        } else {
+            src.copy(Bitmap.Config.ARGB_8888, false) ?: src
         }
     }
 
@@ -120,10 +139,11 @@ class FaceEmbeddingExtractor(private val context: Context) {
         val targetW = inputWidth
         val targetH = inputHeight
 
-        val scaledOriginal = if (alignedFaceBitmap.width == targetW && alignedFaceBitmap.height == targetH) {
-            alignedFaceBitmap
+        val argbSource = ensureSoftwareArgbBitmap(alignedFaceBitmap)
+        val scaledOriginal = if (argbSource.width == targetW && argbSource.height == targetH) {
+            argbSource
         } else {
-            Bitmap.createScaledBitmap(alignedFaceBitmap, targetW, targetH, true)
+            Bitmap.createScaledBitmap(argbSource, targetW, targetH, true)
         }
         val scaledFlipped = createHorizontallyMirroredBitmap(scaledOriginal)
 
@@ -143,8 +163,8 @@ class FaceEmbeddingExtractor(private val context: Context) {
                 val norm2 = l2Normalize(extractStructuralLbpHog192D(scaledFlipped))
                 combineAndNormalize(norm1, norm2)
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "TFLite inference error, using 192-D LBP+HOG structural fallback", e)
+        } catch (t: Throwable) {
+            Log.e(TAG, "TFLite inference error, using 192-D LBP+HOG structural fallback", t)
             val norm1 = l2Normalize(extractStructuralLbpHog192D(scaledOriginal))
             val norm2 = l2Normalize(extractStructuralLbpHog192D(scaledFlipped))
             combineAndNormalize(norm1, norm2)
@@ -152,8 +172,11 @@ class FaceEmbeddingExtractor(private val context: Context) {
             if (scaledFlipped != scaledOriginal && scaledFlipped != alignedFaceBitmap && !scaledFlipped.isRecycled) {
                 scaledFlipped.recycle()
             }
-            if (scaledOriginal != alignedFaceBitmap && !scaledOriginal.isRecycled) {
+            if (scaledOriginal != alignedFaceBitmap && scaledOriginal != argbSource && !scaledOriginal.isRecycled) {
                 scaledOriginal.recycle()
+            }
+            if (argbSource != alignedFaceBitmap && !argbSource.isRecycled) {
+                argbSource.recycle()
             }
         }
     }
@@ -440,7 +463,7 @@ class FaceEmbeddingExtractor(private val context: Context) {
     fun close() = synchronized(lock) {
         try {
             interpreter?.close()
-        } catch (ignored: Exception) {
+        } catch (ignored: Throwable) {
         } finally {
             interpreter = null
             modelInitAttempted = false

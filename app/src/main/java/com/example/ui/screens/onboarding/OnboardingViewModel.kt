@@ -10,17 +10,17 @@ import com.example.data.local.entity.MediaEntity
 import com.example.data.local.entity.PersonEntity
 import com.example.data.repository.GalleryRepository
 import com.example.ml.FaceIndexingWorker
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class PersonPreviewCard(
     val person: PersonEntity,
@@ -58,45 +58,48 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
     private val _markedUnknownIds = MutableStateFlow<Set<Long>>(emptySet())
     private val _isSavingSetup = MutableStateFlow(false)
     private val _hasStartedScan = MutableStateFlow(false)
+    private val _isMediaStoreScanFinished = MutableStateFlow(false)
 
     private data class ScanMetrics(
         val processed: Int,
         val total: Int,
         val unindexed: Int,
-        val workInfo: WorkInfo?
+        val workInfo: WorkInfo?,
+        val isMediaStoreReady: Boolean
     )
 
     private val scanMetricsFlow = combine(
         repository.processedCount,
         repository.totalMediaCount,
         repository.unindexedCount,
-        repository.indexingWorkInfo
-    ) { processed, total, unindexed, workInfo ->
-        ScanMetrics(processed, total, unindexed, workInfo)
+        repository.indexingWorkInfo,
+        _isMediaStoreScanFinished
+    ) { processed, total, unindexed, workInfo, isMediaStoreReady ->
+        ScanMetrics(processed, total, unindexed, workInfo, isMediaStoreReady)
     }
 
-    private val peopleCardsFlow: Flow<List<PersonPreviewCard>> = repository.allPeople.flatMapLatest { people ->
-        if (people.isEmpty()) {
-            flowOf(emptyList())
-        } else {
-            val perPersonFlows = people.map { person ->
-                repository.getMediaWithAuthorsForPersonFlow(person.personId).map { mediaWithAuthors ->
-                    val photosOnly = mediaWithAuthors
-                        .map { it.media }
-                        .filter { !it.isVideo }
-                    PersonPreviewCard(
-                        person = person,
-                        sampleMedia = photosOnly.take(3),
-                        photoCount = photosOnly.size,
-                        reelCount = 0
-                    )
+    /**
+     * Fast, non-blocking people preview Flow that fetches 3 sample photos per person on Dispatchers.IO
+     * without spawning N concurrent @Transaction Room Flows.
+     */
+    private val peopleCardsFlow: Flow<List<PersonPreviewCard>> = repository.allPeople
+        .mapLatest { people ->
+            if (people.isEmpty()) {
+                emptyList()
+            } else {
+                withContext(Dispatchers.IO) {
+                    people.map { person ->
+                        val samplePhotos = repository.getSamplePhotosForPersonSync(person.personId, limit = 3)
+                        PersonPreviewCard(
+                            person = person,
+                            sampleMedia = samplePhotos,
+                            photoCount = person.faceCount.coerceAtLeast(samplePhotos.size),
+                            reelCount = 0
+                        )
+                    }
                 }
             }
-            combine(perPersonFlows) { cardsArray ->
-                cardsArray.toList()
-            }
         }
-    }
 
     private val peoplePreviewFlow = combine(
         peopleCardsFlow,
@@ -121,10 +124,12 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         val effectiveProcessed = maxOf(metrics.processed, if (workerProcessed >= 0) workerProcessed else 0)
             .coerceAtMost(effectiveTotal.coerceAtLeast(1))
 
-        val isScanComplete = _hasStartedScan.value && (
+        val isWorkerActive = workState == WorkInfo.State.RUNNING || workState == WorkInfo.State.ENQUEUED
+
+        // Scan is only complete AFTER MediaStore scan finishes AND all photos in Room have been indexed (unindexed == 0)
+        val isScanComplete = metrics.isMediaStoreReady && (
             (effectiveTotal > 0 && metrics.unindexed == 0) ||
-                workState == WorkInfo.State.SUCCEEDED ||
-                (effectiveTotal == 0 && workState != WorkInfo.State.RUNNING && workState != WorkInfo.State.ENQUEUED)
+                (effectiveTotal == 0 && !isWorkerActive)
             )
 
         // Ensure default names are populated in editedNames map for any newly discovered person
@@ -154,8 +159,10 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
     fun startInitialScanIfNeeded() {
         if (_hasStartedScan.value) return
         _hasStartedScan.value = true
+        _isMediaStoreScanFinished.value = false
         viewModelScope.launch {
             val count = repository.scanDeviceMedia()
+            _isMediaStoreScanFinished.value = true
             if (count == 0) {
                 OnboardingPreferences.markInitialScanCompleted(getApplication(), true)
             }
@@ -164,10 +171,12 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
 
     fun triggerFullRescan() {
         _hasStartedScan.value = true
+        _isMediaStoreScanFinished.value = false
         _editedNames.value = emptyMap()
         _markedUnknownIds.value = emptySet()
         viewModelScope.launch {
             repository.resetAndRescanAllFaces()
+            _isMediaStoreScanFinished.value = true
         }
     }
 
