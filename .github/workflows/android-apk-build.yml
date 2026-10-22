@@ -9,8 +9,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_TAG: v1.1.3
-  APK_FILENAME: InstaGallery-v1.1.3.apk
+  RELEASE_TAG: v1.1.5
+  APK_FILENAME: InstaGallery-v1.1.5.apk
 
 jobs:
   build:
@@ -62,29 +62,38 @@ jobs:
             fi
           fi
 
-      - name: Download and Verify MobileFaceNet TFLite Model
+      - name: Verify or Download MobileFaceNet TFLite Model
         run: |
           mkdir -p app/src/main/assets
-          URLS=(
-            "https://raw.githubusercontent.com/MCarlomagno/FaceRecognitionAuth/master/assets/mobilefacenet.tflite"
-            "https://raw.githubusercontent.com/kuru0777/face-recognition-with-flutter/main/assets/mobilefacenet.tflite"
-            "https://raw.githubusercontent.com/ngtrphuong/facerecognition/master/assets/mobilefacenet.tflite"
-          )
           SUCCESS=0
-          for url in "${URLS[@]}"; do
-            echo "Trying $url ..."
-            curl -L --fail --retry 3 --connect-timeout 15 -o app/src/main/assets/mobilefacenet.tflite "$url" || true
-            if [ -f app/src/main/assets/mobilefacenet.tflite ]; then
-              SIZE=$(stat -c%s app/src/main/assets/mobilefacenet.tflite 2>/dev/null || wc -c < app/src/main/assets/mobilefacenet.tflite)
-              if [ "$SIZE" -ge 1000000 ]; then
-                echo "Verified mobilefacenet.tflite ($SIZE bytes)"
-                SUCCESS=1
-                break
-              fi
+          if [ -f app/src/main/assets/mobilefacenet.tflite ]; then
+            SIZE=$(stat -c%s app/src/main/assets/mobilefacenet.tflite 2>/dev/null || wc -c < app/src/main/assets/mobilefacenet.tflite)
+            if [ "$SIZE" -ge 1000000 ]; then
+              echo "Verified bundled mobilefacenet.tflite ($SIZE bytes)"
+              SUCCESS=1
             fi
-          done
+          fi
           if [ "$SUCCESS" -ne 1 ]; then
-            echo "ERROR: Failed to download valid mobilefacenet.tflite"
+            URLS=(
+              "https://raw.githubusercontent.com/MCarlomagno/FaceRecognitionAuth/master/assets/mobilefacenet.tflite"
+              "https://raw.githubusercontent.com/kuru0777/face-recognition-with-flutter/main/assets/mobilefacenet.tflite"
+              "https://raw.githubusercontent.com/ngtrphuong/facerecognition/master/assets/mobilefacenet.tflite"
+            )
+            for url in "${URLS[@]}"; do
+              echo "Trying $url ..."
+              curl -L --fail --retry 3 --connect-timeout 15 -o app/src/main/assets/mobilefacenet.tflite "$url" || true
+              if [ -f app/src/main/assets/mobilefacenet.tflite ]; then
+                SIZE=$(stat -c%s app/src/main/assets/mobilefacenet.tflite 2>/dev/null || wc -c < app/src/main/assets/mobilefacenet.tflite)
+                if [ "$SIZE" -ge 1000000 ]; then
+                  echo "Verified downloaded mobilefacenet.tflite ($SIZE bytes)"
+                  SUCCESS=1
+                  break
+                fi
+              fi
+            done
+          fi
+          if [ "$SUCCESS" -ne 1 ]; then
+            echo "ERROR: Failed to verify valid mobilefacenet.tflite"
             exit 1
           fi
 
@@ -113,7 +122,7 @@ jobs:
       - name: Upload InstaGallery APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: InstaGallery-v1.1.3-APK
+          name: InstaGallery-v1.1.5-APK
           path: dist/${{ env.APK_FILENAME }}
           if-no-files-found: error
 
@@ -124,7 +133,7 @@ jobs:
         run: |
           APK_SIZE=$(du -h "dist/${APK_FILENAME}" | cut -f1)
           cat << EOF > RELEASE_NOTES.md
-          ## 📸 InstaGallery ${RELEASE_TAG} — Photo-Only High-Precision MobileFaceNet Engine & Clean Profile Grids
+          ## 📸 InstaGallery ${RELEASE_TAG} — Redesigned Onboarding Profile Setup, 1-Tap Lookalike Merging & Grid Multi-Merge
 
           ### ⚡ Fast APK Download (\`${APK_SIZE}\` — Slim Optimized Build)
           - **Option 1 — Direct GitHub Release Asset**: Tap **\`${APK_FILENAME}\`** under **Assets** below.
@@ -136,15 +145,21 @@ jobs:
           ### 📲 Installation Steps
           1. Download **\`${APK_FILENAME}\`** on your Android 8.0+ (API 26+) phone.
           2. Open the \`.apk\` file and allow *Install unknown apps* if prompted.
-          3. Launch **InstaGallery** — the Room v7 schema automatically resets legacy 0-profile state and runs the fixed Batch-2 MobileFaceNet pipeline.
+          3. Launch **InstaGallery** — enjoy the upgraded onboarding setup carousel and 1-tap visual profile merging.
 
-          ### 🧠 What's New in ${RELEASE_TAG}
-          - **Fixed TFLite Batch-2 (\`[2, 112, 112, 3]\` -> \`[2, 192]\`) Inference Crash**:
-            - Dynamically inspects all 4 input tensor dimensions and packs both the original \`112x112\` face crop and its horizontally flipped copy into a single batch \`ByteBuffer\`, eliminating the \`IllegalArgumentException\` buffer size crash that caused 0 profiles in v1.1.2.
-          - **Fixed Null Eye-Probability & Group/WhatsApp Photo Face Gate**:
-            - No longer rejects faces when ML Kit returns \`null\` for \`leftEyeOpenProbability\` / \`rightEyeOpenProbability\`, and supports \`>= 36px\` faces for full-body and group photos.
-          - **Fixed Onboarding Scan Race Condition & Self-Healing Re-Index**:
-            - Prevents \`OnboardingViewModel\` from jumping to \`ProfileSetupScreen\` before all unindexed photos finish scanning, and automatically self-heals if photos were previously marked processed with 0 profiles.
+          ### ✨ What's New in ${RELEASE_TAG}
+          - **Tiered Profile Setup Filter (\`Top People\` vs \`All Detected\`)**:
+            - Automatically prioritizes your most frequent faces (\`Top People\`) when 20+ profiles are detected, while keeping every detected cluster accessible in \`All Detected\`.
+          - **In-Card Lookalike Visual Merge Strip**:
+            - Displays the top 8 most visually similar face clusters (plus already-named profiles) right inside each card so you can absorb split clusters (\`@Person 20\`, \`@Person 45\`, \`@Person 90\`) with a single tap on their face avatar.
+          - **Multi-Merge Face Grid Bottom Sheet (\`Grid Merge\`)**:
+            - Open the 4-column visual face grid from the top header or lookalike strip to select and combine 2, 5, or 10+ split face clusters into a single named profile at once.
+          - **Native Instagram Solid Squircle Quick-Chips & Dynamic Custom Chips**:
+            - Tapping any quick-chip (\`Me\`, \`Papa\`, \`Maa\`, \`Bro\`, \`Sis\`, \`Bestie\`, \`Partner\`) or typing a custom name dynamically prepends your custom names to the quick-chip bar and marks the profile as \`✓ Kept Profile\` with smooth \`220ms\` auto-advance.
+          - **Explicit Visual Decision States & Reversible \`Move to @Other\`**:
+            - Clear card border highlights (\`#0095F6\` Kept, \`#FF3040\` Moved to \`@Other\`), top-left banner status badges, and instant 1-tap \`Undo Move ↺\` without losing face-photo links.
+          - **Bulk 1-Photo Stranger Cleanup & Unified White Pill CTAs**:
+            - Includes an \`Auto-move unnamed 1-photo faces to @Other\` toggle and unified high-contrast solid white progression buttons across onboarding.
           EOF
 
           git tag -f "${RELEASE_TAG}"
@@ -153,12 +168,12 @@ jobs:
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
             gh release upload "${RELEASE_TAG}" "dist/${APK_FILENAME}" --clobber
             gh release edit "${RELEASE_TAG}" \
-              --title "InstaGallery ${RELEASE_TAG} — Photo-Only MobileFaceNet APK (${APK_SIZE})" \
+              --title "InstaGallery ${RELEASE_TAG} — Visual Profile Merge & MobileFaceNet APK (${APK_SIZE})" \
               --notes-file RELEASE_NOTES.md \
               --latest
           else
             gh release create "${RELEASE_TAG}" "dist/${APK_FILENAME}" \
-              --title "InstaGallery ${RELEASE_TAG} — Photo-Only MobileFaceNet APK (${APK_SIZE})" \
+              --title "InstaGallery ${RELEASE_TAG} — Visual Profile Merge & MobileFaceNet APK (${APK_SIZE})" \
               --notes-file RELEASE_NOTES.md \
               --latest
           fi
