@@ -191,8 +191,32 @@ dependencies {
   androidTestImplementation(libs.androidx.runner)
   // debugImplementation(libs.androidx.compose.ui.test.manifest)
   // debugImplementation(libs.androidx.compose.ui.tooling)
-  "ksp"(libs.androidx.room.compiler)
+  "kspDebug"(libs.androidx.room.compiler)
+  "kspRelease"(libs.androidx.room.compiler)
   // "ksp"(libs.moshi.kotlin.codegen)
+}
+
+// Guard against known KSP2 embedded IntelliJ CoreApplicationEnvironment teardown race on AWT-EventQueue
+val previousUncaughtHandler = Thread.getDefaultUncaughtExceptionHandler()
+Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+  val isKspAwtTeardownNpe =
+    thread.name.startsWith("AWT-EventQueue") &&
+      throwable is NullPointerException &&
+      throwable.stackTrace.any { it.className.startsWith("ksp.com.intellij.") }
+  if (!isKspAwtTeardownNpe) {
+    if (previousUncaughtHandler != null) {
+      previousUncaughtHandler.uncaughtException(thread, throwable)
+    } else {
+      System.err.print("Exception in thread \"${thread.name}\" ")
+      throwable.printStackTrace(System.err)
+    }
+  }
+}
+
+tasks.matching {
+  it.name.startsWith("ksp") && (it.name.contains("UnitTest") || it.name.contains("AndroidTest"))
+}.configureEach {
+  enabled = false
 }
 
 tasks.named("preBuild") {
