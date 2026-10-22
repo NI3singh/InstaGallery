@@ -512,25 +512,18 @@ private fun StitchWelcomeOnboardingContent(
                         )
                     }
 
-                    // Pill Button
+                    // Pill Button (52.dp Solid Pure White background, Pure Black 15.sp Bold text)
                     val interactionSource = remember { MutableInteractionSource() }
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(54.dp)
+                            .height(52.dp)
                             .shadow(
                                 elevation = 16.dp,
-                                shape = RoundedCornerShape(50),
-                                ambientColor = Color(0xFFDD2A7B),
-                                spotColor = Color(0xFFDD2A7B)
-                            )
-                            .clip(RoundedCornerShape(50))
-                            .background(sunsetBrush)
-                            .border(
-                                width = 1.dp,
-                                color = Color.White.copy(alpha = 0.22f),
                                 shape = RoundedCornerShape(50)
                             )
+                            .clip(RoundedCornerShape(50))
+                            .background(Color.White)
                             .clickable(
                                 interactionSource = interactionSource,
                                 indication = null,
@@ -546,16 +539,16 @@ private fun StitchWelcomeOnboardingContent(
                             Text(
                                 text = "Continue with Gallery",
                                 fontFamily = PlusJakartaSansFont,
-                                fontWeight = FontWeight.SemiBold,
+                                fontWeight = FontWeight.Bold,
                                 fontSize = 15.sp,
-                                color = Color.White,
+                                color = Color.Black,
                                 letterSpacing = (-0.1).sp
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                                 contentDescription = "Continue",
-                                tint = Color.White,
+                                tint = Color.Black,
                                 modifier = Modifier.size(18.dp)
                             )
                         }

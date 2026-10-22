@@ -11,6 +11,7 @@ import com.example.data.local.entity.MediaWithAuthors
 import com.example.data.local.entity.PersonEntity
 import com.example.data.media.MediaStoreScanner
 import com.example.ml.FaceClusterManager
+import com.example.ml.SimilarProfileCandidate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -27,7 +28,7 @@ class GalleryRepository(private val context: Context) {
     private val clusterManager = FaceClusterManager(context, personDao, mediaDao)
 
     /**
-     * Primary people Flow observed by ProfileSetupScreen, HomeFeedScreen, and PeopleDirectoryScreen.
+     * Primary people Flow observed by HomeFeedScreen and PeopleDirectoryScreen.
      * Uses `personDao.getVisiblePeopleFlow()` (`isHiddenToOther = 0 AND (faceCount >= 2 OR isNamedByUser = 1)`),
      * falling back to `faceCount >= 1` ONLY if the entire device has 0 clusters with `faceCount >= 2 || isNamedByUser`.
      */
@@ -41,6 +42,17 @@ class GalleryRepository(private val context: Context) {
             allActivePeople
         }
     }
+
+    /**
+     * All detected people with >= 1 photo (excluding hidden), used for tiered onboarding filtering.
+     */
+    val allDetectedPeople: Flow<List<PersonEntity>> = personDao.getAllPeople()
+
+    /**
+     * All detected people including those marked `isHiddenToOther = true` so onboarding `ALL_DETECTED`
+     * mode can still show cards marked `MOVED_TO_OTHER` in the current session for 1-tap Undo.
+     */
+    val allPeopleIncludeHidden: Flow<List<PersonEntity>> = personDao.getAllPeopleIncludeHiddenFlow()
 
     private fun filterMediaAuthorsToVisible(
         mediaFlow: Flow<List<MediaWithAuthors>>
@@ -207,9 +219,82 @@ class GalleryRepository(private val context: Context) {
     suspend fun mergePeople(sourceIds: List<Long>, targetId: Long, newName: String) = withContext(Dispatchers.IO) {
         val cleanName = newName.trim().removePrefix("@").trim()
         personDao.mergePeople(sourceIds, targetId, cleanName)
+        clusterManager.invalidateCache()
         withContext(Dispatchers.Default) {
             clusterManager.runPass2ConsolidationAndAnchorSweep()
         }
+    }
+
+    suspend fun mergeProfiles(
+        targetId: Long,
+        sourceIds: List<Long>,
+        finalName: String
+    ) = withContext(Dispatchers.IO) {
+        val cleanName = finalName.trim().removePrefix("@").trim()
+        personDao.mergePeople(
+            sourcePersonIds = sourceIds.filter { it != targetId },
+            targetPersonId = targetId,
+            newName = cleanName
+        )
+        clusterManager.invalidateCache()
+    }
+
+    suspend fun renamePerson(personId: Long, rawName: String) = withContext(Dispatchers.IO) {
+        val cleanName = rawName.trim().removePrefix("@").trim()
+        if (cleanName.isBlank()) {
+            personDao.hidePersonToOther(personId)
+            clusterManager.invalidateCache()
+            return@withContext
+        }
+
+        val allExisting = personDao.getAllPeopleIncludeHiddenSync()
+        val matchingExisting = allExisting.firstOrNull {
+            it.personId != personId &&
+                !it.isHiddenToOther &&
+                it.isNamedByUser &&
+                it.name.trim().removePrefix("@").trim().equals(cleanName, ignoreCase = true)
+        }
+
+        if (matchingExisting != null) {
+            personDao.mergePeople(
+                sourcePersonIds = listOf(personId),
+                targetPersonId = matchingExisting.personId,
+                newName = cleanName
+            )
+        } else {
+            val isDefaultPlaceholder = cleanName.matches(Regex("^Person\\s+\\d+$", RegexOption.IGNORE_CASE))
+            if (isDefaultPlaceholder) {
+                val existing = personDao.getPersonByIdSync(personId)
+                if (existing != null) {
+                    personDao.updatePerson(
+                        existing.copy(
+                            name = cleanName,
+                            isHiddenToOther = false
+                        )
+                    )
+                }
+            } else {
+                personDao.markPersonNamedByUser(personId, cleanName)
+            }
+        }
+        clusterManager.invalidateCache()
+    }
+
+    suspend fun getSimilarProfilesFor(
+        personId: Long,
+        limit: Int = 8
+    ): List<SimilarProfileCandidate> {
+        return clusterManager.getSimilarProfilesFor(targetPersonId = personId, limit = limit)
+    }
+
+    suspend fun hidePersonToOther(personId: Long) = withContext(Dispatchers.IO) {
+        personDao.hidePersonToOther(personId)
+        clusterManager.invalidateCache()
+    }
+
+    suspend fun unhidePersonFromOther(personId: Long) = withContext(Dispatchers.IO) {
+        personDao.unhidePersonFromOther(personId)
+        clusterManager.invalidateCache()
     }
 
     suspend fun movePersonToOther(personId: Long) = withContext(Dispatchers.IO) {

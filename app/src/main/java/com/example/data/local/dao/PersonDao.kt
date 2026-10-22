@@ -23,6 +23,9 @@ interface PersonDao {
     @Query("SELECT * FROM people")
     suspend fun getAllPeopleIncludeHiddenSync(): List<PersonEntity>
 
+    @Query("SELECT * FROM people ORDER BY isNamedByUser DESC, faceCount DESC, bestQualityScore DESC, createdAt ASC")
+    fun getAllPeopleIncludeHiddenFlow(): Flow<List<PersonEntity>>
+
     @Query(
         """
         SELECT p.* FROM people p
@@ -85,6 +88,9 @@ interface PersonDao {
     @Query("UPDATE people SET isHiddenToOther = 1 WHERE personId = :personId")
     suspend fun setPersonHiddenFlag(personId: Long)
 
+    @Query("UPDATE people SET isHiddenToOther = 0 WHERE personId = :personId")
+    suspend fun clearPersonHiddenFlag(personId: Long)
+
     @Query("DELETE FROM people WHERE personId = :personId")
     suspend fun deletePerson(personId: Long)
 
@@ -106,7 +112,9 @@ interface PersonDao {
         SET hasFaces = CASE 
             WHEN EXISTS (
                 SELECT 1 FROM media_person_cross_ref 
+                INNER JOIN people ON people.personId = media_person_cross_ref.personId
                 WHERE media_person_cross_ref.mediaId = media_items.mediaId
+                  AND people.isHiddenToOther = 0
             ) THEN 1 
             ELSE 0 
         END 
@@ -118,9 +126,16 @@ interface PersonDao {
     @Transaction
     suspend fun hidePersonToOther(personId: Long) {
         val affectedMediaIds = getMediaIdsForPerson(personId)
-        deleteCrossRefsForPerson(personId)
-        unassignFacesForPerson(personId)
         setPersonHiddenFlag(personId)
+        if (affectedMediaIds.isNotEmpty()) {
+            syncHasFacesForMediaIds(affectedMediaIds)
+        }
+    }
+
+    @Transaction
+    suspend fun unhidePersonFromOther(personId: Long) {
+        clearPersonHiddenFlag(personId)
+        val affectedMediaIds = getMediaIdsForPerson(personId)
         if (affectedMediaIds.isNotEmpty()) {
             syncHasFacesForMediaIds(affectedMediaIds)
         }
@@ -227,9 +242,15 @@ interface PersonDao {
     @Transaction
     suspend fun mergePeople(sourcePersonIds: List<Long>, targetPersonId: Long, newName: String) {
         val target = getPersonByIdSync(targetPersonId) ?: return
+        var anySourceNamed = false
+        val affectedMediaIds = mutableSetOf<Long>()
 
         for (sourceId in sourcePersonIds) {
             if (sourceId == targetPersonId) continue
+            val sourcePerson = getPersonByIdSync(sourceId)
+            if (sourcePerson?.isNamedByUser == true) {
+                anySourceNamed = true
+            }
 
             // Reassign faces
             reassignFaces(sourceId, targetPersonId)
@@ -238,6 +259,7 @@ interface PersonDao {
             val mediaIds = getMediaIdsForPerson(sourceId)
             for (mediaId in mediaIds) {
                 insertCrossRefIgnore(mediaId, targetPersonId)
+                affectedMediaIds.add(mediaId)
             }
             deleteCrossRefsForPerson(sourceId)
 
@@ -247,15 +269,21 @@ interface PersonDao {
 
         // Update target person name and distinct photo count
         val totalMedia = countDistinctMediaForPerson(targetPersonId).coerceAtLeast(1)
-        val resolvedName = newName.trim().ifBlank { target.name }
+        val resolvedName = newName.trim().removePrefix("@").trim().ifBlank { target.name }
+        val isDefaultPlaceholder = resolvedName.matches(Regex("^Person\\s+\\d+$", RegexOption.IGNORE_CASE))
+        val shouldMarkNamed = target.isNamedByUser || anySourceNamed || !isDefaultPlaceholder
+
         updatePerson(
             target.copy(
                 name = resolvedName,
                 faceCount = totalMedia,
-                isNamedByUser = true,
+                isNamedByUser = shouldMarkNamed,
                 isHiddenToOther = false
             )
         )
+        if (affectedMediaIds.isNotEmpty()) {
+            syncHasFacesForMediaIds(affectedMediaIds.toList())
+        }
     }
 
     @Query("UPDATE detected_faces SET personId = :targetPersonId WHERE personId = :sourcePersonId")

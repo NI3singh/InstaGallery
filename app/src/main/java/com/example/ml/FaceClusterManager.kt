@@ -22,6 +22,12 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
 
+data class SimilarProfileCandidate(
+    val person: PersonEntity,
+    val similarityScore: Float,
+    val photoCount: Int
+)
+
 /**
  * True MobileFaceNet Euclidean/Cosine Clustering Engine.
  *
@@ -616,6 +622,78 @@ class FaceClusterManager(
             scaled.recycle()
         }
         return file.absolutePath
+    }
+
+    suspend fun getSimilarProfilesFor(
+        targetPersonId: Long,
+        limit: Int = 8
+    ): List<SimilarProfileCandidate> = withContext(Dispatchers.IO) {
+        ensureCacheLoaded()
+
+        val allPeople = personDao.getAllPeopleSync()
+        val visibleOthers = allPeople.filter { it.personId != targetPersonId && !it.isHiddenToOther }
+        if (visibleOthers.isEmpty()) return@withContext emptyList()
+
+        val cachedById = clusterCache.associateBy { it.personId }
+        val targetCluster = cachedById[targetPersonId] ?: run {
+            val targetEntity = personDao.getPersonByIdSync(targetPersonId) ?: return@withContext emptyList()
+            val centroid = blobToFloatArray(targetEntity.centroidEmbeddingBlob)
+            val anchorFaces = personDao.getAnchorFacesForPersonSync(targetPersonId)
+            val exemplars = anchorFaces.mapNotNull { face ->
+                blobToFloatArray(face.embeddingBlob).takeIf { it.isNotEmpty() }
+            }.toMutableList()
+            if (exemplars.isEmpty() && centroid.isNotEmpty()) {
+                exemplars.add(centroid)
+            }
+            PersonCluster(
+                personId = targetEntity.personId,
+                name = targetEntity.name,
+                isNamedByUser = targetEntity.isNamedByUser,
+                centroid = centroid,
+                exemplars = exemplars,
+                faceCount = targetEntity.faceCount.coerceAtLeast(1),
+                bestQualityScore = targetEntity.bestQualityScore,
+                avatarCropPath = targetEntity.avatarCropPath
+            )
+        }
+
+        val scoredCandidates = visibleOthers.map { otherPerson ->
+            val otherCluster = cachedById[otherPerson.personId]
+            val score = if (otherCluster != null) {
+                val matchScore = computePersonMatchScore(targetCluster.centroid, otherCluster)
+                var maxExSim = matchScore
+                for (ex1 in targetCluster.exemplars) {
+                    for (ex2 in otherCluster.exemplars) {
+                        if (ex1.size == ex2.size && ex1.isNotEmpty()) {
+                            val sim = dotProduct(ex1, ex2)
+                            if (sim > maxExSim) maxExSim = sim
+                        }
+                    }
+                }
+                max(matchScore, maxExSim)
+            } else {
+                val otherCentroid = blobToFloatArray(otherPerson.centroidEmbeddingBlob)
+                if (targetCluster.centroid.isNotEmpty() && targetCluster.centroid.size == otherCentroid.size) {
+                    dotProduct(targetCluster.centroid, otherCentroid)
+                } else {
+                    0f
+                }
+            }
+
+            SimilarProfileCandidate(
+                person = otherPerson,
+                similarityScore = score.coerceIn(-1f, 1f),
+                photoCount = otherPerson.faceCount.coerceAtLeast(1)
+            )
+        }.sortedByDescending { it.similarityScore }
+
+        val namedCandidates = scoredCandidates.filter { it.person.isNamedByUser }
+        val topBySimilarity = scoredCandidates.take(limit)
+
+        (topBySimilarity + namedCandidates)
+            .distinctBy { it.person.personId }
+            .sortedByDescending { it.similarityScore }
+            .take(max(limit, namedCandidates.size))
     }
 
     fun findPossibleDuplicatePair(
