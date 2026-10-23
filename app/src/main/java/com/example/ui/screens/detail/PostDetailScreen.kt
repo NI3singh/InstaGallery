@@ -2,6 +2,7 @@
 package com.example.ui.screens.detail
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,7 +20,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -46,12 +52,7 @@ fun PostDetailScreen(
     onUntagPerson: ((Long, Long) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    val initialIndex = remember(mediaList, initialMediaId) {
-        val idx = mediaList.indexOfFirst { it.media.mediaId == initialMediaId }
-        if (idx >= 0) idx else 0
-    }
-
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
+    val posts = mediaList
 
     Column(
         modifier = modifier
@@ -89,24 +90,48 @@ fun PostDetailScreen(
 
         HorizontalDivider(color = IgBorder, thickness = 1.dp)
 
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize()
-        ) {
-            items(
-                items = mediaList,
-                key = { it.media.mediaId }
-            ) { item ->
-                PostCard(
-                    item = item,
-                    onAuthorClick = onPersonClick,
-                    onToggleFavorite = onToggleFavorite,
-                    onToggleBookmark = onToggleBookmark,
-                    allPeople = allPeople,
-                    onTagPerson = onTagPerson,
-                    onUntagPerson = onUntagPerson
-                )
-                HorizontalDivider(color = IgBorder, thickness = 1.dp)
+        if (posts.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(IgBlack)
+            )
+        } else {
+            val initialIndex = remember(posts, initialMediaId) {
+                posts.indexOfFirst { it.media.mediaId == initialMediaId }.coerceAtLeast(0)
+            }
+            val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
+            var hasScrolledToTarget by rememberSaveable(initialMediaId) { mutableStateOf(false) }
+
+            LaunchedEffect(posts.size, initialMediaId) {
+                if (!hasScrolledToTarget && posts.isNotEmpty()) {
+                    val targetIdx = posts.indexOfFirst { it.media.mediaId == initialMediaId }
+                    if (targetIdx >= 0) {
+                        listState.scrollToItem(targetIdx)
+                        hasScrolledToTarget = true
+                    }
+                }
+            }
+
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize()
+            ) {
+                items(
+                    items = posts,
+                    key = { it.media.mediaId }
+                ) { item ->
+                    PostCard(
+                        item = item,
+                        onAuthorClick = onPersonClick,
+                        onToggleFavorite = onToggleFavorite,
+                        onToggleBookmark = onToggleBookmark,
+                        allPeople = allPeople,
+                        onTagPerson = onTagPerson,
+                        onUntagPerson = onUntagPerson
+                    )
+                    HorizontalDivider(color = IgBorder, thickness = 1.dp)
+                }
             }
         }
     }

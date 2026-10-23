@@ -28,9 +28,6 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -39,35 +36,25 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.MusicNote
-import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Send
 import androidx.compose.material.icons.outlined.VolumeOff
 import androidx.compose.material.icons.outlined.VolumeUp
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -111,12 +98,10 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import coil.compose.AsyncImage
 import com.example.data.local.entity.MediaWithAuthors
-import com.example.ui.components.OverlappingAvatars
 import com.example.ui.theme.IgBlack
 import com.example.ui.theme.IgBlue
-import com.example.ui.theme.IgBorderNav
 import com.example.ui.theme.IgRed
-import com.example.ui.theme.IgSurfaceModal
+import com.example.ui.theme.IgStoryGradient
 import com.example.ui.theme.IgSurfacePill
 import com.example.ui.theme.IgTextPrimary
 import com.example.ui.theme.IgTextSecondary
@@ -127,11 +112,10 @@ import java.util.Date
 import java.util.Locale
 
 @OptIn(UnstableApi::class)
-@kotlin.OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ReelsScreen(
     viewModel: ReelsViewModel,
-    onViewProfilesClick: (Long) -> Unit,
+    onViewProfilesClick: (Long) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -139,7 +123,6 @@ fun ReelsScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     val videos = uiState.videos
-    var selectedVideoForInfo by remember { mutableStateOf<MediaWithAuthors?>(null) }
 
     if (videos.isEmpty()) {
         Box(
@@ -169,36 +152,29 @@ fun ReelsScreen(
                 }
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    text = when {
-                        uiState.onlyFavorites -> "No Favorite Reels Yet"
-                        uiState.selectedPersonId != null -> "No Reels for Selected Profile"
-                        else -> "No Videos Found"
-                    },
+                    text = if (uiState.onlyFavorites) "No Favorite Reels Yet" else "No Videos Found",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
                     color = IgTextPrimary
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = when {
-                        uiState.onlyFavorites -> "Double-tap any Reel or tap the heart icon to save your favorite videos."
-                        uiState.selectedPersonId != null -> "Try selecting another person filter or tap below to view all Reels."
-                        else -> "Videos in your device storage will appear here as auto-looping Reels."
+                    text = if (uiState.onlyFavorites) {
+                        "Double-tap any Reel or tap the heart icon to save your favorite videos."
+                    } else {
+                        "Videos in your device storage will appear here as auto-looping Reels."
                     },
                     fontSize = 13.sp,
                     color = IgTextSecondary,
                     textAlign = TextAlign.Center
                 )
-                if (uiState.onlyFavorites || uiState.selectedPersonId != null) {
+                if (uiState.onlyFavorites) {
                     Spacer(modifier = Modifier.height(16.dp))
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(50))
                             .background(IgBlue)
-                            .clickable {
-                                if (uiState.onlyFavorites) viewModel.toggleFavoritesFilter()
-                                if (uiState.selectedPersonId != null) viewModel.selectPersonFilter(null)
-                            }
+                            .clickable { viewModel.toggleFavoritesFilter() }
                             .padding(horizontal = 16.dp, vertical = 8.dp)
                     ) {
                         Text(
@@ -295,7 +271,7 @@ fun ReelsScreen(
         exoPlayer.volume = if (uiState.isMuted) 0f else 1f
     }
 
-    // Load video ONLY when settledMediaId actually changes (never on Like/Bookmark/Tag updates!)
+    // Load video ONLY when settledMediaId actually changes (never on Like/Bookmark updates!)
     LaunchedEffect(settledMediaId) {
         if (settledMediaId != -1L && settledMediaUri.isNotBlank()) {
             errorRetryCount = 0
@@ -457,7 +433,7 @@ fun ReelsScreen(
                     exit = fadeOut(),
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .padding(top = 96.dp)
+                        .padding(top = 72.dp)
                 ) {
                     Box(
                         modifier = Modifier
@@ -500,11 +476,11 @@ fun ReelsScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(128.dp)
+                        .height(108.dp)
                         .align(Alignment.TopCenter)
                         .background(
                             Brush.verticalGradient(
-                                listOf(Color.Black.copy(alpha = 0.75f), Color.Transparent)
+                                listOf(Color.Black.copy(alpha = 0.72f), Color.Transparent)
                             )
                         )
                 )
@@ -513,39 +489,30 @@ fun ReelsScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(256.dp)
+                        .height(240.dp)
                         .align(Alignment.BottomCenter)
                         .background(
                             Brush.verticalGradient(
-                                listOf(Color.Transparent, Color.Black.copy(alpha = 0.9f))
+                                listOf(Color.Transparent, Color.Black.copy(alpha = 0.88f))
                             )
                         )
                 )
 
-                // Bottom-Left Overlay Details
+                // Bottom-Left Overlay Details (Pure Standalone @Reels Identity)
                 ReelsBottomOverlay(
                     video = video,
-                    onViewProfilesClick = {
-                        val firstPerson = video.authors.firstOrNull()?.personId ?: -1L
-                        onViewProfilesClick(firstPerson)
-                    },
                     modifier = Modifier
                         .align(Alignment.BottomStart)
                         .padding(start = 16.dp, bottom = 36.dp)
                 )
 
-                // Right-Side Vertical Action Rail
+                // Right-Side Vertical Action Rail (Pure Video Controls)
                 ReelsActionRail(
                     video = video,
                     isMuted = uiState.isMuted,
                     onToggleFavorite = { viewModel.toggleFavorite(video.media.mediaId, video.media.isFavorite) },
                     onToggleBookmark = { viewModel.toggleBookmark(video.media.mediaId, video.media.isBookmarked) },
                     onToggleMute = { viewModel.toggleMute() },
-                    onMoreClick = { selectedVideoForInfo = video },
-                    onViewPeopleClick = {
-                        val firstPerson = video.authors.firstOrNull()?.personId ?: -1L
-                        onViewProfilesClick(firstPerson)
-                    },
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(end = 14.dp, bottom = 36.dp)
@@ -553,101 +520,62 @@ fun ReelsScreen(
             }
         }
 
-        // Top Overlay Bar + Person Filter Strip
-        Column(
+        // Top Overlay Bar (No Person Filter Chips)
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.TopCenter)
-                .padding(top = 12.dp)
+                .padding(top = 12.dp, start = 16.dp, end = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.clickable { viewModel.reshuffle() }
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier.clickable { viewModel.reshuffle() }
-                ) {
-                    Text(
-                        text = if (uiState.onlyFavorites) "Favorite Reels" else "Reels",
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                    Icon(
-                        imageVector = Icons.Default.KeyboardArrowDown,
-                        contentDescription = "Shuffle Reels",
-                        tint = Color.White,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    // Crop / Fit Aspect Ratio Pill
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(Color.Black.copy(alpha = 0.45f))
-                            .border(1.dp, Color.White.copy(alpha = 0.3f), RoundedCornerShape(50))
-                            .clickable { viewModel.toggleFitMode() }
-                            .padding(horizontal = 10.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = if (uiState.isFitMode) "Fit" else "Crop",
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.White
-                        )
-                    }
-
-                    IconButton(onClick = { viewModel.toggleFavoritesFilter() }) {
-                        Icon(
-                            imageVector = if (uiState.onlyFavorites) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
-                            contentDescription = "Filter Favorite Reels",
-                            tint = if (uiState.onlyFavorites) IgRed else Color.White,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-                }
+                Text(
+                    text = if (uiState.onlyFavorites) "Favorite Reels" else "Reels",
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowDown,
+                    contentDescription = "Shuffle Reels",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
             }
 
-            // Person Filter Chips Row
-            if (uiState.allPeople.isNotEmpty()) {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                // Crop / Fit Aspect Ratio Pill
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(Color.Black.copy(alpha = 0.45f))
+                        .border(1.dp, Color.White.copy(alpha = 0.3f), RoundedCornerShape(50))
+                        .clickable { viewModel.toggleFitMode() }
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
                 ) {
-                    item(key = "filter_all") {
-                        ReelPersonChip(
-                            label = "All",
-                            isSelected = uiState.selectedPersonId == null,
-                            onClick = { viewModel.selectPersonFilter(null) }
-                        )
-                    }
-                    items(
-                        items = uiState.allPeople,
-                        key = { it.personId }
-                    ) { person ->
-                        ReelPersonChip(
-                            label = "@${person.name}",
-                            isSelected = uiState.selectedPersonId == person.personId,
-                            onClick = { viewModel.selectPersonFilter(person.personId) }
-                        )
-                    }
-                    item(key = "filter_other") {
-                        ReelPersonChip(
-                            label = "@Other",
-                            isSelected = uiState.selectedPersonId == -1L,
-                            onClick = { viewModel.selectPersonFilter(-1L) }
-                        )
-                    }
+                    Text(
+                        text = if (uiState.isFitMode) "Fit" else "Crop",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White
+                    )
+                }
+
+                IconButton(onClick = { viewModel.toggleFavoritesFilter() }) {
+                    Icon(
+                        imageVector = if (uiState.onlyFavorites) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
+                        contentDescription = "Filter Favorite Reels",
+                        tint = if (uiState.onlyFavorites) IgRed else Color.White,
+                        modifier = Modifier.size(24.dp)
+                    )
                 }
             }
         }
@@ -735,150 +663,6 @@ fun ReelsScreen(
             )
         }
     }
-
-    // Reel Details & Tag Management Modal Bottom Sheet
-    selectedVideoForInfo?.let { infoVideo ->
-        val sheetState = rememberModalBottomSheetState()
-        val liveVideo = videos.find { it.media.mediaId == infoVideo.media.mediaId } ?: infoVideo
-        val authors = liveVideo.authors
-        val taggedIds = authors.map { it.personId }.toSet()
-        val untaggedPeople = uiState.allPeople.filter { !taggedIds.contains(it.personId) }
-
-        ModalBottomSheet(
-            onDismissRequest = { selectedVideoForInfo = null },
-            sheetState = sheetState,
-            containerColor = IgSurfaceModal
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 12.dp)
-            ) {
-                Text(
-                    text = "Reel Info & People Tags",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = IgTextPrimary
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Text(
-                    text = if (authors.isEmpty()) "Tagged: @Other (No specific person tagged)" else "Tagged in this Reel:",
-                    fontSize = 13.sp,
-                    color = IgTextSecondary
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-
-                if (authors.isNotEmpty()) {
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        authors.forEach { person ->
-                            Row(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(50))
-                                    .background(IgBlack)
-                                    .border(1.dp, IgBorderNav, RoundedCornerShape(50))
-                                    .clickable {
-                                        selectedVideoForInfo = null
-                                        onViewProfilesClick(person.personId)
-                                    }
-                                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                OverlappingAvatars(
-                                    authors = listOf(person),
-                                    avatarSize = 22.dp
-                                )
-                                Text(
-                                    text = "@${person.name}",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = IgTextPrimary
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Untag",
-                                    tint = IgTextSecondary,
-                                    modifier = Modifier
-                                        .size(16.dp)
-                                        .clickable {
-                                            viewModel.removePersonFromMedia(liveVideo.media.mediaId, person.personId)
-                                        }
-                                )
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(14.dp))
-                }
-
-                if (untaggedPeople.isNotEmpty()) {
-                    HorizontalDivider(color = IgBorderNav, thickness = 0.5.dp)
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = "Tag a person:",
-                        fontSize = 13.sp,
-                        color = IgTextSecondary
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        untaggedPeople.forEach { person ->
-                            Row(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(50))
-                                    .background(IgSurfacePill)
-                                    .border(1.dp, IgBorderNav, RoundedCornerShape(50))
-                                    .clickable {
-                                        viewModel.tagPersonInMedia(liveVideo.media.mediaId, person.personId)
-                                    }
-                                    .padding(horizontal = 10.dp, vertical = 5.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Add,
-                                    contentDescription = "Tag",
-                                    tint = IgBlue,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Text(
-                                    text = "@${person.name}",
-                                    fontSize = 12.5.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = IgTextPrimary
-                                )
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(14.dp))
-                }
-
-                HorizontalDivider(color = IgBorderNav, thickness = 0.5.dp)
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = "File: ${liveVideo.media.displayName}",
-                    fontSize = 12.5.sp,
-                    color = IgTextSecondary
-                )
-                val durationSec = (liveVideo.media.durationMs ?: 0L) / 1000L
-                if (durationSec > 0) {
-                    Text(
-                        text = "Duration: ${durationSec}s",
-                        fontSize = 12.5.sp,
-                        color = IgTextSecondary
-                    )
-                }
-                Spacer(modifier = Modifier.height(24.dp))
-            }
-        }
-    }
 }
 
 /**
@@ -958,52 +742,22 @@ private fun applyVideoScaleMatrix(
 }
 
 @Composable
-private fun ReelPersonChip(
-    label: String,
-    isSelected: Boolean,
-    onClick: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(50))
-            .background(if (isSelected) IgBlue else Color.Black.copy(alpha = 0.45f))
-            .border(
-                width = 1.dp,
-                color = if (isSelected) IgBlue else Color.White.copy(alpha = 0.28f),
-                shape = RoundedCornerShape(50)
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 4.dp)
-    ) {
-        Text(
-            text = label,
-            fontSize = 11.5.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = Color.White
-        )
-    }
-}
-
-@Composable
 fun ReelsActionRail(
     video: MediaWithAuthors,
     isMuted: Boolean,
     onToggleFavorite: () -> Unit,
     onToggleBookmark: () -> Unit,
     onToggleMute: () -> Unit,
-    onMoreClick: () -> Unit,
-    onViewPeopleClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val authorsCount = video.authors.size
 
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // 1. Heart Like button with label
+        // 1. Heart (Favorite) button
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.clickable(onClick = onToggleFavorite)
@@ -1023,46 +777,7 @@ fun ReelsActionRail(
             )
         }
 
-        // 2. Tagged People Button with blue count badge & label
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.clickable(onClick = onViewPeopleClick)
-        ) {
-            Box(contentAlignment = Alignment.TopEnd) {
-                Icon(
-                    imageVector = Icons.Outlined.Person,
-                    contentDescription = "Tagged People",
-                    tint = Color.White,
-                    modifier = Modifier.size(28.dp)
-                )
-                if (authorsCount > 0) {
-                    Box(
-                        modifier = Modifier
-                            .size(16.dp)
-                            .clip(CircleShape)
-                            .background(IgBlue)
-                            .border(1.5.dp, Color.Black, CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = authorsCount.toString(),
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                    }
-                }
-            }
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = if (authorsCount > 0) "$authorsCount People" else "@Other",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                color = Color.White
-            )
-        }
-
-        // 3. Bookmark / Save button
+        // 2. Bookmark / Save button
         IconButton(
             onClick = onToggleBookmark,
             modifier = Modifier.size(32.dp)
@@ -1075,7 +790,7 @@ fun ReelsActionRail(
             )
         }
 
-        // 4. Share button
+        // 3. Share paper-plane button (Intent.ACTION_SEND)
         IconButton(
             onClick = { shareVideo(context, video.media.uri) },
             modifier = Modifier.size(32.dp)
@@ -1088,7 +803,7 @@ fun ReelsActionRail(
             )
         }
 
-        // 5. Mute / Unmute Speaker button
+        // 4. Mute / Unmute Speaker button
         IconButton(
             onClick = onToggleMute,
             modifier = Modifier.size(32.dp)
@@ -1101,30 +816,16 @@ fun ReelsActionRail(
             )
         }
 
-        // 6. 3-dots more options (opens Reel Info & Tag sheet)
-        IconButton(
-            onClick = onMoreClick,
-            modifier = Modifier.size(32.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Default.MoreVert,
-                contentDescription = "More options",
-                tint = Color.White,
-                modifier = Modifier.size(24.dp)
-            )
-        }
-
-        // 7. Miniature 32x32px album thumbnail
+        // 5. Bottom rounded square video thumbnail
         Box(
             modifier = Modifier
                 .size(32.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .border(2.dp, Color.White, RoundedCornerShape(8.dp))
-                .clickable(onClick = onMoreClick)
         ) {
             AsyncImage(
                 model = video.media.uri,
-                contentDescription = "Audio thumbnail",
+                contentDescription = "Video thumbnail",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )
@@ -1136,15 +837,8 @@ fun ReelsActionRail(
 @Composable
 fun ReelsBottomOverlay(
     video: MediaWithAuthors,
-    onViewProfilesClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val authors = video.authors
-    val authorHandles = remember(authors) {
-        if (authors.isEmpty()) "@Other"
-        else authors.take(2).joinToString(" and ") { "@${it.name}" }
-    }
-
     val formattedDate = remember(video.media.dateAddedSeconds) {
         val date = Date(video.media.dateAddedSeconds * 1000L)
         val sdf = SimpleDateFormat("MMMM d, yyyy", Locale.getDefault())
@@ -1155,60 +849,51 @@ fun ReelsBottomOverlay(
         modifier = modifier.width(280.dp),
         horizontalAlignment = Alignment.Start
     ) {
-        // Authors Row + View Profiles Pill
+        // Standalone @Reels Identity Badge Row
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            OverlappingAvatars(
-                authors = authors,
-                avatarSize = 36.dp,
-                overlap = (-12).dp
-            )
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.65f))
+                    .border(2.dp, IgStoryGradient, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Movie,
+                    contentDescription = "Reels",
+                    tint = Color.White,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
 
             Text(
-                text = authorHandles,
+                text = "@Reels",
                 fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = Color.White,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .weight(1f, fill = false)
-                    .clickable(onClick = onViewProfilesClick)
+                overflow = TextOverflow.Ellipsis
             )
-
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color.Black.copy(alpha = 0.4f))
-                    .border(1.dp, Color.White.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
-                    .clickable(onClick = onViewProfilesClick)
-                    .padding(horizontal = 8.dp, vertical = 2.dp)
-            ) {
-                Text(
-                    text = if (authors.isEmpty()) "View @Other" else "View Profile",
-                    fontSize = 11.5.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = Color.White
-                )
-            }
         }
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Caption Text
+        // Subtitle below: "${video.media.displayName} • ${formattedDate}"
         Text(
             text = "${video.media.displayName} • $formattedDate",
             fontSize = 13.sp,
-            color = Color.White.copy(alpha = 0.95f),
+            color = Color.White.copy(alpha = 0.9f),
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Audio Marquee Ticker Pill
+        // Scrolling audio ticker pill below: "${video.media.displayName} • Local Video Audio"
         Row(
             modifier = Modifier
                 .clip(RoundedCornerShape(50))
@@ -1220,13 +905,13 @@ fun ReelsBottomOverlay(
         ) {
             Icon(
                 imageVector = Icons.Outlined.MusicNote,
-                contentDescription = "Music",
+                contentDescription = "Audio",
                 tint = Color.White,
                 modifier = Modifier.size(13.dp)
             )
             Box(modifier = Modifier.width(180.dp)) {
                 Text(
-                    text = "${video.media.displayName} • Original Audio • ${video.media.displayName} • Original Audio",
+                    text = "${video.media.displayName} • Local Video Audio",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                     color = Color.White,

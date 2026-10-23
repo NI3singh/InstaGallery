@@ -345,6 +345,9 @@ interface MediaDao {
     @Query("DELETE FROM media_person_cross_ref")
     suspend fun deleteAllCrossRefs()
 
+    @Query("DELETE FROM media_person_cross_ref WHERE mediaId IN (SELECT mediaId FROM media_items WHERE isVideo = 1)")
+    suspend fun deleteAllVideoPersonLinks()
+
     @Query("SELECT mediaId FROM media_items")
     suspend fun getAllMediaIds(): List<Long>
 

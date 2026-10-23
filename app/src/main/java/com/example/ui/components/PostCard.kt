@@ -13,6 +13,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -56,14 +57,18 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -81,7 +86,6 @@ import com.example.data.local.entity.PersonEntity
 import com.example.ui.theme.IgBlack
 import com.example.ui.theme.IgBlue
 import com.example.ui.theme.IgBorderNav
-import com.example.ui.theme.IgElevated
 import com.example.ui.theme.IgRed
 import com.example.ui.theme.IgSurfaceModal
 import com.example.ui.theme.IgSurfacePill
@@ -112,6 +116,17 @@ fun PostCard(
     var showInfoSheet by remember { mutableStateOf(false) }
     var showTagOverlay by remember { mutableStateOf(false) }
     var showDoubleTapHeart by remember { mutableStateOf(false) }
+
+    var decodedAspectRatio by remember(media.mediaId) {
+        val dbRatio = if (media.width > 0 && media.height > 0 && !(media.width == 1080 && media.height == 1350)) {
+            (media.width.toFloat() / media.height.toFloat()).coerceIn(0.56f, 1.91f)
+        } else {
+            0.8f // 4:5 fallback until Coil decodes true intrinsic size
+        }
+        mutableFloatStateOf(dbRatio)
+    }
+
+    var forceCropMode by rememberSaveable(media.mediaId) { mutableStateOf(false) }
 
     LaunchedEffect(showDoubleTapHeart) {
         if (showDoubleTapHeart) {
@@ -147,6 +162,9 @@ fun PostCard(
         if (authors.isEmpty()) "@Other"
         else authors.joinToString(", ") { "@${it.name}" }
     }
+
+    val containerAspectRatio = if (forceCropMode) 4f / 5f else decodedAspectRatio
+    val imageContentScale = if (forceCropMode) ContentScale.Crop else ContentScale.Fit
 
     Column(
         modifier = modifier
@@ -245,12 +263,12 @@ fun PostCard(
             }
         }
 
-        // Media Viewport (4:5 Aspect Ratio portrait standard with Double-Tap to Like & Floating Tag Pills)
+        // Media Viewport (True Intrinsic Aspect Ratio with Uncropped ContentScale.Fit by default)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(4f / 5f)
-                .background(IgElevated)
+                .aspectRatio(containerAspectRatio)
+                .background(Color(0xFF0A0A0A))
                 .pointerInput(media.mediaId, media.isFavorite, authors.size) {
                     detectTapGestures(
                         onDoubleTap = {
@@ -270,7 +288,15 @@ fun PostCard(
             AsyncImage(
                 model = media.uri,
                 contentDescription = media.displayName,
-                contentScale = ContentScale.Crop,
+                contentScale = imageContentScale,
+                onSuccess = { success ->
+                    val intrinsicSize = success.painter.intrinsicSize
+                    if (intrinsicSize.width > 0f && intrinsicSize.height > 0f &&
+                        intrinsicSize.width.isFinite() && intrinsicSize.height.isFinite()
+                    ) {
+                        decodedAspectRatio = (intrinsicSize.width / intrinsicSize.height).coerceIn(0.56f, 1.91f)
+                    }
+                },
                 modifier = Modifier.fillMaxSize()
             )
 
@@ -302,7 +328,7 @@ fun PostCard(
                 exit = fadeOut() + scaleOut(targetScale = 0.85f),
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(start = 48.dp, bottom = 12.dp, end = 16.dp)
+                    .padding(start = 48.dp, bottom = 12.dp, end = 48.dp)
             ) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -349,6 +375,24 @@ fun PostCard(
                         modifier = Modifier.size(15.dp)
                     )
                 }
+            }
+
+            // Circular Fit / Crop Aspect Ratio Toggle Button (bottom-right)
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(12.dp)
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.70f))
+                    .clickable { forceCropMode = !forceCropMode }
+                    .testTag("aspect_ratio_toggle_${media.mediaId}"),
+                contentAlignment = Alignment.Center
+            ) {
+                FitCropFrameIcon(
+                    isCropMode = forceCropMode,
+                    modifier = Modifier.size(14.dp)
+                )
             }
         }
 
@@ -628,6 +672,92 @@ fun PostCard(
                 Spacer(modifier = Modifier.height(24.dp))
             }
         }
+    }
+}
+
+/**
+ * Crisp Instagram-style 4-corner Fit/Expand frame icon drawn with Canvas.
+ */
+@Composable
+private fun FitCropFrameIcon(
+    isCropMode: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = 1.6.dp.toPx()
+        val arm = w * 0.32f
+        val inset = if (isCropMode) w * 0.12f else 0f
+
+        val left = inset
+        val top = inset
+        val right = w - inset
+        val bottom = h - inset
+
+        // Top-left corner
+        drawLine(
+            color = Color.White,
+            start = Offset(left, top),
+            end = Offset(left + arm, top),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round
+        )
+        drawLine(
+            color = Color.White,
+            start = Offset(left, top),
+            end = Offset(left, top + arm),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round
+        )
+
+        // Top-right corner
+        drawLine(
+            color = Color.White,
+            start = Offset(right, top),
+            end = Offset(right - arm, top),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round
+        )
+        drawLine(
+            color = Color.White,
+            start = Offset(right, top),
+            end = Offset(right, top + arm),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round
+        )
+
+        // Bottom-left corner
+        drawLine(
+            color = Color.White,
+            start = Offset(left, bottom),
+            end = Offset(left + arm, bottom),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round
+        )
+        drawLine(
+            color = Color.White,
+            start = Offset(left, bottom),
+            end = Offset(left, bottom - arm),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round
+        )
+
+        // Bottom-right corner
+        drawLine(
+            color = Color.White,
+            start = Offset(right, bottom),
+            end = Offset(right - arm, bottom),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round
+        )
+        drawLine(
+            color = Color.White,
+            start = Offset(right, bottom),
+            end = Offset(right, bottom - arm),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round
+        )
     }
 }
 

@@ -11,7 +11,7 @@ sealed class Screen(val route: String) {
     data object Profile : Screen("profile/{personId}") {
         fun createRoute(personId: Long): String = "profile/$personId"
     }
-    data object PostDetail : Screen("post_detail/{personId}/{mediaId}") {
-        fun createRoute(personId: Long, mediaId: Long): String = "post_detail/$personId/$mediaId"
+    data object PostDetail : Screen("post_detail/{personId}/{initialMediaId}") {
+        fun createRoute(personId: Long, initialMediaId: Long): String = "post_detail/$personId/$initialMediaId"
     }
 }

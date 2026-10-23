@@ -9,8 +9,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_TAG: v1.1.5
-  APK_FILENAME: InstaGallery-v1.1.5.apk
+  RELEASE_TAG: v1.1.6
+  APK_FILENAME: InstaGallery-v1.1.6.apk
 
 jobs:
   build:
@@ -122,7 +122,7 @@ jobs:
       - name: Upload InstaGallery APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: InstaGallery-v1.1.5-APK
+          name: InstaGallery-v1.1.6-APK
           path: dist/${{ env.APK_FILENAME }}
           if-no-files-found: error
 
@@ -133,7 +133,7 @@ jobs:
         run: |
           APK_SIZE=$(du -h "dist/${APK_FILENAME}" | cut -f1)
           cat << EOF > RELEASE_NOTES.md
-          ## 📸 InstaGallery ${RELEASE_TAG} — Redesigned Onboarding Profile Setup, 1-Tap Lookalike Merging & Grid Multi-Merge
+          ## 📸 InstaGallery ${RELEASE_TAG} — Exact Post Scroll Index, True Uncropped Photo Aspect Ratios & Standalone Reels
 
           ### ⚡ Fast APK Download (\`${APK_SIZE}\` — Slim Optimized Build)
           - **Option 1 — Direct GitHub Release Asset**: Tap **\`${APK_FILENAME}\`** under **Assets** below.
@@ -145,21 +145,18 @@ jobs:
           ### 📲 Installation Steps
           1. Download **\`${APK_FILENAME}\`** on your Android 8.0+ (API 26+) phone.
           2. Open the \`.apk\` file and allow *Install unknown apps* if prompted.
-          3. Launch **InstaGallery** — enjoy the upgraded onboarding setup carousel and 1-tap visual profile merging.
+          3. Launch **InstaGallery** — enjoy exact post scrolling, uncropped photos with 1-tap Fit/Crop toggle, and standalone Reels.
 
           ### ✨ What's New in ${RELEASE_TAG}
-          - **Tiered Profile Setup Filter (\`Top People\` vs \`All Detected\`)**:
-            - Automatically prioritizes your most frequent faces (\`Top People\`) when 20+ profiles are detected, while keeping every detected cluster accessible in \`All Detected\`.
-          - **In-Card Lookalike Visual Merge Strip**:
-            - Displays the top 8 most visually similar face clusters (plus already-named profiles) right inside each card so you can absorb split clusters (\`@Person 20\`, \`@Person 45\`, \`@Person 90\`) with a single tap on their face avatar.
-          - **Multi-Merge Face Grid Bottom Sheet (\`Grid Merge\`)**:
-            - Open the 4-column visual face grid from the top header or lookalike strip to select and combine 2, 5, or 10+ split face clusters into a single named profile at once.
-          - **Native Instagram Solid Squircle Quick-Chips & Dynamic Custom Chips**:
-            - Tapping any quick-chip (\`Me\`, \`Papa\`, \`Maa\`, \`Bro\`, \`Sis\`, \`Bestie\`, \`Partner\`) or typing a custom name dynamically prepends your custom names to the quick-chip bar and marks the profile as \`✓ Kept Profile\` with smooth \`220ms\` auto-advance.
-          - **Explicit Visual Decision States & Reversible \`Move to @Other\`**:
-            - Clear card border highlights (\`#0095F6\` Kept, \`#FF3040\` Moved to \`@Other\`), top-left banner status badges, and instant 1-tap \`Undo Move ↺\` without losing face-photo links.
-          - **Bulk 1-Photo Stranger Cleanup & Unified White Pill CTAs**:
-            - Includes an \`Auto-move unnamed 1-photo faces to @Other\` toggle and unified high-contrast solid white progression buttons across onboarding.
+          - **Exact Profile Grid-to-Post Scroll Position**:
+            - Tapping the 5th, 50th, or 90th photo in a profile grid now opens \`PostDetailScreen\` at that exact photo immediately without jumping back to the 1st photo.
+          - **True Intrinsic Photo Aspect Ratio & 1-Tap Fit/Crop Toggle**:
+            - \`PostCard\` now decodes the true drawable aspect ratio via Coil and renders photos uncropped (\`ContentScale.Fit\`) by default so tall portraits, square photos, and landscapes are never awkwardly cut off.
+            - Includes a \`28.dp\` circular Fit/Crop toggle button in the bottom-right corner of every photo to switch between true uncropped proportions and \`4:5\` fill mode.
+          - **Photo-Only Profiles & Automatic Video Link Cleanup**:
+            - Purges any legacy video-to-person links during media scanning and keeps profiles strictly photo-only (\`isVideo = 0\`) with a clean 3-column photo grid.
+          - **Pure Standalone \`@Reels\` Experience**:
+            - Removed person filter chips, person tag counters, and profile links from Reels so videos play as a pure standalone \`@Reels\` feed with the Instagram-gradient clapperboard badge.
           EOF
 
           git tag -f "${RELEASE_TAG}"
@@ -168,12 +165,12 @@ jobs:
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
             gh release upload "${RELEASE_TAG}" "dist/${APK_FILENAME}" --clobber
             gh release edit "${RELEASE_TAG}" \
-              --title "InstaGallery ${RELEASE_TAG} — Visual Profile Merge & MobileFaceNet APK (${APK_SIZE})" \
+              --title "InstaGallery ${RELEASE_TAG} — Uncropped Photos, Exact Post Scroll & Standalone Reels APK (${APK_SIZE})" \
               --notes-file RELEASE_NOTES.md \
               --latest
           else
             gh release create "${RELEASE_TAG}" "dist/${APK_FILENAME}" \
-              --title "InstaGallery ${RELEASE_TAG} — Visual Profile Merge & MobileFaceNet APK (${APK_SIZE})" \
+              --title "InstaGallery ${RELEASE_TAG} — Uncropped Photos, Exact Post Scroll & Standalone Reels APK (${APK_SIZE})" \
               --notes-file RELEASE_NOTES.md \
               --latest
           fi

@@ -176,10 +176,7 @@ fun InstaGalleryNavGraph(
             composable(Screen.Reels.route) {
                 val reelsViewModel: ReelsViewModel = viewModel()
                 ReelsScreen(
-                    viewModel = reelsViewModel,
-                    onViewProfilesClick = { personId ->
-                        navController.navigate(Screen.Profile.createRoute(personId))
-                    }
+                    viewModel = reelsViewModel
                 )
             }
 
@@ -234,11 +231,11 @@ fun InstaGalleryNavGraph(
                 route = Screen.PostDetail.route,
                 arguments = listOf(
                     navArgument("personId") { type = NavType.LongType },
-                    navArgument("mediaId") { type = NavType.LongType }
+                    navArgument("initialMediaId") { type = NavType.LongType }
                 )
             ) { backStackEntry ->
                 val personId = backStackEntry.arguments?.getLong("personId") ?: -1L
-                val initialMediaId = backStackEntry.arguments?.getLong("mediaId") ?: 0L
+                val initialMediaId = backStackEntry.arguments?.getLong("initialMediaId") ?: 0L
 
                 val profileViewModel: ProfileViewModel = viewModel(
                     factory = object : androidx.lifecycle.ViewModelProvider.Factory {

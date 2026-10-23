@@ -109,6 +109,10 @@ class MediaStoreScanner(
                 }
             }
 
+            // Purge any video-to-person links and ensure videos are marked processed (never face-indexed)
+            mediaDao.deleteAllVideoPersonLinks()
+            mediaDao.markAllVideosProcessed()
+
             // Self-healing check: if photos exist in DB and all are marked processed, but 0 people exist,
             // reset photo processed flags so FaceIndexingWorker re-indexes them with the fixed pipeline.
             val personDao = com.example.data.local.AppDatabase.getInstance(context).personDao()

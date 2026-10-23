@@ -19,14 +19,10 @@ data class ProfileUiState(
     val personId: Long = -1L,
     val person: PersonEntity? = null,
     val photos: List<MediaWithAuthors> = emptyList(),
-    val videos: List<MediaWithAuthors> = emptyList(),
     val photoCount: Int = 0,
-    val reelCount: Int = 0,
-    val totalCount: Int = 0,
     val faces: List<FaceEntity> = emptyList(),
     val allPeople: List<PersonEntity> = emptyList(),
-    val otherPeople: List<PersonEntity> = emptyList(),
-    val selectedTab: Int = 0
+    val otherPeople: List<PersonEntity> = emptyList()
 )
 
 class ProfileViewModel(
@@ -35,7 +31,6 @@ class ProfileViewModel(
 ) : AndroidViewModel(application) {
 
     private val repository = GalleryRepository(application)
-    private val _selectedTab = MutableStateFlow(0)
 
     private val personFlow = if (personId == -1L) {
         MutableStateFlow<PersonEntity?>(null)
@@ -43,13 +38,18 @@ class ProfileViewModel(
         repository.getPersonById(personId)
     }
 
+    private val photosFlow = if (personId == -1L) {
+        repository.getUnassignedPhotosFlow()
+    } else {
+        repository.getMediaForPersonFlow(personId)
+    }
+
     val uiState: StateFlow<ProfileUiState> = combine(
         personFlow,
-        repository.getMediaWithAuthorsForPersonFlow(personId),
+        photosFlow,
         repository.getFacesForPerson(personId),
-        repository.allPeople,
-        _selectedTab
-    ) { person, photos, faces, allPeople, tab ->
+        repository.allPeople
+    ) { person, photos, faces, allPeople ->
         val stillPhotos = photos.filter { !it.media.isVideo }
         val candidateOthers = allPeople.filter { it.personId != personId }
 
@@ -57,24 +57,16 @@ class ProfileViewModel(
             personId = personId,
             person = person,
             photos = stillPhotos,
-            videos = emptyList(),
             photoCount = stillPhotos.size,
-            reelCount = 0,
-            totalCount = stillPhotos.size,
             faces = faces,
             allPeople = allPeople,
-            otherPeople = candidateOthers,
-            selectedTab = tab
+            otherPeople = candidateOthers
         )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = ProfileUiState(personId = personId)
     )
-
-    fun selectTab(tab: Int) {
-        _selectedTab.value = tab
-    }
 
     fun updateProfileName(newName: String) {
         if (personId == -1L || newName.isBlank()) return

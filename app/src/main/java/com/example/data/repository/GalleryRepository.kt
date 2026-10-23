@@ -89,6 +89,7 @@ class GalleryRepository(private val context: Context) {
         .map { it.firstOrNull() }
 
     suspend fun scanDeviceMedia(): Int {
+        mediaDao.deleteAllVideoPersonLinks()
         return scanner.scanAndReconcile()
     }
 
@@ -117,6 +118,14 @@ class GalleryRepository(private val context: Context) {
             mediaDao.getMediaWithAuthorsForPersonFlow(personId)
         }
         return filterMediaAuthorsToVisible(rawFlow)
+    }
+
+    fun getMediaForPersonFlow(personId: Long): Flow<List<MediaWithAuthors>> {
+        return getMediaWithAuthorsForPersonFlow(personId)
+    }
+
+    fun getUnassignedPhotosFlow(): Flow<List<MediaWithAuthors>> {
+        return filterMediaAuthorsToVisible(mediaDao.getUnassignedPhotosWithAuthorsFlow())
     }
 
     fun getMediaForPerson(personId: Long): Flow<List<MediaWithAuthors>> {
