@@ -4,6 +4,7 @@ package com.example.data.repository
 import android.content.Context
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import com.example.InstaGalleryApp
 import com.example.data.local.AppDatabase
 import com.example.data.local.OnboardingPreferences
 import com.example.data.local.entity.FaceEntity
@@ -19,29 +20,24 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import java.io.File
 
-class GalleryRepository(private val context: Context) {
+class GalleryRepository(
+    private val context: Context,
+    private val clusterManager: FaceClusterManager =
+        (context.applicationContext as? InstaGalleryApp)?.faceClusterManager
+            ?: FaceClusterManager.getInstance(context)
+) {
 
-    private val database = AppDatabase.getInstance(context)
+    private val database = (context.applicationContext as? InstaGalleryApp)?.database
+        ?: AppDatabase.getInstance(context)
     private val mediaDao = database.mediaDao()
     private val personDao = database.personDao()
     private val scanner = MediaStoreScanner(context, mediaDao)
-    private val clusterManager = FaceClusterManager(context, personDao, mediaDao)
 
     /**
      * Primary people Flow observed by HomeFeedScreen and PeopleDirectoryScreen.
-     * Uses `personDao.getVisiblePeopleFlow()` (`isHiddenToOther = 0 AND (faceCount >= 2 OR isNamedByUser = 1)`),
-     * falling back to `faceCount >= 1` ONLY if the entire device has 0 clusters with `faceCount >= 2 || isNamedByUser`.
+     * Uses `personDao.getVisiblePeopleFlow()`.
      */
-    val allPeople: Flow<List<PersonEntity>> = combine(
-        personDao.getVisiblePeopleFlow(),
-        personDao.getAllPeople()
-    ) { visiblePeople, allActivePeople ->
-        if (visiblePeople.isNotEmpty()) {
-            visiblePeople
-        } else {
-            allActivePeople
-        }
-    }
+    val allPeople: Flow<List<PersonEntity>> = personDao.getVisiblePeopleFlow()
 
     /**
      * All detected people with >= 1 photo (excluding hidden), used for tiered onboarding filtering.

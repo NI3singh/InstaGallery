@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import com.example.InstaGalleryApp
 import com.example.data.local.AppDatabase
 import com.example.data.local.OnboardingPreferences
 import kotlinx.coroutines.Dispatchers
@@ -24,17 +25,18 @@ class FaceIndexingWorker(
         const val PROGRESS_PROFILES_COUNT = "profilesCount"
         const val PROGRESS_FACES_FOUND = "faces_found"
         private const val BATCH_CHUNK_SIZE = 20
-        private const val PASS2_CONSOLIDATION_INTERVAL = 40
     }
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
-        val database = AppDatabase.getInstance(applicationContext)
+        val app = applicationContext as? InstaGalleryApp
+        val database = app?.database ?: AppDatabase.getInstance(applicationContext)
         val mediaDao = database.mediaDao()
         val personDao = database.personDao()
 
         val detectorProcessor = FaceDetectorProcessor(applicationContext)
         val embeddingExtractor = FaceEmbeddingExtractor(applicationContext)
-        val clusterManager = FaceClusterManager(applicationContext, personDao, mediaDao)
+        val faceClusterManager = (applicationContext as? InstaGalleryApp)?.faceClusterManager
+            ?: FaceClusterManager.getInstance(applicationContext)
 
         try {
             // Photos-only human face detection: immediately mark all videos as processed
@@ -52,12 +54,9 @@ class FaceIndexingWorker(
             val alreadyProcessed = mediaDao.getProcessedCount().firstOrNull() ?: 0
             val totalPhotos = mediaDao.getTotalMediaCount().firstOrNull() ?: 0
             var processedCount = alreadyProcessed
-            var itemsProcessedInThisRun = 0
 
             suspend fun countVisibleProfiles(): Int {
-                val allActive = personDao.getAllPeopleSync()
-                val multiOrNamed = allActive.count { !it.isHiddenToOther && (it.faceCount >= 2 || it.isNamedByUser) }
-                return if (multiOrNamed >= 3) multiOrNamed else allActive.count { !it.isHiddenToOther }
+                return personDao.getVisiblePeopleSync().size
             }
 
             if (totalPhotos > 0) {
@@ -94,7 +93,7 @@ class FaceIndexingWorker(
 
                         val facesAssigned = try {
                             if (detectedFaces.isNotEmpty()) {
-                                clusterManager.processDetectedFacesForMedia(
+                                faceClusterManager.processDetectedFacesForMedia(
                                     mediaId = media.mediaId,
                                     detectedFaces = detectedFaces,
                                     embeddingExtractor = embeddingExtractor,
@@ -129,11 +128,6 @@ class FaceIndexingWorker(
                     }
 
                     processedCount++
-                    itemsProcessedInThisRun++
-
-                    if (itemsProcessedInThisRun % PASS2_CONSOLIDATION_INTERVAL == 0) {
-                        clusterManager.runPass2ConsolidationAndAnchorSweep()
-                    }
 
                     val totalCount = (mediaDao.getTotalMediaCount().firstOrNull() ?: totalPhotos)
                         .coerceAtLeast(processedCount)
@@ -150,7 +144,10 @@ class FaceIndexingWorker(
                 }
             }
 
-            clusterManager.runPass2ConsolidationAndAnchorSweep()
+            // Run Pass-2 Consolidation & Anchor Sweep ONLY ONCE after the photo loop finishes (100%)
+            if (!isStopped) {
+                faceClusterManager.runPass2ConsolidationAndAnchorSweep()
+            }
 
             val finalTotal = mediaDao.getTotalMediaCount().firstOrNull() ?: processedCount
             val finalVisibleCount = countVisibleProfiles()

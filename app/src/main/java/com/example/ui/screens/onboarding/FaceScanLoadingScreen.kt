@@ -88,7 +88,7 @@ fun FaceScanLoadingScreen(
 
     val processed = uiState.processedCount
     val total = uiState.totalMediaCount
-    val peopleCount = uiState.detectedPeople.size
+    val peopleCount = uiState.profilesCreated
     val rawProgress = if (uiState.isScanFinished) {
         1f
     } else if (total > 0) {
@@ -568,7 +568,7 @@ fun FaceScanLoadingScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     // 3 Tiny Overlapping 23dp Circular Face Avatars Wrapped in 1dp Sunset Gradient Rings
-                    val previewPeople = uiState.detectedPeople.take(3)
+                    val previewPeople = uiState.allDetectedPeople.take(3)
                     val avatarBgColors = listOf(
                         Color(0xFF202024),
                         Color(0xFF2A1E28),

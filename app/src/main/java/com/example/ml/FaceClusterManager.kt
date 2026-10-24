@@ -4,6 +4,7 @@ package com.example.ml
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Rect
+import com.example.data.local.AppDatabase
 import com.example.data.local.dao.MediaDao
 import com.example.data.local.dao.PersonDao
 import com.example.data.local.entity.FaceEntity
@@ -11,6 +12,8 @@ import com.example.data.local.entity.MediaPersonCrossRef
 import com.example.data.local.entity.PersonEntity
 import com.google.mlkit.vision.face.Face
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
@@ -35,12 +38,22 @@ data class SimilarProfileCandidate(
  * - Matches a face to `bestCluster` whenever `maxExemplarSim >= 0.60f || (maxExemplarSim >= 0.57f && centroidSim >= 0.56f)`.
  * - When no existing cluster matches, creates a new `PersonEntity` if `face.qualityScore >= 0.45f && box.width() >= 52`.
  * - Enforces same-photo co-occurrence exclusion.
+ * - Serializes all in-memory + SQLite operations via a single coroutine [Mutex].
  */
 class FaceClusterManager(
     private val context: Context,
     private val personDao: PersonDao,
     private val mediaDao: MediaDao
 ) {
+    constructor(
+        context: Context,
+        database: AppDatabase
+    ) : this(
+        context = context.applicationContext,
+        personDao = database.personDao(),
+        mediaDao = database.mediaDao()
+    )
+
     companion object {
         private const val EXEMPLAR_MATCH_THRESHOLD = 0.60f
         private const val CENTROID_MATCH_THRESHOLD = 0.56f
@@ -58,6 +71,18 @@ class FaceClusterManager(
 
         const val DUPLICATE_MIN_THRESHOLD = 0.52f
         private const val AVATAR_TARGET_SIZE = 200
+
+        @Volatile
+        private var INSTANCE: FaceClusterManager? = null
+
+        fun getInstance(context: Context): FaceClusterManager {
+            return INSTANCE ?: synchronized(this) {
+                INSTANCE ?: FaceClusterManager(
+                    context.applicationContext,
+                    AppDatabase.getInstance(context.applicationContext)
+                ).also { INSTANCE = it }
+            }
+        }
     }
 
     data class PersonCluster(
@@ -72,15 +97,18 @@ class FaceClusterManager(
         val mediaIds: MutableSet<Long> = mutableSetOf()
     )
 
+    private val clusterMutex = Mutex()
     private val clusterCache = mutableListOf<PersonCluster>()
     private var isCacheLoaded = false
 
     suspend fun invalidateCache() = withContext(Dispatchers.IO) {
-        isCacheLoaded = false
-        clusterCache.clear()
+        clusterMutex.withLock {
+            isCacheLoaded = false
+            clusterCache.clear()
+        }
     }
 
-    private suspend fun ensureCacheLoaded(forceReload: Boolean = false) {
+    private suspend fun ensureCacheLoadedLocked(forceReload: Boolean = false) {
         if (isCacheLoaded && !forceReload) return
         clusterCache.clear()
 
@@ -166,29 +194,34 @@ class FaceClusterManager(
         isVideo: Boolean = false
     ): Boolean = withContext(Dispatchers.IO) {
         if (isVideo || detectedFaces.isEmpty()) return@withContext false
-        ensureCacheLoaded()
-
-        val matchedPersonIdsInThisMedia = mutableSetOf<Long>()
-        var anyAssignedToPerson = false
 
         val sortedFaces = detectedFaces.sortedByDescending { it.qualityScore }
-
-        for (face in sortedFaces) {
-            val embedding = embeddingExtractor.extractEmbedding(face.alignedFaceBitmap, face.rawFace)
-            val assignedPersonId = processSingleAlignedFace(
-                mediaId = mediaId,
-                face = face,
-                embedding = embedding,
-                isVideo = false,
-                excludePersonIdsInSameMedia = matchedPersonIdsInThisMedia
-            )
-            if (assignedPersonId != null) {
-                matchedPersonIdsInThisMedia.add(assignedPersonId)
-                anyAssignedToPerson = true
-            }
+        val extractedPairs = sortedFaces.map { face ->
+            face to embeddingExtractor.extractEmbedding(face.alignedFaceBitmap, face.rawFace)
         }
 
-        anyAssignedToPerson
+        clusterMutex.withLock {
+            ensureCacheLoadedLocked()
+
+            val matchedPersonIdsInThisMedia = mutableSetOf<Long>()
+            var anyAssignedToPerson = false
+
+            for ((face, embedding) in extractedPairs) {
+                val assignedPersonId = processSingleAlignedFaceLocked(
+                    mediaId = mediaId,
+                    face = face,
+                    embedding = embedding,
+                    isVideo = false,
+                    excludePersonIdsInSameMedia = matchedPersonIdsInThisMedia
+                )
+                if (assignedPersonId != null) {
+                    matchedPersonIdsInThisMedia.add(assignedPersonId)
+                    anyAssignedToPerson = true
+                }
+            }
+
+            anyAssignedToPerson
+        }
     }
 
     /**
@@ -202,7 +235,26 @@ class FaceClusterManager(
         excludePersonIdsInSameMedia: Set<Long> = emptySet()
     ): Long? = withContext(Dispatchers.IO) {
         if (isVideo) return@withContext null
-        ensureCacheLoaded()
+        clusterMutex.withLock {
+            ensureCacheLoadedLocked()
+            processSingleAlignedFaceLocked(
+                mediaId = mediaId,
+                face = face,
+                embedding = embedding,
+                isVideo = false,
+                excludePersonIdsInSameMedia = excludePersonIdsInSameMedia
+            )
+        }
+    }
+
+    private suspend fun processSingleAlignedFaceLocked(
+        mediaId: Long,
+        face: DetectedAlignedFace,
+        embedding: FloatArray,
+        isVideo: Boolean = false,
+        excludePersonIdsInSameMedia: Set<Long> = emptySet()
+    ): Long? {
+        if (isVideo) return null
 
         val cropPath = saveFaceCrop(face.avatarCropBitmap)
 
@@ -274,7 +326,7 @@ class FaceClusterManager(
                 bestQuality = bestCluster.bestQualityScore
             )
 
-            return@withContext bestCluster.personId
+            return bestCluster.personId
         }
 
         // Case B — Create a new PersonEntity if face.qualityScore >= 0.35f && box.width() >= 36
@@ -328,7 +380,7 @@ class FaceClusterManager(
                 )
             )
 
-            return@withContext newPersonId
+            return newPersonId
         }
 
         // Case C — Unassigned Face awaiting Pass-2 Anchor Sweep
@@ -349,7 +401,7 @@ class FaceClusterManager(
             )
         )
 
-        null
+        return null
     }
 
     suspend fun processFace(
@@ -387,133 +439,135 @@ class FaceClusterManager(
      * Global Graph Consolidation & Anchor k-NN Sweep using calibrated MobileFaceNet thresholds.
      */
     suspend fun runPass2ConsolidationAndAnchorSweep() = withContext(Dispatchers.IO) {
-        ensureCacheLoaded(forceReload = true)
+        clusterMutex.withLock {
+            ensureCacheLoadedLocked(forceReload = true)
 
-        // STEP A — Auto-Merge Over-Split Clusters
-        if (clusterCache.size >= 2) {
-            var mergedInPass = true
-            while (mergedInPass) {
-                mergedInPass = false
-                var bestI = -1
-                var bestJ = -1
-                var bestSim = -1f
+            // STEP A — Auto-Merge Over-Split Clusters
+            if (clusterCache.size >= 2) {
+                var mergedInPass = true
+                while (mergedInPass) {
+                    mergedInPass = false
+                    var bestI = -1
+                    var bestJ = -1
+                    var bestSim = -1f
 
-                for (i in 0 until clusterCache.size) {
-                    val cA = clusterCache[i]
-                    for (j in i + 1 until clusterCache.size) {
-                        val cB = clusterCache[j]
+                    for (i in 0 until clusterCache.size) {
+                        val cA = clusterCache[i]
+                        for (j in i + 1 until clusterCache.size) {
+                            val cB = clusterCache[j]
 
-                        // Never merge two clusters that appear together in the same photo
-                        if (cA.mediaIds.any { cB.mediaIds.contains(it) }) continue
+                            // Never merge two clusters that appear together in the same photo
+                            if (cA.mediaIds.any { cB.mediaIds.contains(it) }) continue
 
-                        // Never auto-merge two clusters explicitly given different names by the user
-                        if (cA.isNamedByUser && cB.isNamedByUser && !cA.name.equals(cB.name, ignoreCase = true)) {
-                            continue
-                        }
+                            // Never auto-merge two clusters explicitly given different names by the user
+                            if (cA.isNamedByUser && cB.isNamedByUser && !cA.name.equals(cB.name, ignoreCase = true)) {
+                                continue
+                            }
 
-                        val sim = computeClusterToClusterSimilarity(cA, cB)
-                        val requiredThreshold = if (cA.faceCount == 1 || cB.faceCount == 1) {
-                            PASS2_MERGE_SINGLETON_THRESHOLD
-                        } else {
-                            PASS2_MERGE_MULTI_THRESHOLD
-                        }
+                            val sim = computeClusterToClusterSimilarity(cA, cB)
+                            val requiredThreshold = if (cA.faceCount == 1 || cB.faceCount == 1) {
+                                PASS2_MERGE_SINGLETON_THRESHOLD
+                            } else {
+                                PASS2_MERGE_MULTI_THRESHOLD
+                            }
 
-                        if (sim >= requiredThreshold && sim > bestSim) {
-                            bestSim = sim
-                            bestI = i
-                            bestJ = j
+                            if (sim >= requiredThreshold && sim > bestSim) {
+                                bestSim = sim
+                                bestI = i
+                                bestJ = j
+                            }
                         }
                     }
-                }
 
-                if (bestI >= 0 && bestJ >= 0) {
-                    val cA = clusterCache[bestI]
-                    val cB = clusterCache[bestJ]
+                    if (bestI >= 0 && bestJ >= 0) {
+                        val cA = clusterCache[bestI]
+                        val cB = clusterCache[bestJ]
 
-                    val keepA = when {
-                        cA.isNamedByUser && !cB.isNamedByUser -> true
-                        cB.isNamedByUser && !cA.isNamedByUser -> false
-                        cA.faceCount != cB.faceCount -> cA.faceCount > cB.faceCount
-                        else -> cA.bestQualityScore >= cB.bestQualityScore
+                        val keepA = when {
+                            cA.isNamedByUser && !cB.isNamedByUser -> true
+                            cB.isNamedByUser && !cA.isNamedByUser -> false
+                            cA.faceCount != cB.faceCount -> cA.faceCount > cB.faceCount
+                            else -> cA.bestQualityScore >= cB.bestQualityScore
+                        }
+
+                        val target = if (keepA) cA else cB
+                        val source = if (keepA) cB else cA
+
+                        mergeClusterIntoTarget(source, target)
+                        clusterCache.remove(source)
+                        mergedInPass = true
                     }
-
-                    val target = if (keepA) cA else cB
-                    val source = if (keepA) cB else cA
-
-                    mergeClusterIntoTarget(source, target)
-                    clusterCache.remove(source)
-                    mergedInPass = true
                 }
             }
-        }
 
-        // STEP B — Sweep Unassigned (personId == null) Faces Into Active Clusters
-        val anchorClusters = clusterCache.toList()
-        if (anchorClusters.isNotEmpty()) {
-            val unassignedFaces = personDao.getUnassignedFacesSync()
-            for (face in unassignedFaces) {
-                val faceEmb = blobToFloatArray(face.embeddingBlob)
-                if (faceEmb.isEmpty()) continue
+            // STEP B — Sweep Unassigned (personId == null) Faces Into Active Clusters
+            val anchorClusters = clusterCache.toList()
+            if (anchorClusters.isNotEmpty()) {
+                val unassignedFaces = personDao.getUnassignedFacesSync()
+                for (face in unassignedFaces) {
+                    val faceEmb = blobToFloatArray(face.embeddingBlob)
+                    if (faceEmb.isEmpty()) continue
 
-                var bestAnchor: PersonCluster? = null
-                var bestScore = -1f
+                    var bestAnchor: PersonCluster? = null
+                    var bestScore = -1f
 
-                for (anchor in anchorClusters) {
-                    if (anchor.mediaIds.contains(face.mediaId)) continue
+                    for (anchor in anchorClusters) {
+                        if (anchor.mediaIds.contains(face.mediaId)) continue
 
-                    val score = computePersonMatchScore(faceEmb, anchor)
-                    val threshold = when {
-                        anchor.isNamedByUser -> PASS2_NAMED_ANCHOR_SWEEP_THRESHOLD
-                        anchor.faceCount >= 2 -> PASS2_MULTI_ANCHOR_SWEEP_THRESHOLD
-                        else -> PASS2_MERGE_SINGLETON_THRESHOLD
+                        val score = computePersonMatchScore(faceEmb, anchor)
+                        val threshold = when {
+                            anchor.isNamedByUser -> PASS2_NAMED_ANCHOR_SWEEP_THRESHOLD
+                            anchor.faceCount >= 2 -> PASS2_MULTI_ANCHOR_SWEEP_THRESHOLD
+                            else -> PASS2_MERGE_SINGLETON_THRESHOLD
+                        }
+
+                        if (score >= threshold && score > bestScore) {
+                            bestScore = score
+                            bestAnchor = anchor
+                        }
                     }
 
-                    if (score >= threshold && score > bestScore) {
-                        bestScore = score
-                        bestAnchor = anchor
+                    if (bestAnchor != null) {
+                        val isNewExemplar = face.qualityScore >= EXEMPLAR_QUALITY_GATE &&
+                            bestAnchor.exemplars.size < MAX_EXEMPLARS_PER_PERSON
+
+                        personDao.assignFaceToPerson(
+                            faceId = face.faceId,
+                            personId = bestAnchor.personId,
+                            isAnchor = isNewExemplar
+                        )
+                        mediaDao.insertMediaPersonCrossRef(
+                            MediaPersonCrossRef(face.mediaId, bestAnchor.personId)
+                        )
+                        mediaDao.markMediaAsProcessed(face.mediaId, hasFaces = true)
+
+                        if (isNewExemplar) {
+                            bestAnchor.exemplars.add(faceEmb)
+                        }
+                        val oldWeight = bestAnchor.faceCount.coerceAtLeast(1).toFloat()
+                        bestAnchor.centroid = updateCentroid(bestAnchor.centroid, oldWeight, faceEmb, 0.70f)
+                        bestAnchor.mediaIds.add(face.mediaId)
+
+                        if (face.qualityScore > bestAnchor.bestQualityScore && File(face.cropPath).exists()) {
+                            bestAnchor.bestQualityScore = face.qualityScore
+                            bestAnchor.avatarCropPath = face.cropPath
+                        }
+
+                        val distinctMedia = personDao.countDistinctMediaForPerson(bestAnchor.personId).coerceAtLeast(1)
+                        bestAnchor.faceCount = distinctMedia
+                        personDao.updatePersonStats(
+                            personId = bestAnchor.personId,
+                            centroidBlob = floatArrayToBlob(bestAnchor.centroid),
+                            faceCount = distinctMedia,
+                            avatarCropPath = bestAnchor.avatarCropPath,
+                            bestQuality = bestAnchor.bestQualityScore
+                        )
                     }
-                }
-
-                if (bestAnchor != null) {
-                    val isNewExemplar = face.qualityScore >= EXEMPLAR_QUALITY_GATE &&
-                        bestAnchor.exemplars.size < MAX_EXEMPLARS_PER_PERSON
-
-                    personDao.assignFaceToPerson(
-                        faceId = face.faceId,
-                        personId = bestAnchor.personId,
-                        isAnchor = isNewExemplar
-                    )
-                    mediaDao.insertMediaPersonCrossRef(
-                        MediaPersonCrossRef(face.mediaId, bestAnchor.personId)
-                    )
-                    mediaDao.markMediaAsProcessed(face.mediaId, hasFaces = true)
-
-                    if (isNewExemplar) {
-                        bestAnchor.exemplars.add(faceEmb)
-                    }
-                    val oldWeight = bestAnchor.faceCount.coerceAtLeast(1).toFloat()
-                    bestAnchor.centroid = updateCentroid(bestAnchor.centroid, oldWeight, faceEmb, 0.70f)
-                    bestAnchor.mediaIds.add(face.mediaId)
-
-                    if (face.qualityScore > bestAnchor.bestQualityScore && File(face.cropPath).exists()) {
-                        bestAnchor.bestQualityScore = face.qualityScore
-                        bestAnchor.avatarCropPath = face.cropPath
-                    }
-
-                    val distinctMedia = personDao.countDistinctMediaForPerson(bestAnchor.personId).coerceAtLeast(1)
-                    bestAnchor.faceCount = distinctMedia
-                    personDao.updatePersonStats(
-                        personId = bestAnchor.personId,
-                        centroidBlob = floatArrayToBlob(bestAnchor.centroid),
-                        faceCount = distinctMedia,
-                        avatarCropPath = bestAnchor.avatarCropPath,
-                        bestQuality = bestAnchor.bestQualityScore
-                    )
                 }
             }
-        }
 
-        mediaDao.syncAllMediaHasFaces()
+            mediaDao.syncAllMediaHasFaces()
+        }
     }
 
     suspend fun consolidateConvergedClusters() {
@@ -628,72 +682,74 @@ class FaceClusterManager(
         targetPersonId: Long,
         limit: Int = 8
     ): List<SimilarProfileCandidate> = withContext(Dispatchers.IO) {
-        ensureCacheLoaded()
+        clusterMutex.withLock {
+            ensureCacheLoadedLocked()
 
-        val allPeople = personDao.getAllPeopleSync()
-        val visibleOthers = allPeople.filter { it.personId != targetPersonId && !it.isHiddenToOther }
-        if (visibleOthers.isEmpty()) return@withContext emptyList()
+            val allPeople = personDao.getAllPeopleSync()
+            val visibleOthers = allPeople.filter { it.personId != targetPersonId && !it.isHiddenToOther }
+            if (visibleOthers.isEmpty()) return@withLock emptyList()
 
-        val cachedById = clusterCache.associateBy { it.personId }
-        val targetCluster = cachedById[targetPersonId] ?: run {
-            val targetEntity = personDao.getPersonByIdSync(targetPersonId) ?: return@withContext emptyList()
-            val centroid = blobToFloatArray(targetEntity.centroidEmbeddingBlob)
-            val anchorFaces = personDao.getAnchorFacesForPersonSync(targetPersonId)
-            val exemplars = anchorFaces.mapNotNull { face ->
-                blobToFloatArray(face.embeddingBlob).takeIf { it.isNotEmpty() }
-            }.toMutableList()
-            if (exemplars.isEmpty() && centroid.isNotEmpty()) {
-                exemplars.add(centroid)
+            val cachedById = clusterCache.associateBy { it.personId }
+            val targetCluster = cachedById[targetPersonId] ?: run {
+                val targetEntity = personDao.getPersonByIdSync(targetPersonId) ?: return@withLock emptyList()
+                val centroid = blobToFloatArray(targetEntity.centroidEmbeddingBlob)
+                val anchorFaces = personDao.getAnchorFacesForPersonSync(targetPersonId)
+                val exemplars = anchorFaces.mapNotNull { face ->
+                    blobToFloatArray(face.embeddingBlob).takeIf { it.isNotEmpty() }
+                }.toMutableList()
+                if (exemplars.isEmpty() && centroid.isNotEmpty()) {
+                    exemplars.add(centroid)
+                }
+                PersonCluster(
+                    personId = targetEntity.personId,
+                    name = targetEntity.name,
+                    isNamedByUser = targetEntity.isNamedByUser,
+                    centroid = centroid,
+                    exemplars = exemplars,
+                    faceCount = targetEntity.faceCount.coerceAtLeast(1),
+                    bestQualityScore = targetEntity.bestQualityScore,
+                    avatarCropPath = targetEntity.avatarCropPath
+                )
             }
-            PersonCluster(
-                personId = targetEntity.personId,
-                name = targetEntity.name,
-                isNamedByUser = targetEntity.isNamedByUser,
-                centroid = centroid,
-                exemplars = exemplars,
-                faceCount = targetEntity.faceCount.coerceAtLeast(1),
-                bestQualityScore = targetEntity.bestQualityScore,
-                avatarCropPath = targetEntity.avatarCropPath
-            )
-        }
 
-        val scoredCandidates = visibleOthers.map { otherPerson ->
-            val otherCluster = cachedById[otherPerson.personId]
-            val score = if (otherCluster != null) {
-                val matchScore = computePersonMatchScore(targetCluster.centroid, otherCluster)
-                var maxExSim = matchScore
-                for (ex1 in targetCluster.exemplars) {
-                    for (ex2 in otherCluster.exemplars) {
-                        if (ex1.size == ex2.size && ex1.isNotEmpty()) {
-                            val sim = dotProduct(ex1, ex2)
-                            if (sim > maxExSim) maxExSim = sim
+            val scoredCandidates = visibleOthers.map { otherPerson ->
+                val otherCluster = cachedById[otherPerson.personId]
+                val score = if (otherCluster != null) {
+                    val matchScore = computePersonMatchScore(targetCluster.centroid, otherCluster)
+                    var maxExSim = matchScore
+                    for (ex1 in targetCluster.exemplars) {
+                        for (ex2 in otherCluster.exemplars) {
+                            if (ex1.size == ex2.size && ex1.isNotEmpty()) {
+                                val sim = dotProduct(ex1, ex2)
+                                if (sim > maxExSim) maxExSim = sim
+                            }
                         }
                     }
-                }
-                max(matchScore, maxExSim)
-            } else {
-                val otherCentroid = blobToFloatArray(otherPerson.centroidEmbeddingBlob)
-                if (targetCluster.centroid.isNotEmpty() && targetCluster.centroid.size == otherCentroid.size) {
-                    dotProduct(targetCluster.centroid, otherCentroid)
+                    max(matchScore, maxExSim)
                 } else {
-                    0f
+                    val otherCentroid = blobToFloatArray(otherPerson.centroidEmbeddingBlob)
+                    if (targetCluster.centroid.isNotEmpty() && targetCluster.centroid.size == otherCentroid.size) {
+                        dotProduct(targetCluster.centroid, otherCentroid)
+                    } else {
+                        0f
+                    }
                 }
-            }
 
-            SimilarProfileCandidate(
-                person = otherPerson,
-                similarityScore = score.coerceIn(-1f, 1f),
-                photoCount = otherPerson.faceCount.coerceAtLeast(1)
-            )
-        }.sortedByDescending { it.similarityScore }
+                SimilarProfileCandidate(
+                    person = otherPerson,
+                    similarityScore = score.coerceIn(-1f, 1f),
+                    photoCount = otherPerson.faceCount.coerceAtLeast(1)
+                )
+            }.sortedByDescending { it.similarityScore }
 
-        val namedCandidates = scoredCandidates.filter { it.person.isNamedByUser }
-        val topBySimilarity = scoredCandidates.take(limit)
+            val namedCandidates = scoredCandidates.filter { it.person.isNamedByUser }
+            val topBySimilarity = scoredCandidates.take(limit)
 
-        (topBySimilarity + namedCandidates)
-            .distinctBy { it.person.personId }
-            .sortedByDescending { it.similarityScore }
-            .take(max(limit, namedCandidates.size))
+            (topBySimilarity + namedCandidates)
+                .distinctBy { it.person.personId }
+                .sortedByDescending { it.similarityScore }
+                .take(max(limit, namedCandidates.size))
+        }
     }
 
     fun findPossibleDuplicatePair(

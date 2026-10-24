@@ -47,6 +47,7 @@ data class OnboardingUiState(
     val isScanFinished: Boolean = false,
     val processedCount: Int = 0,
     val totalMediaCount: Int = 0,
+    val profilesCreated: Int = 0,
     val detectedPeople: List<PersonPreviewCard> = emptyList(),
     val allDetectedPeople: List<PersonPreviewCard> = emptyList(),
     val topPeopleCount: Int = 0,
@@ -99,6 +100,8 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private val galleryRepository = GalleryRepository(application)
+
+    private var maxProfilesSeen = 0
 
     private val _editedNames = MutableStateFlow<Map<Long, String>>(emptyMap())
     private val _decisionMap = MutableStateFlow<Map<Long, ProfileDecisionState>>(emptyMap())
@@ -222,6 +225,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         val workState = metrics.workInfo?.state
         val workerProcessed = metrics.workInfo?.progress?.getInt(FaceIndexingWorker.PROGRESS_PROCESSED, -1) ?: -1
         val workerTotal = metrics.workInfo?.progress?.getInt(FaceIndexingWorker.PROGRESS_TOTAL, -1) ?: -1
+        val workerProfilesCount = metrics.workInfo?.progress?.getInt(FaceIndexingWorker.PROGRESS_PROFILES_COUNT, -1) ?: -1
 
         val effectiveTotal = if (metrics.total > 0) metrics.total else if (workerTotal > 0) workerTotal else 0
         val effectiveProcessed = maxOf(metrics.processed, if (workerProcessed >= 0) workerProcessed else 0)
@@ -230,7 +234,8 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         val isWorkerActive = workState == WorkInfo.State.RUNNING || workState == WorkInfo.State.ENQUEUED
 
         val isScanComplete = metrics.isMediaStoreReady && (
-            (effectiveTotal > 0 && metrics.unindexed == 0) ||
+            (effectiveTotal > 0 && metrics.unindexed == 0 && !isWorkerActive) ||
+                (effectiveTotal > 0 && metrics.unindexed == 0 && effectiveProcessed >= effectiveTotal) ||
                 (effectiveTotal == 0 && !isWorkerActive)
             )
 
@@ -256,16 +261,13 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
             SetupFilterMode.ALL_DETECTED
         }
 
-        // Compute TOP_PEOPLE photo threshold: >= 3 by default, lowered to >= 2 if fewer than 10 profiles have photoCount >= 3
-        val countWith3Plus = allCards.count { it.photoCount >= 3 && !it.person.isHiddenToOther }
-        val topMinPhotoThreshold = if (countWith3Plus < 10) 2 else 3
-
+        // Split between Top People (photoCount >= 2 || isNamedByUser) and All Detected (photoCount >= 1) in ViewModel
         val topPeopleCards = allCards.filter { card ->
             val p = card.person
             val hasExplicitDecision = config.explicitDecisions[p.personId] != null
             val isVisibleOrSessionTouched = !p.isHiddenToOther || hasExplicitDecision
             isVisibleOrSessionTouched && (
-                card.photoCount >= topMinPhotoThreshold ||
+                card.photoCount >= 2 ||
                     p.isNamedByUser ||
                     hasExplicitDecision
                 )
@@ -278,6 +280,24 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         val displayedCards = when (effectiveFilterMode) {
             SetupFilterMode.TOP_PEOPLE -> if (topPeopleCards.isNotEmpty()) topPeopleCards else allDetectedCards
             SetupFilterMode.ALL_DETECTED -> allDetectedCards
+        }
+
+        // Monotonic counter guard during active scanning so profilesCreated never flickers downward
+        val rawVisibleDetectedCount = maxOf(
+            allDetectedCards.count { !it.person.isHiddenToOther },
+            if (workerProfilesCount >= 0) workerProfilesCount else 0
+        )
+        if (!isScanComplete) {
+            if (rawVisibleDetectedCount > maxProfilesSeen) {
+                maxProfilesSeen = rawVisibleDetectedCount
+            }
+        } else if (rawVisibleDetectedCount > 0 && maxProfilesSeen == 0) {
+            maxProfilesSeen = rawVisibleDetectedCount
+        }
+        val monotonicProfilesCreated = if (!isScanComplete) {
+            maxOf(maxProfilesSeen, rawVisibleDetectedCount)
+        } else {
+            rawVisibleDetectedCount.coerceAtLeast(allDetectedCards.size)
         }
 
         val mergedNames = buildMap {
@@ -296,6 +316,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
             isScanFinished = isScanComplete,
             processedCount = if (isScanComplete) effectiveTotal else effectiveProcessed,
             totalMediaCount = effectiveTotal,
+            profilesCreated = monotonicProfilesCreated,
             detectedPeople = displayedCards,
             allDetectedPeople = allDetectedCards,
             topPeopleCount = topPeopleCards.size,
@@ -543,6 +564,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun triggerFullRescan() {
+        maxProfilesSeen = 0
         _hasStartedScan.value = true
         _isMediaStoreScanFinished.value = false
         _editedNames.value = emptyMap()
