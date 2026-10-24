@@ -489,69 +489,41 @@ private fun StitchWelcomeOnboardingContent(
                     .offset(y = bottomSlideY)
                     .alpha(textAndCtaAlpha)
             ) {
+                // Pill Button (52.dp Solid Pure White background, Pure Black 15.sp Bold text)
+                val interactionSource = remember { MutableInteractionSource() }
                 Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    // Ambient sunset glow beneath CTA button
-                    Canvas(
-                        modifier = Modifier
-                            .fillMaxWidth(0.92f)
-                            .height(64.dp)
-                            .offset(y = 6.dp)
-                    ) {
-                        drawRoundRect(
-                            brush = Brush.horizontalGradient(
-                                colors = listOf(
-                                    Color(0xFFF58529).copy(alpha = 0.28f),
-                                    Color(0xFFDD2A7B).copy(alpha = 0.32f),
-                                    Color(0xFF8134AF).copy(alpha = 0.28f)
-                                )
-                            ),
-                            cornerRadius = CornerRadius(size.height / 2f, size.height / 2f)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(Color.White)
+                        .clickable(
+                            interactionSource = interactionSource,
+                            indication = null,
+                            onClick = onContinueClick
                         )
-                    }
-
-                    // Pill Button (52.dp Solid Pure White background, Pure Black 15.sp Bold text)
-                    val interactionSource = remember { MutableInteractionSource() }
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp)
-                            .shadow(
-                                elevation = 16.dp,
-                                shape = RoundedCornerShape(50)
-                            )
-                            .clip(RoundedCornerShape(50))
-                            .background(Color.White)
-                            .clickable(
-                                interactionSource = interactionSource,
-                                indication = null,
-                                onClick = onContinueClick
-                            )
-                            .testTag("grant_permission_button"),
-                        contentAlignment = Alignment.Center
+                        .testTag("grant_permission_button"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            Text(
-                                text = "Continue with Gallery",
-                                fontFamily = PlusJakartaSansFont,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp,
-                                color = Color.Black,
-                                letterSpacing = (-0.1).sp
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                contentDescription = "Continue",
-                                tint = Color.Black,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
+                        Text(
+                            text = "Continue with Gallery",
+                            fontFamily = PlusJakartaSansFont,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = Color.Black,
+                            letterSpacing = (-0.1).sp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "Continue",
+                            tint = Color.Black,
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
                 }
 
