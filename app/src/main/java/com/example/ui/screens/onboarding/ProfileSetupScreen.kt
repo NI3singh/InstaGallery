@@ -2,11 +2,18 @@
 package com.example.ui.screens.onboarding
 
 import android.widget.Toast
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -37,6 +44,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -44,7 +52,6 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -64,6 +71,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -73,6 +81,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -85,6 +94,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
@@ -99,21 +109,22 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
-import com.example.data.local.entity.PersonEntity
 import com.example.ml.SimilarProfileCandidate
-import com.example.ui.theme.IgBlack
+import com.example.ui.components.LivingAuroraBackground
+import com.example.ui.components.RotatingStoryRingAvatar
+import com.example.ui.components.bounceClick
 import com.example.ui.theme.IgBlue
 import com.example.ui.theme.IgElevated
-import com.example.ui.theme.IgStoryGradient
 import com.example.ui.theme.IgTextPrimary
 import com.example.ui.theme.IgTextSecondary
 import com.example.ui.theme.PlusJakartaSansFont
 import java.io.File
-import kotlin.math.absoluteValue
+import kotlin.math.abs
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private val CardSurfaceColor = Color(0xFF121214)
+private val CardSurfaceTopColor = Color(0xFF1A1A20)
+private val CardSurfaceBottomColor = Color(0xFF101014)
 private val CardBorderColor = Color(0xFF262629)
 private val InputFillColor = Color(0xFF1C1C1F)
 private val SquircleChipUnselectedBg = Color(0xFF1E1E22)
@@ -141,6 +152,14 @@ fun ProfileSetupScreen(
         pageCount = { profiles.size.coerceAtLeast(1) }
     )
 
+    val flingBehavior = PagerDefaults.flingBehavior(
+        state = pagerState,
+        snapAnimationSpec = spring(
+            dampingRatio = 0.78f,
+            stiffness = 300f
+        )
+    )
+
     val safeCurrentPage = if (profiles.isEmpty()) {
         0
     } else {
@@ -165,16 +184,24 @@ fun ProfileSetupScreen(
         viewModel.clearFeedbackMessage()
     }
 
-    // Dynamic ambient radial aura color based on active card's ProfileDecisionState
-    val ambientAuraColor by animateColorAsState(
-        targetValue = when (currentDecision) {
-            ProfileDecisionState.KEPT -> Color(0xFF0095F6).copy(alpha = 0.16f)
-            ProfileDecisionState.MOVED_TO_OTHER -> DangerRed.copy(alpha = 0.12f)
-            ProfileDecisionState.UNDECIDED -> Color(0xFFDD2A7B).copy(alpha = 0.14f)
-        },
-        animationSpec = tween(durationMillis = 420),
-        label = "ambient_aura_color"
-    )
+    // 2.1 State-Reactive LivingAuroraBackground colors
+    val (orbPrimary, orbSecondary, orbTertiary) = when (currentDecision) {
+        ProfileDecisionState.KEPT -> Triple(
+            Color(0xFF0095F6),
+            Color(0xFF00D2FF),
+            Color(0xFF1D4ED8)
+        )
+        ProfileDecisionState.MOVED_TO_OTHER -> Triple(
+            Color(0xFFFF3040),
+            Color(0xFF881337),
+            Color(0xFF27272A)
+        )
+        ProfileDecisionState.UNDECIDED -> Triple(
+            Color(0xFF8134AF),
+            Color(0xFFDD2A7B),
+            Color(0xFFF58529)
+        )
+    }
 
     Box(
         modifier = modifier
@@ -182,26 +209,13 @@ fun ProfileSetupScreen(
             .background(Color(0xFF000000))
             .testTag("profile_setup_screen")
     ) {
-        // 1.1 Ambient Radial Background Aura
-        Canvas(
-            modifier = Modifier
-                .fillMaxSize()
-        ) {
-            val radius = size.minDimension * 0.72f
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        ambientAuraColor,
-                        ambientAuraColor.copy(alpha = ambientAuraColor.alpha * 0.45f),
-                        Color.Transparent
-                    ),
-                    center = Offset(size.width * 0.5f, size.height * 0.44f),
-                    radius = radius
-                ),
-                radius = radius,
-                center = Offset(size.width * 0.5f, size.height * 0.44f)
-            )
-        }
+        // 2.1 Living Aurora Background
+        LivingAuroraBackground(
+            primaryOrbColor = orbPrimary,
+            secondaryOrbColor = orbSecondary,
+            tertiaryOrbColor = orbTertiary,
+            modifier = Modifier.fillMaxSize()
+        )
 
         Column(
             modifier = Modifier
@@ -242,7 +256,7 @@ fun ProfileSetupScreen(
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(Color(0xFF1C1C1F))
                                 .border(1.dp, Color(0xFF2C2C30), RoundedCornerShape(10.dp))
-                                .clickable {
+                                .bounceClick {
                                     focusManager.clearFocus()
                                     gridMergeInitialAnchorId = currentCard?.person?.personId
                                     showGridMergeSheet = true
@@ -304,7 +318,7 @@ fun ProfileSetupScreen(
                 )
             }
 
-            // 2. Center Interactive Horizontal Carousel
+            // 2. Center Interactive Horizontal Carousel with 3D Perspective Physics
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -323,6 +337,7 @@ fun ProfileSetupScreen(
                 } else {
                     HorizontalPager(
                         state = pagerState,
+                        flingBehavior = flingBehavior,
                         contentPadding = PaddingValues(horizontal = 26.dp),
                         pageSpacing = 12.dp,
                         verticalAlignment = Alignment.CenterVertically,
@@ -344,14 +359,14 @@ fun ProfileSetupScreen(
 
                         val pageOffset = (
                             (pagerState.currentPage - page) + pagerState.currentPageOffsetFraction
-                            ).absoluteValue.coerceIn(0f, 1f)
-                        val cardScale = lerp(0.91f, 1.0f, 1f - pageOffset)
-                        val cardAlpha = lerp(0.45f, 1.0f, 1f - pageOffset)
+                            ).coerceIn(-1f, 1f)
+                        val absOffset = abs(pageOffset)
 
                         CarouselFaceCard(
                             card = card,
                             nameInput = nameInput,
                             decision = decision,
+                            pageOffset = pageOffset,
                             quickNameChips = uiState.quickNameChips,
                             similarCandidates = cardCandidates,
                             onNameChange = { updated ->
@@ -416,9 +431,14 @@ fun ProfileSetupScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .graphicsLayer {
-                                    scaleX = cardScale
-                                    scaleY = cardScale
-                                    alpha = cardAlpha
+                                    cameraDistance = 16f * density
+                                    rotationY = -pageOffset * 14f
+                                    rotationZ = -pageOffset * 1.8f
+                                    val scale = lerp(1f, 0.90f, absOffset)
+                                    scaleX = scale
+                                    scaleY = scale
+                                    alpha = lerp(1f, 0.52f, absOffset)
+                                    translationY = absOffset * 12.dp.toPx()
                                 }
                         )
                     }
@@ -467,7 +487,7 @@ fun ProfileSetupScreen(
                     )
                 }
 
-                // Full-width 52.dp Solid Pure White Pill Button with Pure Black Bold Text
+                // Full-width 52.dp Solid Pure White Pill Button with Pure Black Bold Text + bounceClick
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -478,7 +498,10 @@ fun ProfileSetupScreen(
                         )
                         .clip(RoundedCornerShape(50))
                         .background(Color.White)
-                        .clickable(enabled = !uiState.isSavingSetup) {
+                        .bounceClick(
+                            enabled = !uiState.isSavingSetup,
+                            hapticType = HapticFeedbackType.LongPress
+                        ) {
                             focusManager.clearFocus()
                             viewModel.finalizeOnboarding(onSetupCompleted)
                         }
@@ -547,7 +570,7 @@ private fun SegmentedSetupFilterBar(
                 .height(32.dp)
                 .clip(RoundedCornerShape(9.dp))
                 .background(if (isTopActive) Color(0xFF28282E) else Color.Transparent)
-                .clickable { onSelectMode(SetupFilterMode.TOP_PEOPLE) }
+                .bounceClick { onSelectMode(SetupFilterMode.TOP_PEOPLE) }
                 .testTag("filter_top_people_tab"),
             contentAlignment = Alignment.Center
         ) {
@@ -566,7 +589,7 @@ private fun SegmentedSetupFilterBar(
                 .height(32.dp)
                 .clip(RoundedCornerShape(9.dp))
                 .background(if (isAllActive) Color(0xFF28282E) else Color.Transparent)
-                .clickable { onSelectMode(SetupFilterMode.ALL_DETECTED) }
+                .bounceClick { onSelectMode(SetupFilterMode.ALL_DETECTED) }
                 .testTag("filter_all_detected_tab"),
             contentAlignment = Alignment.Center
         ) {
@@ -586,6 +609,7 @@ private fun CarouselFaceCard(
     card: PersonPreviewCard,
     nameInput: String,
     decision: ProfileDecisionState,
+    pageOffset: Float,
     quickNameChips: List<String>,
     similarCandidates: List<SimilarProfileCandidate>,
     onNameChange: (String) -> Unit,
@@ -602,16 +626,51 @@ private fun CarouselFaceCard(
     val photoCount = card.photoCount.coerceAtLeast(card.person.faceCount)
     val displayHandle = nameInput.trim().removePrefix("@").trim().ifBlank { card.person.name }
 
-    val cardBorderColor by animateColorAsState(
-        targetValue = when (decision) {
-            ProfileDecisionState.KEPT -> IgBlue
-            ProfileDecisionState.MOVED_TO_OTHER -> DangerRed.copy(alpha = 0.6f)
-            ProfileDecisionState.UNDECIDED -> CardBorderColor
-        },
-        animationSpec = tween(durationMillis = 250),
-        label = "card_border_color"
+    // 2.4 Confirmation Shimmer Sweep (Animatable 0f..1f over 450ms)
+    var shimmerTriggerCount by remember(card.person.personId) { mutableIntStateOf(0) }
+    val shimmerProgress = remember(card.person.personId) { Animatable(0f) }
+
+    LaunchedEffect(shimmerTriggerCount) {
+        if (shimmerTriggerCount > 0) {
+            shimmerProgress.snapTo(0f)
+            shimmerProgress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 450, easing = FastOutSlowInEasing)
+            )
+            shimmerProgress.snapTo(0f)
+        }
+    }
+
+    // 2.4 Dynamic Specular Rim-Light Border Brush shifting with pageOffset
+    val rimColors = when (decision) {
+        ProfileDecisionState.KEPT -> listOf(
+            Color(0xFF0095F6),
+            Color(0xFF60A5FA).copy(alpha = 0.7f),
+            Color(0xFF0095F6).copy(alpha = 0.25f)
+        )
+        ProfileDecisionState.MOVED_TO_OTHER -> listOf(
+            Color(0xFFFF3040).copy(alpha = 0.8f),
+            Color(0xFF3F1D24),
+            Color(0xFF1F1F23)
+        )
+        ProfileDecisionState.UNDECIDED -> listOf(
+            Color.White.copy(alpha = 0.34f),
+            Color.White.copy(alpha = 0.10f),
+            Color(0xFF222226)
+        )
+    }
+
+    val specularRimBrush = Brush.linearGradient(
+        colors = rimColors,
+        start = Offset(x = (0.5f - pageOffset * 0.45f) * 600f, y = 0f),
+        end = Offset(x = (0.5f + pageOffset * 0.45f) * 600f + 420f, y = 900f)
     )
-    val cardBorderWidth = if (decision == ProfileDecisionState.UNDECIDED) 1.dp else 1.5.dp
+
+    val cardSurfaceGradient = remember {
+        Brush.verticalGradient(
+            colors = listOf(CardSurfaceTopColor, CardSurfaceBottomColor)
+        )
+    }
 
     val inputBorderColor by animateColorAsState(
         targetValue = when {
@@ -628,18 +687,37 @@ private fun CarouselFaceCard(
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(24.dp))
-            .background(CardSurfaceColor)
-            .border(cardBorderWidth, cardBorderColor, RoundedCornerShape(24.dp)),
+            .background(cardSurfaceGradient)
+            .border(1.5.dp, specularRimBrush, RoundedCornerShape(24.dp))
+            .drawWithContent {
+                drawContent()
+                val progress = shimmerProgress.value
+                if (progress > 0f && progress < 1f) {
+                    val diagWidth = size.width * 0.55f
+                    val centerX = lerp(-diagWidth, size.width + diagWidth, progress)
+                    drawRect(
+                        brush = Brush.linearGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                Color.White.copy(alpha = 0.14f),
+                                Color.Transparent
+                            ),
+                            start = Offset(centerX - diagWidth * 0.6f, 0f),
+                            end = Offset(centerX + diagWidth * 0.6f, size.height)
+                        )
+                    )
+                }
+            },
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Top Section: 118.dp 3-Photo Context Strip + Overlapping 92.dp Story-Ring Face Avatar
+        // Top Section: 118.dp 3-Photo Context Strip + Overlapping 92.dp Rotating Story-Ring Face Avatar
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(164.dp),
             contentAlignment = Alignment.TopCenter
         ) {
-            // 118.dp 3-Column Photo Strip
+            // 118.dp 3-Column Photo Strip with internal Multi-Plane Parallax
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -650,6 +728,11 @@ private fun CarouselFaceCard(
                 Row(
                     modifier = Modifier
                         .fillMaxSize()
+                        .graphicsLayer {
+                            translationX = pageOffset * 24.dp.toPx()
+                            scaleX = 1.12f
+                            scaleY = 1.05f
+                        }
                         .alpha(bannerAlpha),
                     horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
@@ -687,7 +770,7 @@ private fun CarouselFaceCard(
                     }
                 }
 
-                // Bottom vignette gradient into #121214 card surface
+                // Bottom vignette gradient into top card surface color
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -695,7 +778,7 @@ private fun CarouselFaceCard(
                             Brush.verticalGradient(
                                 0.0f to Color.Black.copy(alpha = 0.15f),
                                 0.58f to Color.Transparent,
-                                1.0f to CardSurfaceColor
+                                1.0f to CardSurfaceTopColor
                             )
                         )
                 )
@@ -734,7 +817,7 @@ private fun CarouselFaceCard(
                     }
                 }
 
-                // Top-Right Translucent Pill: "$photoCount Photos"
+                // 2.5 Top-Right Translucent Pill with Odometer AnimatedContent: "$photoCount Photos"
                 Row(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
@@ -750,65 +833,64 @@ private fun CarouselFaceCard(
                         tint = Color(0xFFF58529),
                         modifier = Modifier.size(12.dp)
                     )
-                    Text(
-                        text = "$photoCount Photos",
-                        fontFamily = PlusJakartaSansFont,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White
-                    )
+                    AnimatedContent(
+                        targetState = photoCount,
+                        transitionSpec = {
+                            (slideInVertically { it } + fadeIn(tween(220))) togetherWith
+                                (slideOutVertically { -it } + fadeOut(tween(180)))
+                        },
+                        label = "odometer_photo_count"
+                    ) { targetCount ->
+                        Text(
+                            text = "$targetCount Photos",
+                            fontFamily = PlusJakartaSansFont,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+                    }
                 }
             }
 
-            // Overlapping 92.dp Story-Ring Face Avatar centered over bottom edge of 118.dp banner
-            Box(
+            // 2.3 Overlapping 92.dp RotatingStoryRingAvatar with 14.dp shadow & counter-parallax
+            RotatingStoryRingAvatar(
+                avatarSize = 92.dp,
+                ringWidth = 3.dp,
+                innerCutoutWidth = 3.dp,
+                innerCutoutColor = CardSurfaceTopColor,
+                isMuted = decision == ProfileDecisionState.MOVED_TO_OTHER,
                 modifier = Modifier
                     .offset(y = 72.dp)
-                    .size(92.dp)
-                    .clip(CircleShape)
-                    .background(
-                        when (decision) {
-                            ProfileDecisionState.MOVED_TO_OTHER -> SolidColor(Color(0xFF452328))
-                            else -> IgStoryGradient
-                        }
-                    )
-                    .padding(3.dp),
-                contentAlignment = Alignment.Center
+                    .graphicsLayer {
+                        translationX = -pageOffset * 10.dp.toPx()
+                    }
+                    .shadow(14.dp, CircleShape)
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .clip(CircleShape)
-                        .background(CardSurfaceColor)
-                        .padding(3.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    val cropPath = card.person.avatarCropPath
-                    if (cropPath.isNotBlank() && File(cropPath).exists()) {
-                        AsyncImage(
-                            model = File(cropPath),
-                            contentDescription = displayHandle,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .clip(CircleShape)
-                                .alpha(bannerAlpha)
+                val cropPath = card.person.avatarCropPath
+                if (cropPath.isNotBlank() && File(cropPath).exists()) {
+                    AsyncImage(
+                        model = File(cropPath),
+                        contentDescription = displayHandle,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(CircleShape)
+                            .alpha(bannerAlpha)
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(CircleShape)
+                            .background(IgElevated),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Person,
+                            contentDescription = null,
+                            tint = IgTextSecondary,
+                            modifier = Modifier.size(38.dp)
                         )
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .clip(CircleShape)
-                                .background(IgElevated),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Person,
-                                contentDescription = null,
-                                tint = IgTextSecondary,
-                                modifier = Modifier.size(38.dp)
-                            )
-                        }
                     }
                 }
             }
@@ -852,6 +934,7 @@ private fun CarouselFaceCard(
                         onDone = {
                             focusManager.clearFocus()
                             if (nameInput.trim().isNotBlank()) {
+                                shimmerTriggerCount++
                                 onKeepProfile()
                             }
                         }
@@ -887,7 +970,7 @@ private fun CarouselFaceCard(
                             .size(24.dp)
                             .clip(CircleShape)
                             .background(Color(0xFF2A2A2E))
-                            .clickable { onNameChange("") },
+                            .bounceClick { onNameChange("") },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -900,7 +983,7 @@ private fun CarouselFaceCard(
                 }
             }
 
-            // d) Native Instagram Squircle Quick-Chips (LazyRow, 10.dp radius, 32.dp height, zero border)
+            // d) Native Instagram Squircle Quick-Chips with bounceClick
             LazyRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -915,7 +998,10 @@ private fun CarouselFaceCard(
                             .height(32.dp)
                             .clip(RoundedCornerShape(10.dp))
                             .background(if (isSelected) Color.White else SquircleChipUnselectedBg)
-                            .clickable { onQuickChipSelected(chip) }
+                            .bounceClick {
+                                shimmerTriggerCount++
+                                onQuickChipSelected(chip)
+                            }
                             .padding(horizontal = 14.dp)
                             .testTag("quick_chip_${chip.lowercase()}"),
                         contentAlignment = Alignment.Center
@@ -964,7 +1050,7 @@ private fun CarouselFaceCard(
                         fontWeight = FontWeight.Bold,
                         color = IgBlue,
                         modifier = Modifier
-                            .clickable(onClick = onOpenGridMerge)
+                            .bounceClick(onClick = onOpenGridMerge)
                             .testTag("lookalike_view_all_${card.person.personId}")
                     )
                 }
@@ -989,7 +1075,7 @@ private fun CarouselFaceCard(
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier
-                                .clickable(onClick = onOpenGridMerge)
+                                .bounceClick(onClick = onOpenGridMerge)
                                 .padding(vertical = 2.dp)
                         ) {
                             Box(
@@ -1024,7 +1110,7 @@ private fun CarouselFaceCard(
                 modifier = Modifier.fillMaxWidth()
             )
 
-            // f) Bottom Card Decision Buttons (With Auto-Advance & Undo)
+            // f) Bottom Card Decision Buttons (With bounceClick, Shimmer & Auto-Advance)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1047,7 +1133,7 @@ private fun CarouselFaceCard(
                             color = if (isMoved) DangerRed.copy(alpha = 0.5f) else Color(0xFF2E2E32),
                             shape = RoundedCornerShape(12.dp)
                         )
-                        .clickable(onClick = onToggleMoveToOther)
+                        .bounceClick(onClick = onToggleMoveToOther)
                         .testTag("move_to_other_button_${card.person.personId}"),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center
@@ -1077,7 +1163,13 @@ private fun CarouselFaceCard(
                         .background(
                             if (isKept) IgBlue else IgBlue.copy(alpha = 0.85f)
                         )
-                        .clickable(onClick = onKeepProfile)
+                        .bounceClick(
+                            hapticType = HapticFeedbackType.LongPress,
+                            onClick = {
+                                shimmerTriggerCount++
+                                onKeepProfile()
+                            }
+                        )
                         .testTag("keep_profile_button_${card.person.personId}"),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center
@@ -1110,7 +1202,10 @@ private fun LookalikeCandidateItem(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .clickable(onClick = onClick)
+            .bounceClick(
+                hapticType = HapticFeedbackType.LongPress,
+                onClick = onClick
+            )
             .padding(vertical = 2.dp)
             .testTag("lookalike_candidate_${person.personId}")
     ) {
@@ -1336,7 +1431,7 @@ private fun MultiMergeFaceGridBottomSheet(
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
-                            .clickable {
+                            .bounceClick {
                                 if (isSelected) {
                                     selectedIds.remove(personId)
                                 } else {
@@ -1479,7 +1574,7 @@ private fun MultiMergeFaceGridBottomSheet(
                             .height(48.dp)
                             .clip(RoundedCornerShape(12.dp))
                             .background(IgBlue)
-                            .clickable {
+                            .bounceClick(hapticType = HapticFeedbackType.LongPress) {
                                 val finalName = targetMergeName.trim().ifBlank { "Person" }
                                 onMergeSelected(selectedIds.toList(), finalName)
                             }
@@ -1628,7 +1723,11 @@ private fun EmptyFacesCard(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(24.dp))
-            .background(CardSurfaceColor)
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(CardSurfaceTopColor, CardSurfaceBottomColor)
+                )
+            )
             .border(1.dp, CardBorderColor, RoundedCornerShape(24.dp))
             .padding(28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1667,7 +1766,7 @@ private fun EmptyFacesCard(
                     .clip(RoundedCornerShape(50))
                     .background(InputFillColor)
                     .border(1.dp, IgBlue.copy(alpha = 0.7f), RoundedCornerShape(50))
-                    .clickable(onClick = onRescanClick)
+                    .bounceClick(onClick = onRescanClick)
                     .padding(horizontal = 18.dp, vertical = 10.dp)
                     .testTag("empty_faces_rescan_button"),
                 contentAlignment = Alignment.Center

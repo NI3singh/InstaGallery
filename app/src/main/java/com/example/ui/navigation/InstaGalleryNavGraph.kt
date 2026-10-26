@@ -1,6 +1,12 @@
 // InstaGallery v1.0
 package com.example.ui.navigation
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -120,7 +126,21 @@ fun InstaGalleryNavGraph(
             startDestination = startDestination,
             modifier = Modifier.padding(innerPadding)
         ) {
-            composable(Screen.PermissionGate.route) {
+            composable(
+                route = Screen.PermissionGate.route,
+                enterTransition = {
+                    fadeIn(tween(380)) + scaleIn(
+                        initialScale = 0.94f,
+                        animationSpec = tween(380, easing = FastOutSlowInEasing)
+                    )
+                },
+                exitTransition = {
+                    fadeOut(tween(280)) + scaleOut(
+                        targetScale = 1.04f,
+                        animationSpec = tween(280)
+                    )
+                }
+            ) {
                 PermissionGateScreen(
                     onboardingViewModel = onboardingViewModel,
                     onScanCompleted = {
@@ -141,7 +161,21 @@ fun InstaGalleryNavGraph(
                 )
             }
 
-            composable(Screen.FaceScanning.route) {
+            composable(
+                route = Screen.FaceScanning.route,
+                enterTransition = {
+                    fadeIn(tween(380)) + scaleIn(
+                        initialScale = 0.94f,
+                        animationSpec = tween(380, easing = FastOutSlowInEasing)
+                    )
+                },
+                exitTransition = {
+                    fadeOut(tween(280)) + scaleOut(
+                        targetScale = 1.04f,
+                        animationSpec = tween(280)
+                    )
+                }
+            ) {
                 FaceScanLoadingScreen(
                     viewModel = onboardingViewModel,
                     onScanCompleted = {
@@ -152,7 +186,21 @@ fun InstaGalleryNavGraph(
                 )
             }
 
-            composable(Screen.ProfileSetup.route) {
+            composable(
+                route = Screen.ProfileSetup.route,
+                enterTransition = {
+                    fadeIn(tween(380)) + scaleIn(
+                        initialScale = 0.94f,
+                        animationSpec = tween(380, easing = FastOutSlowInEasing)
+                    )
+                },
+                exitTransition = {
+                    fadeOut(tween(280)) + scaleOut(
+                        targetScale = 1.04f,
+                        animationSpec = tween(280)
+                    )
+                }
+            ) {
                 ProfileSetupScreen(
                     viewModel = onboardingViewModel,
                     onSetupCompleted = {
@@ -163,7 +211,21 @@ fun InstaGalleryNavGraph(
                 )
             }
 
-            composable(Screen.Home.route) {
+            composable(
+                route = Screen.Home.route,
+                enterTransition = {
+                    fadeIn(tween(380)) + scaleIn(
+                        initialScale = 0.94f,
+                        animationSpec = tween(380, easing = FastOutSlowInEasing)
+                    )
+                },
+                exitTransition = {
+                    fadeOut(tween(280)) + scaleOut(
+                        targetScale = 1.04f,
+                        animationSpec = tween(280)
+                    )
+                }
+            ) {
                 val homeViewModel: HomeViewModel = viewModel()
                 HomeFeedScreen(
                     viewModel = homeViewModel,

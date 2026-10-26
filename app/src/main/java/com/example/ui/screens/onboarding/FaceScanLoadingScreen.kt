@@ -1,6 +1,7 @@
 // InstaGallery v1.0
 package com.example.ui.screens.onboarding
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -9,6 +10,11 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -57,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import com.example.ui.components.LivingAuroraBackground
 import com.example.ui.theme.GrandHotelFont
 import com.example.ui.theme.IgBlack
 import com.example.ui.theme.IgStoryGradient
@@ -182,35 +189,20 @@ fun FaceScanLoadingScreen(
         modifier = modifier
             .fillMaxSize()
             .background(IgBlack)
-            .statusBarsPadding()
-            .navigationBarsPadding()
             .testTag("face_scan_loading_screen")
     ) {
-        // Top Ambient Subtle Glow (Faint purple-pink gradient at top center)
-        Canvas(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(240.dp)
-                .align(Alignment.TopCenter)
-        ) {
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        Color(0xFF8134AF).copy(alpha = 0.12f),
-                        Color(0xFFDD2A7B).copy(alpha = 0.06f),
-                        Color.Transparent
-                    ),
-                    center = Offset(size.width / 2f, 0f),
-                    radius = size.width * 0.65f
-                ),
-                radius = size.width * 0.65f,
-                center = Offset(size.width / 2f, 0f)
-            )
-        }
+        LivingAuroraBackground(
+            primaryOrbColor = Color(0xFF8134AF),
+            secondaryOrbColor = Color(0xFFDD2A7B),
+            tertiaryOrbColor = Color(0xFFF58529),
+            modifier = Modifier.fillMaxSize()
+        )
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
                 .padding(horizontal = 24.dp, vertical = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
@@ -636,14 +628,23 @@ fun FaceScanLoadingScreen(
                         }
                     }
 
-                    Text(
-                        text = "$peopleCount profiles created",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        fontFamily = InterFont,
-                        color = Color(0xFFE0E0E0),
-                        modifier = Modifier.padding(end = 2.dp)
-                    )
+                    AnimatedContent(
+                        targetState = peopleCount,
+                        transitionSpec = {
+                            (slideInVertically { it } + fadeIn(tween(220))) togetherWith
+                                (slideOutVertically { -it } + fadeOut(tween(180)))
+                        },
+                        label = "profiles_created_odometer"
+                    ) { count ->
+                        Text(
+                            text = "$count profiles created",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            fontFamily = InterFont,
+                            color = Color(0xFFE0E0E0),
+                            modifier = Modifier.padding(end = 2.dp)
+                        )
+                    }
                 }
             }
 

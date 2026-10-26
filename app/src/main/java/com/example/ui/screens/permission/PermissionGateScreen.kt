@@ -81,6 +81,8 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.local.OnboardingPreferences
+import com.example.ui.components.LivingAuroraBackground
+import com.example.ui.components.bounceClick
 import com.example.ui.screens.onboarding.FaceScanLoadingScreen
 import com.example.ui.screens.onboarding.OnboardingViewModel
 import com.example.ui.theme.GrandHotelFont
@@ -297,14 +299,21 @@ private fun StitchWelcomeOnboardingContent(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(IgBlack)
-            .windowInsetsPadding(WindowInsets.systemBars)
-            .padding(horizontal = 24.dp),
+            .background(IgBlack),
         contentAlignment = Alignment.Center
     ) {
+        LivingAuroraBackground(
+            primaryOrbColor = Color(0xFF8134AF),
+            secondaryOrbColor = Color(0xFFDD2A7B),
+            tertiaryOrbColor = Color(0xFFF58529),
+            modifier = Modifier.fillMaxSize()
+        )
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.systemBars)
+                .padding(horizontal = 24.dp)
                 .widthIn(max = 420.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
@@ -489,19 +498,14 @@ private fun StitchWelcomeOnboardingContent(
                     .offset(y = bottomSlideY)
                     .alpha(textAndCtaAlpha)
             ) {
-                // Pill Button (52.dp Solid Pure White background, Pure Black 15.sp Bold text)
-                val interactionSource = remember { MutableInteractionSource() }
+                // Pill Button (52.dp Solid Pure White background, Pure Black 15.sp Bold text + bounceClick)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(52.dp)
                         .clip(RoundedCornerShape(50))
                         .background(Color.White)
-                        .clickable(
-                            interactionSource = interactionSource,
-                            indication = null,
-                            onClick = onContinueClick
-                        )
+                        .bounceClick(onClick = onContinueClick)
                         .testTag("grant_permission_button"),
                     contentAlignment = Alignment.Center
                 ) {
