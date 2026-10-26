@@ -46,9 +46,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import coil.compose.AsyncImage
 import com.example.data.local.entity.PersonEntity
 import com.example.ui.components.IndexingStatusBanner
+import com.example.ui.components.NewPeopleDetectedBanner
 import com.example.ui.components.PostCard
 import com.example.ui.theme.IgBlack
 import com.example.ui.theme.IgBlue
@@ -65,6 +71,7 @@ import java.io.File
 fun HomeFeedScreen(
     viewModel: HomeViewModel,
     onPersonClick: (Long) -> Unit,
+    onReviewNewPeopleClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -99,13 +106,6 @@ fun HomeFeedScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // Live face scanning status indicator
-                if (uiState.isScanning) {
-                    val current = uiState.scannedCount
-                    val total = if (uiState.totalToScan > 0) uiState.totalToScan else 100
-                    IndexingStatusBanner(processed = current, total = total)
-                }
-
                 // Favorites filter toggle
                 IconButton(
                     onClick = { viewModel.toggleFavoritesFilter() },
@@ -140,6 +140,23 @@ fun HomeFeedScreen(
 
         HorizontalDivider(color = IgBorder, thickness = 1.dp)
 
+        // Live Background Indexing Pill
+        AnimatedVisibility(
+            visible = uiState.unindexedPhotoCount > 0,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically()
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(IgBlack)
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                IndexingStatusBanner(unindexedCount = uiState.unindexedPhotoCount)
+            }
+        }
+
         // Main Feed (LazyColumn)
         LazyColumn(
             modifier = Modifier
@@ -153,6 +170,17 @@ fun HomeFeedScreen(
                     unassociatedCount = uiState.unassociatedCount,
                     onPersonClick = onPersonClick
                 )
+            }
+
+            // Item 2: "New People Detected" Banner when >= 3 photos of a new undecided person exist
+            if (uiState.newUndecidedPeople.isNotEmpty()) {
+                item(key = "new_people_detected_banner") {
+                    NewPeopleDetectedBanner(
+                        newUndecidedPeople = uiState.newUndecidedPeople,
+                        onReviewClick = onReviewNewPeopleClick,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+                    )
+                }
             }
 
             // Empty state when no media matches filter or device storage is empty

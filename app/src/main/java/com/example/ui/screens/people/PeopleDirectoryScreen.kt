@@ -2,8 +2,10 @@
 package com.example.ui.screens.people
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -70,6 +72,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.example.data.local.entity.PersonEntity
+import com.example.ui.components.IndexingStatusBanner
+import com.example.ui.components.NewPeopleDetectedBanner
 import com.example.ui.theme.IgAmber
 import com.example.ui.theme.IgBlack
 import com.example.ui.theme.IgBlue
@@ -259,6 +263,23 @@ fun PeopleDirectoryScreen(
                 }
             }
 
+            // Live Background Indexing Pill
+            AnimatedVisibility(
+                visible = uiState.unindexedPhotoCount > 0,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(IgBlack)
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    IndexingStatusBanner(unindexedCount = uiState.unindexedPhotoCount)
+                }
+            }
+
             // 3-Column People Grid
             LazyVerticalGrid(
                 columns = GridCells.Fixed(3),
@@ -267,6 +288,16 @@ fun PeopleDirectoryScreen(
                 verticalArrangement = Arrangement.spacedBy(20.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
+                // "New People Detected" Banner when >= 3 photos of a new undecided person exist
+                if (uiState.newUndecidedPeople.isNotEmpty() && !uiState.isSelectionMode) {
+                    item(span = { GridItemSpan(3) }) {
+                        NewPeopleDetectedBanner(
+                            newUndecidedPeople = uiState.newUndecidedPeople,
+                            onReviewClick = onOpenSetupClick
+                        )
+                    }
+                }
+
                 // Micro Banner: Smart Duplicate Detection
                 val dup = uiState.duplicatePair
                 if (dup != null && !uiState.isSelectionMode) {

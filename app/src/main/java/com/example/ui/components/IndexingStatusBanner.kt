@@ -34,7 +34,8 @@ import com.example.ui.theme.IgSurfacePill
 fun IndexingStatusBanner(
     processed: Int,
     total: Int,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    customLabel: String? = null
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val alpha by infiniteTransition.animateFloat(
@@ -64,7 +65,7 @@ fun IndexingStatusBanner(
                 .background(IgStoryGradient)
         )
         Text(
-            text = "Scanning faces: $processed/$total",
+            text = customLabel ?: "Scanning faces: $processed/$total",
             fontSize = 11.sp,
             fontWeight = FontWeight.Medium,
             color = Color(0xFFE0E0E0),
@@ -72,3 +73,17 @@ fun IndexingStatusBanner(
         )
     }
 }
+
+@Composable
+fun IndexingStatusBanner(
+    unindexedCount: Int,
+    modifier: Modifier = Modifier
+) {
+    IndexingStatusBanner(
+        processed = 0,
+        total = unindexedCount,
+        modifier = modifier,
+        customLabel = "Scanning $unindexedCount new photos in background..."
+    )
+}
+

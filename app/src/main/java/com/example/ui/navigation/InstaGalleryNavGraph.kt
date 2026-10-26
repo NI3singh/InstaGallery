@@ -204,8 +204,11 @@ fun InstaGalleryNavGraph(
                 ProfileSetupScreen(
                     viewModel = onboardingViewModel,
                     onSetupCompleted = {
-                        navController.navigate(Screen.Home.route) {
-                            popUpTo(Screen.ProfileSetup.route) { inclusive = true }
+                        val popped = navController.popBackStack()
+                        if (!popped) {
+                            navController.navigate(Screen.Home.route) {
+                                popUpTo(Screen.ProfileSetup.route) { inclusive = true }
+                            }
                         }
                     }
                 )
@@ -231,6 +234,10 @@ fun InstaGalleryNavGraph(
                     viewModel = homeViewModel,
                     onPersonClick = { personId ->
                         navController.navigate(Screen.Profile.createRoute(personId))
+                    },
+                    onReviewNewPeopleClick = {
+                        onboardingViewModel.prepareForPostOnboardingReview()
+                        navController.navigate(Screen.ProfileSetup.route)
                     }
                 )
             }
@@ -250,6 +257,7 @@ fun InstaGalleryNavGraph(
                         navController.navigate(Screen.Profile.createRoute(personId))
                     },
                     onOpenSetupClick = {
+                        onboardingViewModel.prepareForPostOnboardingReview()
                         navController.navigate(Screen.ProfileSetup.route)
                     },
                     onRescanGalleryClick = {

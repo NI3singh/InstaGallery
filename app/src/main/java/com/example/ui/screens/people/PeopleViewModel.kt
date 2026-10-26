@@ -22,6 +22,8 @@ enum class PeopleSortOrder(val label: String) {
 data class PeopleUiState(
     val people: List<PersonEntity> = emptyList(),
     val filteredPeople: List<PersonEntity> = emptyList(),
+    val newUndecidedPeople: List<PersonEntity> = emptyList(),
+    val unindexedPhotoCount: Int = 0,
     val searchQuery: String = "",
     val sortOrder: PeopleSortOrder = PeopleSortOrder.MOST_POSTS,
     val isSelectionMode: Boolean = false,
@@ -60,12 +62,32 @@ class PeopleViewModel(application: Application) : AndroidViewModel(application) 
         val ignoredKeys: Set<String>
     )
 
+    private data class CountsAndToast(
+        val unassociatedCount: Int,
+        val unindexedPhotoCount: Int,
+        val newUndecidedPeople: List<PersonEntity>,
+        val toastMessage: String?
+    )
+
+    private val countsAndToastFlow = combine(
+        repository.unassociatedCount,
+        repository.unindexedPhotoCount,
+        repository.newUndecidedPeople,
+        _toastMessage
+    ) { unassociated, unindexed, newUndecided, toast ->
+        CountsAndToast(
+            unassociatedCount = unassociated,
+            unindexedPhotoCount = unindexed,
+            newUndecidedPeople = newUndecided,
+            toastMessage = toast
+        )
+    }
+
     val uiState: StateFlow<PeopleUiState> = combine(
         repository.allPeople,
         filterAndSelectionState,
-        repository.unassociatedCount,
-        _toastMessage
-    ) { people, state, unassociated, toast ->
+        countsAndToastFlow
+    ) { people, state, extras ->
         val searched = if (state.query.isBlank()) {
             people
         } else {
@@ -83,13 +105,15 @@ class PeopleViewModel(application: Application) : AndroidViewModel(application) 
         PeopleUiState(
             people = people,
             filteredPeople = sorted,
+            newUndecidedPeople = extras.newUndecidedPeople,
+            unindexedPhotoCount = extras.unindexedPhotoCount,
             searchQuery = state.query,
             sortOrder = state.sort,
             isSelectionMode = state.isSelecting,
             selectedPersonIds = state.selected,
             duplicatePair = duplicate,
-            unassociatedCount = unassociated,
-            toastMessage = toast
+            unassociatedCount = extras.unassociatedCount,
+            toastMessage = extras.toastMessage
         )
     }.stateIn(
         scope = viewModelScope,

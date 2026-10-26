@@ -44,12 +44,13 @@ interface PersonDao {
         SELECT p.* FROM people p
         WHERE p.isHiddenToOther = 0
           AND (
-            p.isNamedByUser = 1
-            OR EXISTS (
-              SELECT 1 FROM media_person_cross_ref ref
-              INNER JOIN media_items m ON m.mediaId = ref.mediaId
-              WHERE ref.personId = p.personId AND m.isVideo = 0
-            )
+              p.isNamedByUser = 1
+              OR p.decisionState = 'KEPT'
+              OR EXISTS (
+                  SELECT 1 FROM media_person_cross_ref ref
+                  INNER JOIN media_items m ON m.mediaId = ref.mediaId
+                  WHERE ref.personId = p.personId AND m.isVideo = 0
+              )
           )
         ORDER BY p.isNamedByUser DESC, p.faceCount DESC, p.bestQualityScore DESC
         """
@@ -61,17 +62,35 @@ interface PersonDao {
         SELECT p.* FROM people p
         WHERE p.isHiddenToOther = 0
           AND (
-            p.isNamedByUser = 1
-            OR EXISTS (
-              SELECT 1 FROM media_person_cross_ref ref
-              INNER JOIN media_items m ON m.mediaId = ref.mediaId
-              WHERE ref.personId = p.personId AND m.isVideo = 0
-            )
+              p.isNamedByUser = 1
+              OR p.decisionState = 'KEPT'
+              OR EXISTS (
+                  SELECT 1 FROM media_person_cross_ref ref
+                  INNER JOIN media_items m ON m.mediaId = ref.mediaId
+                  WHERE ref.personId = p.personId AND m.isVideo = 0
+              )
           )
         ORDER BY p.isNamedByUser DESC, p.faceCount DESC, p.bestQualityScore DESC
         """
     )
     suspend fun getVisiblePeopleSync(): List<PersonEntity>
+
+    @Query(
+        """
+        SELECT p.* FROM people p
+        WHERE p.isHiddenToOther = 0
+          AND p.isNamedByUser = 0
+          AND p.decisionState = 'UNDECIDED'
+          AND (
+              SELECT COUNT(DISTINCT ref.mediaId)
+              FROM media_person_cross_ref ref
+              INNER JOIN media_items m ON m.mediaId = ref.mediaId
+              WHERE ref.personId = p.personId AND m.isVideo = 0
+          ) >= 3
+        ORDER BY p.faceCount DESC, p.createdAt DESC
+        """
+    )
+    fun getNewUndecidedPeopleFlow(): Flow<List<PersonEntity>>
 
     @Query("SELECT * FROM people WHERE personId = :personId")
     fun getPersonById(personId: Long): Flow<PersonEntity?>
@@ -347,6 +366,42 @@ interface PersonDao {
     @Query("DELETE FROM media_person_cross_ref WHERE personId = :personId")
     suspend fun deleteCrossRefsForPerson(personId: Long)
 
+    @Query("SELECT * FROM detected_faces WHERE personId = :personId ORDER BY qualityScore DESC, faceId DESC LIMIT 1")
+    suspend fun getHighestQualityFaceForPersonSync(personId: Long): FaceEntity?
+
     @Query("SELECT COUNT(*) FROM detected_faces WHERE personId = :personId")
     suspend fun countFacesForPerson(personId: Long): Int
+
+    @Query(
+        """
+        UPDATE people
+        SET faceCount = (
+            SELECT COUNT(DISTINCT ref.mediaId)
+            FROM media_person_cross_ref ref
+            INNER JOIN media_items m ON m.mediaId = ref.mediaId
+            WHERE ref.personId = people.personId AND m.isVideo = 0
+        )
+        """
+    )
+    suspend fun syncAllPeoplePhotoCountsSql()
+
+    @Query(
+        """
+        DELETE FROM people
+        WHERE isNamedByUser = 0
+          AND decisionState != 'KEPT'
+          AND NOT EXISTS (
+              SELECT 1 FROM media_person_cross_ref ref
+              INNER JOIN media_items m ON m.mediaId = ref.mediaId
+              WHERE ref.personId = people.personId AND m.isVideo = 0
+          )
+        """
+    )
+    suspend fun deleteEmptyUnnamedPeopleSql()
+
+    @Transaction
+    suspend fun reconcilePeopleAfterMediaDeletion() {
+        syncAllPeoplePhotoCountsSql()
+        deleteEmptyUnnamedPeopleSql()
+    }
 }

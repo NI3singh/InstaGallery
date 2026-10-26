@@ -25,7 +25,9 @@ enum class HomeFeedFilter {
 data class HomeUiState(
     val photos: List<MediaWithAuthors> = emptyList(),
     val people: List<PersonEntity> = emptyList(),
+    val newUndecidedPeople: List<PersonEntity> = emptyList(),
     val unassociatedCount: Int = 0,
+    val unindexedPhotoCount: Int = 0,
     val activeFilter: HomeFeedFilter = HomeFeedFilter.ALL,
     val isFilteringFavorites: Boolean = false,
     val isFilteringBookmarks: Boolean = false,
@@ -57,11 +59,20 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private data class ScanAndUndecidedInfo(
+        val isRunning: Boolean,
+        val current: Int,
+        val total: Int,
+        val unindexedCount: Int,
+        val newUndecidedPeople: List<PersonEntity>
+    )
+
     private val scanState = combine(
         repository.indexingWorkInfo,
-        repository.unindexedCount,
-        repository.totalMediaCount
-    ) { workInfo, unindexed, totalCount ->
+        repository.unindexedPhotoCount,
+        repository.totalMediaCount,
+        repository.newUndecidedPeople
+    ) { workInfo, unindexed, totalCount, newUndecided ->
         val isRunning = workInfo?.state == WorkInfo.State.RUNNING ||
             (workInfo?.state == WorkInfo.State.ENQUEUED && unindexed > 0)
         val progress = workInfo?.progress
@@ -70,7 +81,13 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
         val current = if (totalInRun > 0) processedInRun else (totalCount - unindexed).coerceAtLeast(0)
         val total = if (totalInRun > 0) totalInRun else totalCount
-        Triple(isRunning && unindexed > 0, current, total)
+        ScanAndUndecidedInfo(
+            isRunning = isRunning && unindexed > 0,
+            current = current,
+            total = total,
+            unindexedCount = unindexed,
+            newUndecidedPeople = newUndecided
+        )
     }
 
     val uiState: StateFlow<HomeUiState> = combine(
@@ -80,7 +97,6 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         _seedTrigger,
         scanState
     ) { photos, people, unassociatedCount, seed, scanInfo ->
-        val (isRunning, current, total) = scanInfo
         val filter = _activeFilter.value
         // Deterministic per-mediaId shuffle order so liking/tagging never jumps the scroll position
         val stableShuffled = photos.sortedBy { item ->
@@ -89,13 +105,15 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         HomeUiState(
             photos = stableShuffled,
             people = people,
+            newUndecidedPeople = scanInfo.newUndecidedPeople,
             unassociatedCount = unassociatedCount,
+            unindexedPhotoCount = scanInfo.unindexedCount,
             activeFilter = filter,
             isFilteringFavorites = filter == HomeFeedFilter.FAVORITES,
             isFilteringBookmarks = filter == HomeFeedFilter.BOOKMARKED,
-            isScanning = isRunning && total > 0,
-            scannedCount = current,
-            totalToScan = total,
+            isScanning = scanInfo.isRunning && scanInfo.total > 0,
+            scannedCount = scanInfo.current,
+            totalToScan = scanInfo.total,
             isRefreshing = _isRefreshing.value
         )
     }.stateIn(

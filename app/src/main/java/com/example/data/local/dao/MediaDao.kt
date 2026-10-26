@@ -275,6 +275,12 @@ interface MediaDao {
     @Query("UPDATE media_items SET isProcessedForFaces = 1, hasFaces = 0 WHERE isVideo = 1 AND isProcessedForFaces = 0")
     suspend fun markAllVideosProcessed()
 
+    @Query("SELECT COALESCE(MAX(dateAddedSeconds), 0) FROM media_items")
+    suspend fun getMaxDateAddedSeconds(): Long
+
+    @Query("SELECT COUNT(*) FROM media_items WHERE isVideo = 0 AND isProcessedForFaces = 0")
+    fun getUnindexedPhotoCountFlow(): Flow<Int>
+
     @Query("SELECT COUNT(*) FROM media_items WHERE isVideo = 0 AND isProcessedForFaces = 0")
     fun getUnindexedCount(): Flow<Int>
 

@@ -108,6 +108,12 @@ class FaceClusterManager(
         }
     }
 
+    suspend fun reloadClustersFromDb() = withContext(Dispatchers.IO) {
+        clusterMutex.withLock {
+            ensureCacheLoadedLocked(forceReload = true)
+        }
+    }
+
     private suspend fun ensureCacheLoadedLocked(forceReload: Boolean = false) {
         if (isCacheLoaded && !forceReload) return
         clusterCache.clear()

@@ -24,7 +24,7 @@ class FaceIndexingWorker(
         const val PROGRESS_TOTAL = "total"
         const val PROGRESS_PROFILES_COUNT = "profilesCount"
         const val PROGRESS_FACES_FOUND = "faces_found"
-        private const val BATCH_CHUNK_SIZE = 20
+        private const val BATCH_CHUNK_SIZE = 15
     }
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
@@ -147,6 +147,8 @@ class FaceIndexingWorker(
             // Run Pass-2 Consolidation & Anchor Sweep ONLY ONCE after the photo loop finishes (100%)
             if (!isStopped) {
                 faceClusterManager.runPass2ConsolidationAndAnchorSweep()
+                personDao.syncAllPeoplePhotoCountsSql()
+                faceClusterManager.reloadClustersFromDb()
             }
 
             val finalTotal = mediaDao.getTotalMediaCount().firstOrNull() ?: processedCount

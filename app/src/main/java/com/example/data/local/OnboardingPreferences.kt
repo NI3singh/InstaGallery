@@ -39,6 +39,11 @@ object OnboardingPreferences {
         return _isSetupCompleted.value
     }
 
+    fun isOnboardingCompleted(context: Context): Boolean {
+        init(context)
+        return _isScanCompleted.value && _isSetupCompleted.value
+    }
+
     fun markInitialScanCompleted(context: Context, completed: Boolean = true) {
         init(context)
         context.applicationContext

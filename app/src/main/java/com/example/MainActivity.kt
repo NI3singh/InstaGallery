@@ -5,10 +5,11 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.compose.rememberNavController
-import com.example.data.local.AppDatabase
-import com.example.data.media.MediaStoreScanner
+import com.example.data.repository.GalleryRepository
 import com.example.ui.navigation.InstaGalleryNavGraph
 import com.example.ui.screens.permission.hasAnyMediaPermission
 import com.example.ui.theme.InstaGalleryTheme
@@ -16,13 +17,31 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
-    private val scanner by lazy {
-        MediaStoreScanner(this, AppDatabase.getInstance(this).mediaDao())
+    private val galleryRepository by lazy {
+        GalleryRepository(applicationContext)
+    }
+
+    private var lastResumeSyncTimestampMs: Long = 0L
+
+    private val resumeSyncObserver = LifecycleEventObserver { _, event ->
+        if (event == Lifecycle.Event.ON_RESUME) {
+            if (!hasAnyMediaPermission(this)) return@LifecycleEventObserver
+            val now = System.currentTimeMillis()
+            if (now - lastResumeSyncTimestampMs >= 3_000L) {
+                lastResumeSyncTimestampMs = now
+                galleryRepository.startMediaStoreObserver()
+                lifecycleScope.launch {
+                    galleryRepository.syncOnAppResume()
+                }
+            }
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        galleryRepository.startMediaStoreObserver()
+        lifecycle.addObserver(resumeSyncObserver)
         setContent {
             InstaGalleryTheme {
                 val navController = rememberNavController()
@@ -31,12 +50,9 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onResume() {
-        super.onResume()
-        if (hasAnyMediaPermission(this)) {
-            lifecycleScope.launch {
-                scanner.scanAndReconcile()
-            }
-        }
+    override fun onDestroy() {
+        lifecycle.removeObserver(resumeSyncObserver)
+        galleryRepository.stopMediaStoreObserver()
+        super.onDestroy()
     }
 }

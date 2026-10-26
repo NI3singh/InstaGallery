@@ -2,6 +2,12 @@
 package com.example.data.repository
 
 import android.content.Context
+import android.database.ContentObserver
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import android.provider.MediaStore
+import androidx.work.ExistingWorkPolicy
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.example.InstaGalleryApp
@@ -13,10 +19,16 @@ import com.example.data.local.entity.PersonEntity
 import com.example.data.media.MediaStoreScanner
 import com.example.ml.FaceClusterManager
 import com.example.ml.SimilarProfileCandidate
+import com.example.ui.screens.permission.hasAnyMediaPermission
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -27,17 +39,31 @@ class GalleryRepository(
             ?: FaceClusterManager.getInstance(context)
 ) {
 
-    private val database = (context.applicationContext as? InstaGalleryApp)?.database
-        ?: AppDatabase.getInstance(context)
+    private val appContext = context.applicationContext
+    private val database = (appContext as? InstaGalleryApp)?.database
+        ?: AppDatabase.getInstance(appContext)
     private val mediaDao = database.mediaDao()
     private val personDao = database.personDao()
-    private val scanner = MediaStoreScanner(context, mediaDao)
+    private val mediaStoreScanner = MediaStoreScanner(appContext, mediaDao, personDao)
+    private val scanner: MediaStoreScanner
+        get() = mediaStoreScanner
+
+    private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var observerDebounceJob: Job? = null
+    private var mediaStoreObserver: ContentObserver? = null
 
     /**
      * Primary people Flow observed by HomeFeedScreen and PeopleDirectoryScreen.
      * Uses `personDao.getVisiblePeopleFlow()`.
      */
     val allPeople: Flow<List<PersonEntity>> = personDao.getVisiblePeopleFlow()
+
+    /**
+     * Newly detected undecided people with >= 3 distinct photos (for the "New People Found" review banner).
+     */
+    val newUndecidedPeople: Flow<List<PersonEntity>> = personDao.getNewUndecidedPeopleFlow()
+
+    fun getNewUndecidedPeopleFlow(): Flow<List<PersonEntity>> = personDao.getNewUndecidedPeopleFlow()
 
     /**
      * Dedicated setup Flow that returns all profiles (including hidden) ordered by faceCount DESC, personId ASC
@@ -82,19 +108,97 @@ class GalleryRepository(
     val favoritePhotosWithAuthors: Flow<List<MediaWithAuthors>> = filterMediaAuthorsToVisible(mediaDao.getFavoritePhotosWithAuthors())
     val bookmarkedPhotosWithAuthors: Flow<List<MediaWithAuthors>> = filterMediaAuthorsToVisible(mediaDao.getBookmarkedPhotosWithAuthors())
 
-    val unindexedCount: Flow<Int> = mediaDao.getUnindexedCount()
+    val unindexedCount: Flow<Int> = mediaDao.getUnindexedPhotoCountFlow()
+    val unindexedPhotoCount: Flow<Int> = mediaDao.getUnindexedPhotoCountFlow()
+    fun getUnindexedPhotoCountFlow(): Flow<Int> = mediaDao.getUnindexedPhotoCountFlow()
+
     val processedCount: Flow<Int> = mediaDao.getProcessedCount()
     val totalMediaCount: Flow<Int> = mediaDao.getTotalMediaCount()
     val unassociatedCount: Flow<Int> = mediaDao.getUnassociatedPhotoCount()
 
     // Work progress
-    val indexingWorkInfo: Flow<WorkInfo?> = WorkManager.getInstance(context)
+    val indexingWorkInfo: Flow<WorkInfo?> = WorkManager.getInstance(appContext)
         .getWorkInfosForUniqueWorkFlow(MediaStoreScanner.FACE_INDEXING_WORK_NAME)
         .map { it.firstOrNull() }
 
+    fun enqueueFaceIndexingWorker(
+        policy: ExistingWorkPolicy = ExistingWorkPolicy.APPEND_OR_REPLACE
+    ) {
+        mediaStoreScanner.enqueueFaceIndexingWorker(policy)
+    }
+
+    /**
+     * Registers a debounced ContentObserver on Images, Video, and Files external URIs
+     * so newly captured camera photos or received WhatsApp images appear while the app is open.
+     */
+    @Synchronized
+    fun startMediaStoreObserver() {
+        if (mediaStoreObserver != null) return
+
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean, uri: Uri?) {
+                super.onChange(selfChange, uri)
+                if (!hasAnyMediaPermission(appContext)) return
+                observerDebounceJob?.cancel()
+                observerDebounceJob = repositoryScope.launch {
+                    delay(1500L)
+                    val newPhotoCount = mediaStoreScanner.scanDeltaMedia()
+                    if (newPhotoCount > 0) {
+                        enqueueFaceIndexingWorker(ExistingWorkPolicy.APPEND_OR_REPLACE)
+                    }
+                }
+            }
+        }
+
+        runCatching {
+            val resolver = appContext.contentResolver
+            resolver.registerContentObserver(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                true,
+                observer
+            )
+            resolver.registerContentObserver(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                true,
+                observer
+            )
+            resolver.registerContentObserver(
+                MediaStore.Files.getContentUri("external"),
+                true,
+                observer
+            )
+            mediaStoreObserver = observer
+        }
+    }
+
+    @Synchronized
+    fun stopMediaStoreObserver() {
+        observerDebounceJob?.cancel()
+        observerDebounceJob = null
+        mediaStoreObserver?.let { observer ->
+            runCatching {
+                appContext.contentResolver.unregisterContentObserver(observer)
+            }
+        }
+        mediaStoreObserver = null
+    }
+
+    /**
+     * Runs a fast delta scan on ON_RESUME to ingest new camera/WhatsApp photos immediately,
+     * followed by full reconciliation of any externally deleted photos.
+     */
+    suspend fun syncOnAppResume() = withContext(Dispatchers.IO) {
+        if (!hasAnyMediaPermission(appContext)) return@withContext
+        val newPhotos = mediaStoreScanner.scanDeltaMedia()
+        if (newPhotos > 0 || mediaDao.getUnindexedCountSync() > 0) {
+            enqueueFaceIndexingWorker(ExistingWorkPolicy.APPEND_OR_REPLACE)
+        }
+        mediaStoreScanner.scanFullAndReconcile()
+    }
+
     suspend fun scanDeviceMedia(): Int {
         mediaDao.deleteAllVideoPersonLinks()
-        return scanner.scanAndReconcile()
+        return mediaStoreScanner.scanFullAndReconcile()
     }
 
     fun getMediaById(mediaId: Long): Flow<MediaWithAuthors?> = combine(

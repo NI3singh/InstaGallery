@@ -107,6 +107,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
     private val orderLock = Any()
     private val lockedOrderIds = mutableListOf<Long>()
     private val initialPhotoCountMap = mutableMapOf<Long, Int>()
+    private val initialUndecidedSet = mutableSetOf<Long>()
     private val mergedDeletedIds = mutableSetOf<Long>()
 
     private val _editedNames = MutableStateFlow<Map<Long, String>>(emptyMap())
@@ -162,20 +163,40 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                     }
 
                     synchronized(orderLock) {
+                        val isPostOnboarding = OnboardingPreferences.isOnboardingCompleted(getApplication())
                         val currentIds = rawCards.asSequence().map { it.person.personId }.toHashSet()
                         // Remove any personId that was deleted via a profile merge (or no longer exists in DB)
                         lockedOrderIds.removeAll { id -> id in mergedDeletedIds || id !in currentIds }
 
+                        val newlyAddedPriorityIds = mutableListOf<Long>()
                         // Append any newly discovered personId in its initial (faceCount DESC, personId ASC) order
                         for (card in rawCards) {
                             val id = card.person.personId
-                            if (id !in lockedOrderIds) {
-                                lockedOrderIds.add(id)
-                            }
                             val prevInitial = initialPhotoCountMap[id] ?: 0
                             if (card.photoCount > prevInitial) {
                                 initialPhotoCountMap[id] = card.photoCount
                             }
+                            if (id !in lockedOrderIds) {
+                                val isUndecidedNew = card.person.decisionState == "UNDECIDED" &&
+                                    !card.person.isNamedByUser &&
+                                    !card.person.isHiddenToOther
+                                if (isUndecidedNew) {
+                                    initialUndecidedSet.add(id)
+                                }
+                                if (isPostOnboarding && isUndecidedNew && card.photoCount >= 2) {
+                                    newlyAddedPriorityIds.add(id)
+                                } else {
+                                    lockedOrderIds.add(id)
+                                }
+                            }
+                        }
+
+                        if (newlyAddedPriorityIds.isNotEmpty()) {
+                            // Insert post-onboarding undecided profiles (>= 2 photos) at the front of lockedOrderIds
+                            val insertIndex = lockedOrderIds.indexOfFirst { existingId ->
+                                existingId !in initialUndecidedSet || (initialPhotoCountMap[existingId] ?: 0) < 2
+                            }.let { if (it < 0) lockedOrderIds.size else it }
+                            lockedOrderIds.addAll(insertIndex, newlyAddedPriorityIds)
                         }
 
                         rawCards.sortedBy { card ->
@@ -280,6 +301,8 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
             SetupFilterMode.ALL_DETECTED
         }
 
+        val isPostOnboarding = OnboardingPreferences.isOnboardingCompleted(getApplication())
+
         val (allDetectedCards, topPeopleCards) = synchronized(orderLock) {
             val sortedAll = allCards
                 .filter { it.photoCount >= 1 }
@@ -292,8 +315,10 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
 
             val sortedTop = sortedAll
                 .filter { card ->
-                    val initialPhotos = initialPhotoCountMap[card.person.personId] ?: card.photoCount
-                    initialPhotos >= minTopPhotos
+                    val id = card.person.personId
+                    val initialPhotos = initialPhotoCountMap[id] ?: card.photoCount
+                    initialPhotos >= minTopPhotos ||
+                        (isPostOnboarding && id in initialUndecidedSet && initialPhotos >= 2)
                 }
                 .sortedBy { lockedOrderIds.indexOf(it.person.personId) }
 
@@ -582,11 +607,43 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    /**
+     * Called when opening ProfileSetupScreen after initial onboarding is already completed.
+     * Places currently UNDECIDED profiles with photoCount >= 2 at the front of lockedOrderIds once
+     * before the review session begins, while keeping slot order locked during the session.
+     */
+    fun prepareForPostOnboardingReview() {
+        if (!OnboardingPreferences.isOnboardingCompleted(getApplication())) return
+        val currentCards = uiState.value.allDetectedPeople
+        synchronized(orderLock) {
+            initialUndecidedSet.clear()
+            for (card in currentCards) {
+                val p = card.person
+                if (p.decisionState == "UNDECIDED" && !p.isNamedByUser && !p.isHiddenToOther) {
+                    initialUndecidedSet.add(p.personId)
+                }
+                initialPhotoCountMap[p.personId] = maxOf(initialPhotoCountMap[p.personId] ?: 0, card.photoCount)
+            }
+            if (lockedOrderIds.isNotEmpty()) {
+                val priorityUndecided = lockedOrderIds.filter { id ->
+                    id in initialUndecidedSet && (initialPhotoCountMap[id] ?: 0) >= 2
+                }
+                val remaining = lockedOrderIds.filterNot { id ->
+                    id in initialUndecidedSet && (initialPhotoCountMap[id] ?: 0) >= 2
+                }
+                lockedOrderIds.clear()
+                lockedOrderIds.addAll(priorityUndecided)
+                lockedOrderIds.addAll(remaining)
+            }
+        }
+    }
+
     fun triggerFullRescan() {
         maxProfilesSeen = 0
         synchronized(orderLock) {
             lockedOrderIds.clear()
             initialPhotoCountMap.clear()
+            initialUndecidedSet.clear()
             mergedDeletedIds.clear()
         }
         _hasStartedScan.value = true
