@@ -15,6 +15,7 @@ data class PersonEntity(
     val faceCount: Int = 1,
     val isNamedByUser: Boolean = false,
     val isHiddenToOther: Boolean = false,
+    val decisionState: String = "UNDECIDED", // "UNDECIDED", "KEPT", "MOVED_TO_OTHER"
     val bestQualityScore: Float = 0.75f,
     val createdAt: Long = System.currentTimeMillis()
 ) {
@@ -36,6 +37,7 @@ data class PersonEntity(
         faceCount = faceCount,
         isNamedByUser = isNamedByUser,
         isHiddenToOther = false,
+        decisionState = if (isNamedByUser) "KEPT" else "UNDECIDED",
         bestQualityScore = bestFaceQuality,
         createdAt = createdAt
     )
@@ -61,6 +63,7 @@ data class PersonEntity(
         faceCount = faceCount,
         isNamedByUser = isNamedByUser,
         isHiddenToOther = this.isHiddenToOther,
+        decisionState = this.decisionState,
         bestQualityScore = bestFaceQuality,
         createdAt = createdAt
     )
@@ -78,6 +81,7 @@ data class PersonEntity(
         if (faceCount != other.faceCount) return false
         if (isNamedByUser != other.isNamedByUser) return false
         if (isHiddenToOther != other.isHiddenToOther) return false
+        if (decisionState != other.decisionState) return false
         if (bestQualityScore != other.bestQualityScore) return false
         if (createdAt != other.createdAt) return false
 
@@ -92,6 +96,7 @@ data class PersonEntity(
         result = 31 * result + faceCount
         result = 31 * result + isNamedByUser.hashCode()
         result = 31 * result + isHiddenToOther.hashCode()
+        result = 31 * result + decisionState.hashCode()
         result = 31 * result + bestQualityScore.hashCode()
         result = 31 * result + createdAt.hashCode()
         return result

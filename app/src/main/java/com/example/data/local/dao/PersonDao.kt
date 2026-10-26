@@ -29,6 +29,19 @@ interface PersonDao {
     @Query(
         """
         SELECT p.* FROM people p
+        WHERE EXISTS (
+            SELECT 1 FROM media_person_cross_ref ref
+            INNER JOIN media_items m ON m.mediaId = ref.mediaId
+            WHERE ref.personId = p.personId AND m.isVideo = 0
+        )
+        ORDER BY p.faceCount DESC, p.personId ASC
+        """
+    )
+    fun getAllPeopleForSetupFlow(): Flow<List<PersonEntity>>
+
+    @Query(
+        """
+        SELECT p.* FROM people p
         WHERE p.isHiddenToOther = 0
           AND (
             p.isNamedByUser = 1
@@ -72,11 +85,20 @@ interface PersonDao {
     @Update
     suspend fun updatePerson(person: PersonEntity)
 
-    @Query("UPDATE people SET name = :name, isNamedByUser = 1, isHiddenToOther = 0 WHERE personId = :personId")
+    @Query("UPDATE people SET name = :name, isNamedByUser = 1, isHiddenToOther = 0, decisionState = 'KEPT' WHERE personId = :personId")
     suspend fun updatePersonName(personId: Long, name: String)
 
-    @Query("UPDATE people SET name = :newName, isNamedByUser = 1, isHiddenToOther = 0 WHERE personId = :personId")
+    @Query("UPDATE people SET name = :newName, isNamedByUser = 1, isHiddenToOther = 0, decisionState = 'KEPT' WHERE personId = :personId")
     suspend fun markPersonNamedByUser(personId: Long, newName: String)
+
+    @Query("UPDATE people SET isHiddenToOther = 1, decisionState = 'MOVED_TO_OTHER' WHERE personId = :personId")
+    suspend fun movePersonToOtherSql(personId: Long)
+
+    @Query("UPDATE people SET isHiddenToOther = 0, decisionState = 'UNDECIDED' WHERE personId = :personId")
+    suspend fun restorePersonFromOtherSql(personId: Long)
+
+    @Query("UPDATE people SET name = :newName, isNamedByUser = 1, isHiddenToOther = 0, decisionState = 'KEPT' WHERE personId = :personId")
+    suspend fun markPersonKeptSql(personId: Long, newName: String)
 
     @Query(
         """
@@ -102,10 +124,10 @@ interface PersonDao {
     @Query("UPDATE people SET faceCount = :count WHERE personId = :personId")
     suspend fun updatePersonFaceCount(personId: Long, count: Int)
 
-    @Query("UPDATE people SET isHiddenToOther = 1 WHERE personId = :personId")
+    @Query("UPDATE people SET isHiddenToOther = 1, decisionState = 'MOVED_TO_OTHER' WHERE personId = :personId")
     suspend fun setPersonHiddenFlag(personId: Long)
 
-    @Query("UPDATE people SET isHiddenToOther = 0 WHERE personId = :personId")
+    @Query("UPDATE people SET isHiddenToOther = 0, decisionState = 'UNDECIDED' WHERE personId = :personId")
     suspend fun clearPersonHiddenFlag(personId: Long)
 
     @Query("DELETE FROM people WHERE personId = :personId")
@@ -143,7 +165,7 @@ interface PersonDao {
     @Transaction
     suspend fun hidePersonToOther(personId: Long) {
         val affectedMediaIds = getMediaIdsForPerson(personId)
-        setPersonHiddenFlag(personId)
+        movePersonToOtherSql(personId)
         if (affectedMediaIds.isNotEmpty()) {
             syncHasFacesForMediaIds(affectedMediaIds)
         }
@@ -151,7 +173,7 @@ interface PersonDao {
 
     @Transaction
     suspend fun unhidePersonFromOther(personId: Long) {
-        clearPersonHiddenFlag(personId)
+        restorePersonFromOtherSql(personId)
         val affectedMediaIds = getMediaIdsForPerson(personId)
         if (affectedMediaIds.isNotEmpty()) {
             syncHasFacesForMediaIds(affectedMediaIds)
@@ -160,13 +182,7 @@ interface PersonDao {
 
     @Transaction
     suspend fun movePersonToOther(personId: Long) {
-        val affectedMediaIds = getMediaIdsForPerson(personId)
-        deleteCrossRefsForPerson(personId)
-        unassignFacesForPerson(personId)
-        deletePerson(personId)
-        if (affectedMediaIds.isNotEmpty()) {
-            syncHasFacesForMediaIds(affectedMediaIds)
-        }
+        hidePersonToOther(personId)
     }
 
     @Query(
@@ -289,13 +305,19 @@ interface PersonDao {
         val resolvedName = newName.trim().removePrefix("@").trim().ifBlank { target.name }
         val isDefaultPlaceholder = resolvedName.matches(Regex("^Person\\s+\\d+$", RegexOption.IGNORE_CASE))
         val shouldMarkNamed = target.isNamedByUser || anySourceNamed || !isDefaultPlaceholder
+        val resolvedDecisionState = if (shouldMarkNamed || target.decisionState == "KEPT") {
+            "KEPT"
+        } else {
+            "UNDECIDED"
+        }
 
         updatePerson(
             target.copy(
                 name = resolvedName,
                 faceCount = totalMedia,
                 isNamedByUser = shouldMarkNamed,
-                isHiddenToOther = false
+                isHiddenToOther = false,
+                decisionState = resolvedDecisionState
             )
         )
         if (affectedMediaIds.isNotEmpty()) {

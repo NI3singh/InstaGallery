@@ -40,6 +40,14 @@ class GalleryRepository(
     val allPeople: Flow<List<PersonEntity>> = personDao.getVisiblePeopleFlow()
 
     /**
+     * Dedicated setup Flow that returns all profiles (including hidden) ordered by faceCount DESC, personId ASC
+     * without sorting by isNamedByUser or decisionState.
+     */
+    val allPeopleForSetup: Flow<List<PersonEntity>> = personDao.getAllPeopleForSetupFlow()
+
+    fun getAllPeopleForSetupFlow(): Flow<List<PersonEntity>> = personDao.getAllPeopleForSetupFlow()
+
+    /**
      * All detected people with >= 1 photo (excluding hidden), used for tiered onboarding filtering.
      */
     val allDetectedPeople: Flow<List<PersonEntity>> = personDao.getAllPeople()
@@ -290,6 +298,35 @@ class GalleryRepository(
         limit: Int = 8
     ): List<SimilarProfileCandidate> {
         return clusterManager.getSimilarProfilesFor(targetPersonId = personId, limit = limit)
+    }
+
+    suspend fun keepAndNamePerson(personId: Long, rawName: String) = withContext(Dispatchers.IO) {
+        val cleanName = rawName.trim().removePrefix("@").trim()
+        if (cleanName.isBlank()) {
+            personDao.hidePersonToOther(personId)
+            clusterManager.invalidateCache()
+            return@withContext
+        }
+        personDao.markPersonKeptSql(personId, cleanName)
+        val affectedMediaIds = personDao.getMediaIdsForPerson(personId)
+        if (affectedMediaIds.isNotEmpty()) {
+            personDao.syncHasFacesForMediaIds(affectedMediaIds)
+        }
+        clusterManager.invalidateCache()
+    }
+
+    suspend fun movePersonToOtherSql(personId: Long) = withContext(Dispatchers.IO) {
+        personDao.hidePersonToOther(personId)
+        clusterManager.invalidateCache()
+    }
+
+    suspend fun restorePersonFromOtherSql(personId: Long) = withContext(Dispatchers.IO) {
+        personDao.unhidePersonFromOther(personId)
+        clusterManager.invalidateCache()
+    }
+
+    suspend fun getPersonByIdSync(personId: Long): PersonEntity? = withContext(Dispatchers.IO) {
+        personDao.getPersonByIdSync(personId)
     }
 
     suspend fun hidePersonToOther(personId: Long) = withContext(Dispatchers.IO) {

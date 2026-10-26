@@ -103,8 +103,13 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
 
     private var maxProfilesSeen = 0
 
+    // Immutable slot order so cards NEVER re-sort or jump positions when Kept, Renamed, or Moved to @Other
+    private val orderLock = Any()
+    private val lockedOrderIds = mutableListOf<Long>()
+    private val initialPhotoCountMap = mutableMapOf<Long, Int>()
+    private val mergedDeletedIds = mutableSetOf<Long>()
+
     private val _editedNames = MutableStateFlow<Map<Long, String>>(emptyMap())
-    private val _decisionMap = MutableStateFlow<Map<Long, ProfileDecisionState>>(emptyMap())
     private val _userSelectedFilterMode = MutableStateFlow<SetupFilterMode?>(null)
     private val _autoHideSinglePhotoStrangers = MutableStateFlow(true)
     private val _quickNameChips = MutableStateFlow(DEFAULT_QUICK_NAME_CHIPS)
@@ -116,9 +121,6 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
     private val _isSavingSetup = MutableStateFlow(false)
     private val _hasStartedScan = MutableStateFlow(false)
     private val _isMediaStoreScanFinished = MutableStateFlow(false)
-
-    // Keep track of profiles touched during the current session so cards don't vanish mid-session
-    private val _sessionTouchedIds = MutableStateFlow<Set<Long>>(emptySet())
 
     private data class ScanMetrics(
         val processed: Int,
@@ -139,38 +141,54 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     /**
-     * Observes all detected profiles (including ones marked `isHiddenToOther = true` during this session)
-     * so `ALL_DETECTED` and session cards marked `MOVED_TO_OTHER` can be undone without vanishing.
+     * Observes all setup profiles (both `isHiddenToOther = 0` and `isHiddenToOther = 1`) from
+     * `personDao.getAllPeopleForSetupFlow()` and locks their slot order in `lockedOrderIds`.
      */
-    private val allPeopleCardsFlow: Flow<List<PersonPreviewCard>> = combine(
-        galleryRepository.allPeopleIncludeHidden,
-        _sessionTouchedIds
-    ) { people, sessionTouched ->
-        // Include all non-hidden profiles plus any hidden profiles that were moved to @Other or present
-        people.filter { person ->
-            !person.isHiddenToOther || sessionTouched.contains(person.personId) || person.faceCount >= 1
-        }
-    }.mapLatest { people ->
-        if (people.isEmpty()) {
-            emptyList()
-        } else {
-            withContext(Dispatchers.IO) {
-                people.map { person ->
-                    val samplePhotos = galleryRepository.getSamplePhotosForPersonSync(person.personId, limit = 3)
-                    PersonPreviewCard(
-                        person = person,
-                        sampleMedia = samplePhotos,
-                        photoCount = person.faceCount.coerceAtLeast(samplePhotos.size),
-                        reelCount = 0
-                    )
+    private val allPeopleCardsFlow: Flow<List<PersonPreviewCard>> =
+        galleryRepository.getAllPeopleForSetupFlow().mapLatest { people ->
+            if (people.isEmpty()) {
+                emptyList()
+            } else {
+                withContext(Dispatchers.IO) {
+                    val rawCards = people.map { person ->
+                        val samplePhotos = galleryRepository.getSamplePhotosForPersonSync(person.personId, limit = 3)
+                        val count = person.faceCount.coerceAtLeast(samplePhotos.size)
+                        PersonPreviewCard(
+                            person = person,
+                            sampleMedia = samplePhotos,
+                            photoCount = count,
+                            reelCount = 0
+                        )
+                    }
+
+                    synchronized(orderLock) {
+                        val currentIds = rawCards.asSequence().map { it.person.personId }.toHashSet()
+                        // Remove any personId that was deleted via a profile merge (or no longer exists in DB)
+                        lockedOrderIds.removeAll { id -> id in mergedDeletedIds || id !in currentIds }
+
+                        // Append any newly discovered personId in its initial (faceCount DESC, personId ASC) order
+                        for (card in rawCards) {
+                            val id = card.person.personId
+                            if (id !in lockedOrderIds) {
+                                lockedOrderIds.add(id)
+                            }
+                            val prevInitial = initialPhotoCountMap[id] ?: 0
+                            if (card.photoCount > prevInitial) {
+                                initialPhotoCountMap[id] = card.photoCount
+                            }
+                        }
+
+                        rawCards.sortedBy { card ->
+                            val idx = lockedOrderIds.indexOf(card.person.personId)
+                            if (idx >= 0) idx else Int.MAX_VALUE
+                        }
+                    }
                 }
             }
         }
-    }
 
     private data class SetupConfigState(
         val editedNames: Map<Long, String>,
-        val explicitDecisions: Map<Long, ProfileDecisionState>,
         val userFilterMode: SetupFilterMode?,
         val autoHideStrangers: Boolean,
         val quickChips: List<String>
@@ -178,14 +196,12 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
 
     private val setupConfigFlow = combine(
         _editedNames,
-        _decisionMap,
         _userSelectedFilterMode,
         _autoHideSinglePhotoStrangers,
         _quickNameChips
-    ) { editedNames, explicitDecisions, userFilterMode, autoHideStrangers, quickChips ->
+    ) { editedNames, userFilterMode, autoHideStrangers, quickChips ->
         SetupConfigState(
             editedNames = editedNames,
-            explicitDecisions = explicitDecisions,
             userFilterMode = userFilterMode,
             autoHideStrangers = autoHideStrangers,
             quickChips = quickChips
@@ -216,6 +232,16 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         )
     }
 
+    private fun resolveDecisionFromEntity(person: PersonEntity): ProfileDecisionState {
+        return when (person.decisionState) {
+            "KEPT" -> ProfileDecisionState.KEPT
+            "MOVED_TO_OTHER" -> ProfileDecisionState.MOVED_TO_OTHER
+            else -> if (person.isHiddenToOther) ProfileDecisionState.MOVED_TO_OTHER
+            else if (person.isNamedByUser) ProfileDecisionState.KEPT
+            else ProfileDecisionState.UNDECIDED
+        }
+    }
+
     val uiState: StateFlow<OnboardingUiState> = combine(
         scanMetricsFlow,
         allPeopleCardsFlow,
@@ -239,18 +265,11 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                 (effectiveTotal == 0 && !isWorkerActive)
             )
 
-        // Build resolved decisionMap for every detected card:
-        // Default state: if isNamedByUser == true -> KEPT; if isHiddenToOther == true -> MOVED_TO_OTHER; otherwise UNDECIDED
+        // Single SQLite source of truth for decisions
         val resolvedDecisions = buildMap {
             for (card in allCards) {
                 val p = card.person
-                val explicit = config.explicitDecisions[p.personId]
-                val resolved = explicit ?: when {
-                    p.isHiddenToOther -> ProfileDecisionState.MOVED_TO_OTHER
-                    p.isNamedByUser -> ProfileDecisionState.KEPT
-                    else -> ProfileDecisionState.UNDECIDED
-                }
-                put(p.personId, resolved)
+                put(p.personId, resolveDecisionFromEntity(p))
             }
         }
 
@@ -261,20 +280,24 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
             SetupFilterMode.ALL_DETECTED
         }
 
-        // Split between Top People (photoCount >= 2 || isNamedByUser) and All Detected (photoCount >= 1) in ViewModel
-        val topPeopleCards = allCards.filter { card ->
-            val p = card.person
-            val hasExplicitDecision = config.explicitDecisions[p.personId] != null
-            val isVisibleOrSessionTouched = !p.isHiddenToOther || hasExplicitDecision
-            isVisibleOrSessionTouched && (
-                card.photoCount >= 2 ||
-                    p.isNamedByUser ||
-                    hasExplicitDecision
-                )
-        }
+        val (allDetectedCards, topPeopleCards) = synchronized(orderLock) {
+            val sortedAll = allCards
+                .filter { it.photoCount >= 1 }
+                .sortedBy { lockedOrderIds.indexOf(it.person.personId) }
 
-        val allDetectedCards = allCards.filter { card ->
-            card.photoCount >= 1
+            val hasThreePlusProfiles = sortedAll.count { card ->
+                (initialPhotoCountMap[card.person.personId] ?: card.photoCount) >= 3
+            } >= 3
+            val minTopPhotos = if (hasThreePlusProfiles) 3 else 2
+
+            val sortedTop = sortedAll
+                .filter { card ->
+                    val initialPhotos = initialPhotoCountMap[card.person.personId] ?: card.photoCount
+                    initialPhotos >= minTopPhotos
+                }
+                .sortedBy { lockedOrderIds.indexOf(it.person.personId) }
+
+            sortedAll to sortedTop
         }
 
         val displayedCards = when (effectiveFilterMode) {
@@ -284,7 +307,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
 
         // Monotonic counter guard during active scanning so profilesCreated never flickers downward
         val rawVisibleDetectedCount = maxOf(
-            allDetectedCards.count { !it.person.isHiddenToOther },
+            allDetectedCards.size,
             if (workerProfilesCount >= 0) workerProfilesCount else 0
         )
         if (!isScanComplete) {
@@ -392,23 +415,24 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                 ?.takeIf { it.isNotEmpty() }
                 ?: targetPerson.name
 
+            synchronized(orderLock) {
+                mergedDeletedIds.add(sourcePersonId)
+                lockedOrderIds.remove(sourcePersonId)
+                initialPhotoCountMap.remove(sourcePersonId)
+            }
+
             galleryRepository.mergeProfiles(
                 targetId = targetPerson.personId,
                 sourceIds = listOf(sourcePersonId),
                 finalName = resolvedTargetName
             )
-
-            val updatedDecisions = _decisionMap.value.toMutableMap()
-            updatedDecisions.remove(sourcePersonId)
-            updatedDecisions[targetPerson.personId] = ProfileDecisionState.KEPT
-            _decisionMap.value = updatedDecisions
+            galleryRepository.keepAndNamePerson(targetPerson.personId, resolvedTargetName)
 
             val updatedNames = _editedNames.value.toMutableMap()
             updatedNames.remove(sourcePersonId)
             updatedNames[targetPerson.personId] = resolvedTargetName
             _editedNames.value = updatedNames
 
-            _sessionTouchedIds.value = _sessionTouchedIds.value + targetPerson.personId
             prependCustomQuickChip(resolvedTargetName)
 
             val cleanDisplay = resolvedTargetName.removePrefix("@").trim()
@@ -430,25 +454,30 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                 ?.takeIf { it.isNotEmpty() }
                 ?: currentPerson.name
 
+            synchronized(orderLock) {
+                mergedDeletedIds.add(lookalikePersonId)
+                lockedOrderIds.remove(lookalikePersonId)
+                initialPhotoCountMap.remove(lookalikePersonId)
+            }
+
             galleryRepository.mergeProfiles(
                 targetId = currentPerson.personId,
                 sourceIds = listOf(lookalikePersonId),
                 finalName = resolvedCurrentName
             )
 
-            val updatedDecisions = _decisionMap.value.toMutableMap()
-            updatedDecisions.remove(lookalikePersonId)
-            if (isCustomPersonName(resolvedCurrentName) || currentPerson.isNamedByUser) {
-                updatedDecisions[currentPerson.personId] = ProfileDecisionState.KEPT
+            if (isCustomPersonName(resolvedCurrentName) ||
+                currentPerson.isNamedByUser ||
+                currentPerson.decisionState == "KEPT"
+            ) {
+                galleryRepository.keepAndNamePerson(currentPerson.personId, resolvedCurrentName)
             }
-            _decisionMap.value = updatedDecisions
 
             val updatedNames = _editedNames.value.toMutableMap()
             updatedNames.remove(lookalikePersonId)
             updatedNames[currentPerson.personId] = resolvedCurrentName
             _editedNames.value = updatedNames
 
-            _sessionTouchedIds.value = _sessionTouchedIds.value + currentPerson.personId
             prependCustomQuickChip(resolvedCurrentName)
 
             val refreshed = galleryRepository.getSimilarProfilesFor(currentPerson.personId, limit = 8)
@@ -470,22 +499,22 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
                 _editedNames.value[primaryId] ?: "Person $primaryId"
             }
 
+            synchronized(orderLock) {
+                for (id in sourceIds) {
+                    mergedDeletedIds.add(id)
+                    lockedOrderIds.remove(id)
+                    initialPhotoCountMap.remove(id)
+                }
+            }
+
             if (sourceIds.isNotEmpty()) {
                 galleryRepository.mergeProfiles(
                     targetId = primaryId,
                     sourceIds = sourceIds,
                     finalName = cleanName
                 )
-            } else {
-                galleryRepository.renamePerson(primaryId, cleanName)
             }
-
-            val updatedDecisions = _decisionMap.value.toMutableMap()
-            for (id in sourceIds) {
-                updatedDecisions.remove(id)
-            }
-            updatedDecisions[primaryId] = ProfileDecisionState.KEPT
-            _decisionMap.value = updatedDecisions
+            galleryRepository.keepAndNamePerson(primaryId, cleanName)
 
             val updatedNames = _editedNames.value.toMutableMap()
             for (id in sourceIds) {
@@ -494,7 +523,6 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
             updatedNames[primaryId] = cleanName
             _editedNames.value = updatedNames
 
-            _sessionTouchedIds.value = _sessionTouchedIds.value + primaryId
             prependCustomQuickChip(cleanName)
 
             _feedbackMessage.value = "Merged ${distinctIds.size} profiles into @$cleanName"
@@ -515,15 +543,10 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         updatedNames[personId] = cleanName
         _editedNames.value = updatedNames
 
-        val updatedDecisions = _decisionMap.value.toMutableMap()
-        updatedDecisions[personId] = ProfileDecisionState.KEPT
-        _decisionMap.value = updatedDecisions
-
-        _sessionTouchedIds.value = _sessionTouchedIds.value + personId
         prependCustomQuickChip(cleanName)
 
         viewModelScope.launch {
-            galleryRepository.renamePerson(personId, cleanName)
+            galleryRepository.keepAndNamePerson(personId, cleanName)
             if (_similarCandidatesForPersonId.value == personId) {
                 _similarCandidates.value = galleryRepository.getSimilarProfilesFor(personId, limit = 8)
             }
@@ -531,21 +554,17 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun toggleMoveToOther(personId: Long) {
-        val currentDecision = uiState.value.decisionMap[personId] ?: ProfileDecisionState.UNDECIDED
-        val updatedDecisions = _decisionMap.value.toMutableMap()
-        _sessionTouchedIds.value = _sessionTouchedIds.value + personId
+        viewModelScope.launch {
+            val dbPerson = galleryRepository.getPersonByIdSync(personId)
+                ?: uiState.value.allDetectedPeople.firstOrNull { it.person.personId == personId }?.person
 
-        if (currentDecision == ProfileDecisionState.MOVED_TO_OTHER) {
-            updatedDecisions[personId] = ProfileDecisionState.UNDECIDED
-            _decisionMap.value = updatedDecisions
-            viewModelScope.launch {
-                galleryRepository.unhidePersonFromOther(personId)
-            }
-        } else {
-            updatedDecisions[personId] = ProfileDecisionState.MOVED_TO_OTHER
-            _decisionMap.value = updatedDecisions
-            viewModelScope.launch {
-                galleryRepository.hidePersonToOther(personId)
+            val isCurrentlyMovedToOther = dbPerson?.decisionState == "MOVED_TO_OTHER" ||
+                (dbPerson?.decisionState != "KEPT" && dbPerson?.isHiddenToOther == true)
+
+            if (isCurrentlyMovedToOther) {
+                galleryRepository.restorePersonFromOtherSql(personId)
+            } else {
+                galleryRepository.movePersonToOtherSql(personId)
             }
         }
     }
@@ -565,11 +584,14 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
 
     fun triggerFullRescan() {
         maxProfilesSeen = 0
+        synchronized(orderLock) {
+            lockedOrderIds.clear()
+            initialPhotoCountMap.clear()
+            mergedDeletedIds.clear()
+        }
         _hasStartedScan.value = true
         _isMediaStoreScanFinished.value = false
         _editedNames.value = emptyMap()
-        _decisionMap.value = emptyMap()
-        _sessionTouchedIds.value = emptySet()
         _similarCandidates.value = emptyList()
         _similarCandidatesForPersonId.value = null
         viewModelScope.launch {
@@ -583,13 +605,10 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         current[personId] = newName
         _editedNames.value = current
 
-        val currentDecision = _decisionMap.value[personId]
+        val currentDecision = uiState.value.decisionMap[personId]
         if (newName.isNotBlank() && currentDecision == ProfileDecisionState.MOVED_TO_OTHER) {
-            val updated = _decisionMap.value.toMutableMap()
-            updated[personId] = ProfileDecisionState.KEPT
-            _decisionMap.value = updated
             viewModelScope.launch {
-                galleryRepository.unhidePersonFromOther(personId)
+                galleryRepository.keepAndNamePerson(personId, newName)
             }
         } else if (isCustomPersonName(newName)) {
             prependCustomQuickChip(newName)
@@ -601,25 +620,18 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun setPersonUnknownStatus(personId: Long, isUnknown: Boolean, defaultName: String = "") {
-        val updatedDecisions = _decisionMap.value.toMutableMap()
-        _sessionTouchedIds.value = _sessionTouchedIds.value + personId
-        if (isUnknown) {
-            updatedDecisions[personId] = ProfileDecisionState.MOVED_TO_OTHER
-            _decisionMap.value = updatedDecisions
-            viewModelScope.launch {
-                galleryRepository.hidePersonToOther(personId)
-            }
-        } else {
-            updatedDecisions[personId] = ProfileDecisionState.KEPT
-            _decisionMap.value = updatedDecisions
-            val existingName = _editedNames.value[personId]
-            if (existingName != null && existingName.isBlank() && defaultName.isNotBlank()) {
+        viewModelScope.launch {
+            if (isUnknown) {
+                galleryRepository.movePersonToOtherSql(personId)
+            } else {
+                val existingName = _editedNames.value[personId]?.takeIf { it.isNotBlank() }
+                    ?: defaultName.takeIf { it.isNotBlank() }
+                    ?: galleryRepository.getPersonByIdSync(personId)?.name
+                    ?: "Person $personId"
                 val names = _editedNames.value.toMutableMap()
-                names[personId] = defaultName
+                names[personId] = existingName
                 _editedNames.value = names
-            }
-            viewModelScope.launch {
-                galleryRepository.unhidePersonFromOther(personId)
+                galleryRepository.keepAndNamePerson(personId, existingName)
             }
         }
     }
@@ -634,22 +646,17 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
 
         val currentDecisions = uiState.value.decisionMap
         val allAlreadyMoved = singlePhotoIds.all { currentDecisions[it] == ProfileDecisionState.MOVED_TO_OTHER }
-        val updated = _decisionMap.value.toMutableMap()
-        _sessionTouchedIds.value = _sessionTouchedIds.value + singlePhotoIds
 
         viewModelScope.launch {
             if (allAlreadyMoved) {
                 for (id in singlePhotoIds) {
-                    updated[id] = ProfileDecisionState.UNDECIDED
-                    galleryRepository.unhidePersonFromOther(id)
+                    galleryRepository.restorePersonFromOtherSql(id)
                 }
             } else {
                 for (id in singlePhotoIds) {
-                    updated[id] = ProfileDecisionState.MOVED_TO_OTHER
-                    galleryRepository.hidePersonToOther(id)
+                    galleryRepository.movePersonToOtherSql(id)
                 }
             }
-            _decisionMap.value = updated
         }
     }
 
@@ -685,13 +692,14 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         }
 
         // Only pass custom-renamed or explicitly kept profiles into namedProfiles so unnamed "Person X"
-        // profiles aren't falsely marked as user-named unless the user typed a custom name.
+        // profiles aren't falsely marked as user-named unless the user typed a custom name or kept them.
         val activeNamesToApply = buildMap {
             for (card in state.allDetectedPeople) {
                 val id = card.person.personId
                 if (unknowns.contains(id)) continue
+                val decision = decisions[id] ?: ProfileDecisionState.UNDECIDED
                 val editedName = (namesToSave[id] ?: card.person.name).trim()
-                if (isCustomPersonName(editedName) || card.person.isNamedByUser) {
+                if (decision == ProfileDecisionState.KEPT || isCustomPersonName(editedName) || card.person.isNamedByUser) {
                     put(id, editedName)
                 }
             }
