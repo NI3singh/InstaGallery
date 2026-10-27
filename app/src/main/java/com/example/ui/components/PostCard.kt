@@ -14,10 +14,13 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,15 +39,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FilledExtendedIcons
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.outlined.BookmarkBorder
-import androidx.compose.material.icons.outlined.ChatBubbleOutline
-import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.OutlinedExtendedIcons
 import androidx.compose.material.icons.outlined.Person
-import androidx.compose.material.icons.outlined.Send
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -55,11 +54,13 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -69,9 +70,11 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -81,6 +84,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.data.local.OnboardingPreferences
 import com.example.data.local.entity.MediaWithAuthors
 import com.example.data.local.entity.PersonEntity
 import com.example.ui.theme.IgBlack
@@ -91,12 +95,11 @@ import com.example.ui.theme.IgSurfaceModal
 import com.example.ui.theme.IgSurfacePill
 import com.example.ui.theme.IgTextPrimary
 import com.example.ui.theme.IgTextSecondary
-import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun PostCard(
     item: MediaWithAuthors,
@@ -106,16 +109,25 @@ fun PostCard(
     allPeople: List<PersonEntity> = emptyList(),
     onTagPerson: ((Long, Long) -> Unit)? = null,
     onUntagPerson: ((Long, Long) -> Unit)? = null,
+    onImageClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
     val media = item.media
     val authors = item.authors
+
+    remember(context) {
+        OnboardingPreferences.init(context)
+        true
+    }
+    val heartTheme by OnboardingPreferences.heartThemeFlow.collectAsState()
 
     var showMenu by remember { mutableStateOf(false) }
     var showInfoSheet by remember { mutableStateOf(false) }
     var showTagOverlay by remember { mutableStateOf(false) }
-    var showDoubleTapHeart by remember { mutableStateOf(false) }
+    var showHeartThemeSheet by remember { mutableStateOf(false) }
+    val activeBursts = remember { mutableStateListOf<HeartBurstInstance>() }
 
     var decodedAspectRatio by remember(media.mediaId) {
         val dbRatio = if (media.width > 0 && media.height > 0 && !(media.width == 1080 && media.height == 1350)) {
@@ -128,17 +140,20 @@ fun PostCard(
 
     var forceCropMode by rememberSaveable(media.mediaId) { mutableStateOf(false) }
 
-    LaunchedEffect(showDoubleTapHeart) {
-        if (showDoubleTapHeart) {
-            delay(750)
-            showDoubleTapHeart = false
-        }
-    }
-
     val formattedDate = remember(media.dateAddedSeconds) {
         val date = Date(media.dateAddedSeconds * 1000L)
         val sdf = SimpleDateFormat("MMMM d, yyyy", Locale.getDefault())
         sdf.format(date)
+    }
+
+    val formattedShortDate = remember(media.dateAddedSeconds) {
+        val date = Date(media.dateAddedSeconds * 1000L)
+        val sdf = SimpleDateFormat("MMM d", Locale.getDefault())
+        sdf.format(date)
+    }
+
+    val primaryAuthorName = remember(authors) {
+        if (authors.isEmpty()) "Other" else authors[0].name.removePrefix("@")
     }
 
     val authorHandles = remember(authors) {
@@ -146,22 +161,24 @@ fun PostCard(
             "@Other"
         } else {
             when (authors.size) {
-                1 -> "@${authors[0].name}"
-                2 -> "@${authors[0].name} and @${authors[1].name}"
+                1 -> {
+                    val p = authors[0]
+                    if (p.isNamedByUser && !p.name.startsWith("Person ")) p.name.removePrefix("@") else "@${p.name.removePrefix("@")}"
+                }
+                2 -> "@${authors[0].name.removePrefix("@")} and @${authors[1].name.removePrefix("@")}"
                 else -> {
-                    val firstTwo = authors.take(2).joinToString(", ") { "@${it.name}" }
+                    val firstTwo = authors.take(2).joinToString(", ") { "@${it.name.removePrefix("@")}" }
                     val remaining = authors.size - 2
-                    if (remaining == 1) "$firstTwo and @${authors[2].name}"
+                    if (remaining == 1) "$firstTwo and @${authors[2].name.removePrefix("@")}"
                     else "$firstTwo and $remaining others"
                 }
             }
         }
     }
 
-    val taggedNames = remember(authors) {
-        if (authors.isEmpty()) "@Other"
-        else authors.joinToString(", ") { "@${it.name}" }
-    }
+    val currentIsFavorite by rememberUpdatedState(media.isFavorite)
+    val currentHasAuthors by rememberUpdatedState(authors.isNotEmpty())
+    val currentOnImageClick by rememberUpdatedState(onImageClick)
 
     val containerAspectRatio = if (forceCropMode) 4f / 5f else decodedAspectRatio
     val imageContentScale = if (forceCropMode) ContentScale.Crop else ContentScale.Fit
@@ -172,11 +189,11 @@ fun PostCard(
             .background(IgBlack)
             .testTag("post_card_${media.mediaId}")
     ) {
-        // Post Header
+        // 1. Refined Post Header
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+                .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -194,28 +211,36 @@ fun PostCard(
             ) {
                 OverlappingAvatars(
                     authors = authors,
-                    avatarSize = 32.dp,
+                    avatarSize = 34.dp,
                     overlap = (-10).dp
                 )
 
                 Spacer(modifier = Modifier.width(10.dp))
 
-                Column {
-                    Text(
-                        text = authorHandles,
-                        fontSize = 13.5.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = IgTextPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = formattedDate,
-                        fontSize = 11.sp,
-                        color = IgTextSecondary,
-                        maxLines = 1
-                    )
-                }
+                Text(
+                    text = buildAnnotatedString {
+                        withStyle(
+                            SpanStyle(
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White
+                            )
+                        ) {
+                            append(authorHandles)
+                        }
+                        withStyle(
+                            SpanStyle(
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Normal,
+                                color = Color(0xFF8E8E93)
+                            )
+                        ) {
+                            append(" • $formattedShortDate")
+                        }
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
 
             Box {
@@ -243,6 +268,13 @@ fun PostCard(
                             showInfoSheet = true
                         }
                     )
+                    DropdownMenuItem(
+                        text = { Text("Heart Reaction Color", color = IgTextPrimary) },
+                        onClick = {
+                            showMenu = false
+                            showHeartThemeSheet = true
+                        }
+                    )
                     if (authors.isNotEmpty()) {
                         DropdownMenuItem(
                             text = { Text("View @${authors[0].name} profile", color = IgTextPrimary) },
@@ -263,22 +295,32 @@ fun PostCard(
             }
         }
 
-        // Media Viewport (True Intrinsic Aspect Ratio with Uncropped ContentScale.Fit by default)
+        // 2. Media Viewport (True Intrinsic Aspect Ratio with Tap-Coordinate Heart Burst)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(containerAspectRatio)
                 .background(Color(0xFF0A0A0A))
-                .pointerInput(media.mediaId, media.isFavorite, authors.size) {
+                .pointerInput(media.mediaId) {
                     detectTapGestures(
-                        onDoubleTap = {
-                            showDoubleTapHeart = true
-                            if (!media.isFavorite) {
+                        onDoubleTap = { tapOffset ->
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            val randomTilt = ((-15..15).random()).toFloat()
+                            activeBursts.add(
+                                HeartBurstInstance(
+                                    id = System.nanoTime(),
+                                    tapOffset = tapOffset,
+                                    rotationDeg = randomTilt
+                                )
+                            )
+                            if (!currentIsFavorite) {
                                 onToggleFavorite(media.mediaId, false)
                             }
                         },
                         onTap = {
-                            if (authors.isNotEmpty()) {
+                            if (currentOnImageClick != null) {
+                                currentOnImageClick?.invoke()
+                            } else if (currentHasAuthors) {
                                 showTagOverlay = !showTagOverlay
                             }
                         }
@@ -299,27 +341,6 @@ fun PostCard(
                 },
                 modifier = Modifier.fillMaxSize()
             )
-
-            // Double-Tap Big Animated Heart Overlay
-            androidx.compose.animation.AnimatedVisibility(
-                visible = showDoubleTapHeart,
-                enter = scaleIn(
-                    animationSpec = spring(
-                        dampingRatio = Spring.DampingRatioMediumBouncy,
-                        stiffness = Spring.StiffnessLow
-                    ),
-                    initialScale = 0.3f
-                ) + fadeIn(),
-                exit = scaleOut(targetScale = 1.2f) + fadeOut(),
-                modifier = Modifier.align(Alignment.Center)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Favorite,
-                    contentDescription = "Liked",
-                    tint = Color.White.copy(alpha = 0.92f),
-                    modifier = Modifier.size(96.dp)
-                )
-            }
 
             // Floating Instagram-style Person Tag Bubbles on Photo
             androidx.compose.animation.AnimatedVisibility(
@@ -394,108 +415,136 @@ fun PostCard(
                     modifier = Modifier.size(14.dp)
                 )
             }
+
+            // Top overlay: Pure-Canvas Tap-Coordinate Heart Burst Engine
+            TapHeartBurstOverlay(
+                bursts = activeBursts,
+                heartTheme = heartTheme,
+                onBurstFinished = { id -> activeBursts.removeAll { it.id == id } }
+            )
         }
 
-        // Instagram Post Action Bar
+        // 3. Polished Bottom Action Bar
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(44.dp)
-                .padding(horizontal = 14.dp),
+                .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                horizontalArrangement = Arrangement.spacedBy(18.dp)
             ) {
-                // Heart Like Button with subtle spring pop
+                // Heart Like Button with scale bounce + long-press HeartThemePickerSheet
                 val heartScale by animateFloatAsState(
                     targetValue = if (media.isFavorite) 1.15f else 1.0f,
                     animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
                     label = "heart_scale"
                 )
                 val heartTint by animateColorAsState(
-                    targetValue = if (media.isFavorite) IgRed else Color.White,
+                    targetValue = if (media.isFavorite) heartTheme.primaryColor else Color.White,
                     label = "heart_tint"
                 )
 
-                IconButton(
-                    onClick = { onToggleFavorite(media.mediaId, media.isFavorite) },
+                Box(
                     modifier = Modifier
                         .size(26.dp)
                         .scale(heartScale)
-                        .testTag("like_button_${media.mediaId}")
+                        .combinedClickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onToggleFavorite(media.mediaId, media.isFavorite)
+                            },
+                            onLongClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                showHeartThemeSheet = true
+                            }
+                        )
+                        .testTag("like_button_${media.mediaId}"),
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = if (media.isFavorite) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
+                        imageVector = if (media.isFavorite) FilledExtendedIcons.Favorite else OutlinedExtendedIcons.FavoriteBorder,
                         contentDescription = if (media.isFavorite) "Liked" else "Like",
                         tint = heartTint,
                         modifier = Modifier.size(24.dp)
                     )
                 }
 
-                // Comment / Details & Tags Button
-                IconButton(
-                    onClick = { showInfoSheet = true },
-                    modifier = Modifier.size(26.dp)
+                // Comment Bubble Button
+                Box(
+                    modifier = Modifier
+                        .size(26.dp)
+                        .bounceClick { showInfoSheet = true },
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Outlined.ChatBubbleOutline,
+                        imageVector = OutlinedExtendedIcons.ChatBubbleOutline,
                         contentDescription = "Details & Tags",
                         tint = Color.White,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(23.dp)
                     )
                 }
 
-                // Share Button
-                IconButton(
-                    onClick = { shareMedia(context, media.uri, media.isVideo) },
-                    modifier = Modifier.size(26.dp)
+                // Share Paper Plane Button
+                Box(
+                    modifier = Modifier
+                        .size(26.dp)
+                        .bounceClick { shareMedia(context, media.uri, media.isVideo) },
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Outlined.Send,
+                        imageVector = OutlinedExtendedIcons.Send,
                         contentDescription = "Share",
                         tint = Color.White,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(23.dp)
                     )
                 }
             }
 
             // Bookmark Button
-            IconButton(
-                onClick = { onToggleBookmark(media.mediaId, media.isBookmarked) },
+            Box(
                 modifier = Modifier
                     .size(26.dp)
-                    .testTag("bookmark_button_${media.mediaId}")
+                    .bounceClick { onToggleBookmark(media.mediaId, media.isBookmarked) }
+                    .testTag("bookmark_button_${media.mediaId}"),
+                contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = if (media.isBookmarked) Icons.Default.Bookmark else Icons.Outlined.BookmarkBorder,
+                    imageVector = if (media.isBookmarked) FilledExtendedIcons.Bookmark else OutlinedExtendedIcons.BookmarkBorder,
                     contentDescription = if (media.isBookmarked) "Saved" else "Save",
                     tint = Color.White,
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(23.dp)
                 )
             }
         }
 
-        // Captions & Metadata
+        // 4. Compact Native-Feeling Post Caption Footer
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 14.dp, end = 14.dp, bottom = 18.dp)
+                .padding(horizontal = 14.dp)
         ) {
-            val taggedText = buildAnnotatedString {
-                withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = IgTextPrimary)) {
-                    append("Tagged: ")
+            val cleanDisplayName = remember(media.displayName) {
+                media.displayName.substringBeforeLast('.')
+            }
+            val captionText = buildAnnotatedString {
+                withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = Color.White)) {
+                    append("@$primaryAuthorName")
                 }
-                withStyle(SpanStyle(fontWeight = FontWeight.Normal, color = IgTextPrimary)) {
-                    append(taggedNames)
+                withStyle(SpanStyle(fontWeight = FontWeight.Normal, color = Color(0xFFE5E5EA))) {
+                    append("  $cleanDisplayName")
                 }
             }
             Text(
-                text = taggedText,
-                fontSize = 13.5.sp,
-                lineHeight = 18.sp,
+                text = captionText,
+                fontSize = 13.sp,
+                lineHeight = 17.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.clickable {
                     if (authors.isNotEmpty()) {
                         onAuthorClick(authors[0].personId)
@@ -505,14 +554,32 @@ fun PostCard(
                 }
             )
 
-            Spacer(modifier = Modifier.height(3.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             Text(
                 text = formattedDate,
-                fontSize = 11.5.sp,
-                color = IgTextSecondary
+                fontSize = 11.sp,
+                color = Color(0xFF737373)
             )
         }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        HorizontalDivider(
+            color = Color(0xFF141416),
+            thickness = 0.5.dp
+        )
+    }
+
+    if (showHeartThemeSheet) {
+        HeartThemePickerSheet(
+            currentTheme = heartTheme,
+            onSelectTheme = { selected ->
+                OnboardingPreferences.setHeartTheme(context, selected)
+                showHeartThemeSheet = false
+            },
+            onDismiss = { showHeartThemeSheet = false }
+        )
     }
 
     // Modal Bottom Sheet showing photo metadata, tagged people & manual tagging

@@ -18,19 +18,18 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.Movie
+import androidx.compose.material.icons.filled.FilledExtendedIcons
+import androidx.compose.material.icons.outlined.OutlinedExtendedIcons
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -53,7 +52,9 @@ import androidx.navigation.navArgument
 import coil.compose.AsyncImage
 import com.example.data.local.OnboardingPreferences
 import com.example.data.repository.GalleryRepository
+import com.example.ui.components.bounceClick
 import com.example.ui.screens.detail.PostDetailScreen
+import com.example.ui.screens.home.HomeFeedFilter
 import com.example.ui.screens.home.HomeFeedScreen
 import com.example.ui.screens.home.HomeViewModel
 import com.example.ui.screens.onboarding.FaceScanLoadingScreen
@@ -68,7 +69,6 @@ import com.example.ui.screens.profile.ProfileViewModel
 import com.example.ui.screens.reels.ReelsScreen
 import com.example.ui.screens.reels.ReelsViewModel
 import com.example.ui.theme.IgBlack
-import com.example.ui.theme.IgBorderNav
 import com.example.ui.theme.IgTextSecondary
 import java.io.File
 
@@ -86,6 +86,8 @@ fun InstaGalleryNavGraph(
     val topPersonAvatar = allPeople.firstOrNull()?.avatarCropPath ?: ""
 
     val onboardingViewModel: OnboardingViewModel = viewModel()
+    val homeViewModel: HomeViewModel = viewModel()
+    val homeUiState by homeViewModel.uiState.collectAsStateWithLifecycle()
 
     val showBottomBar = currentRoute != Screen.PermissionGate.route &&
         currentRoute != Screen.FaceScanning.route &&
@@ -105,7 +107,34 @@ fun InstaGalleryNavGraph(
             if (showBottomBar) {
                 InstaBottomNavigationBar(
                     currentRoute = currentRoute,
+                    isSavedFilterActive = currentRoute == Screen.Home.route && homeUiState.isFilteringBookmarks,
                     topPersonAvatar = topPersonAvatar,
+                    onHomeClick = {
+                        homeViewModel.setFilter(HomeFeedFilter.ALL)
+                        if (currentRoute != Screen.Home.route) {
+                            navController.navigate(Screen.Home.route) {
+                                popUpTo(Screen.Home.route) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        }
+                    },
+                    onSavedClick = {
+                        if (currentRoute != Screen.Home.route) {
+                            homeViewModel.setFilter(HomeFeedFilter.BOOKMARKED)
+                            navController.navigate(Screen.Home.route) {
+                                popUpTo(Screen.Home.route) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        } else {
+                            homeViewModel.toggleBookmarksFilter()
+                        }
+                    },
                     onNavigate = { targetRoute ->
                         navController.navigate(targetRoute) {
                             popUpTo(Screen.Home.route) {
@@ -229,7 +258,6 @@ fun InstaGalleryNavGraph(
                     )
                 }
             ) {
-                val homeViewModel: HomeViewModel = viewModel()
                 HomeFeedScreen(
                     viewModel = homeViewModel,
                     onPersonClick = { personId ->
@@ -346,77 +374,100 @@ fun InstaGalleryNavGraph(
 @Composable
 fun InstaBottomNavigationBar(
     currentRoute: String?,
+    isSavedFilterActive: Boolean,
     topPersonAvatar: String,
+    onHomeClick: () -> Unit,
+    onSavedClick: () -> Unit,
     onNavigate: (String) -> Unit
 ) {
-    Box(
+    Surface(
+        color = Color.Black,
         modifier = Modifier
             .fillMaxWidth()
-            .background(IgBlack)
+            .navigationBarsPadding()
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            HorizontalDivider(color = IgBorderNav, thickness = 1.dp)
+            HorizontalDivider(color = Color(0xFF1A1A1E), thickness = 0.5.dp)
 
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
-                    .windowInsetsPadding(WindowInsets.navigationBars)
-                    .padding(horizontal = 24.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceAround
+                    .height(48.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                // Tab 1: Home (Solid white house when active, stroke when inactive)
-                val isHomeActive = (currentRoute == Screen.Home.route)
+                // Slot 1: Home (Screen.Home)
+                val isHomeActive = (currentRoute == Screen.Home.route && !isSavedFilterActive)
                 Box(
                     modifier = Modifier
-                        .size(44.dp)
-                        .clickable { onNavigate(Screen.Home.route) }
+                        .size(48.dp)
+                        .bounceClick { onHomeClick() }
                         .testTag("nav_tab_home"),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = if (isHomeActive) Icons.Filled.Home else Icons.Outlined.Home,
+                        imageVector = if (isHomeActive) FilledExtendedIcons.Home else OutlinedExtendedIcons.Home,
                         contentDescription = "Home",
-                        tint = if (isHomeActive) Color.White else Color.White.copy(alpha = 0.7f),
-                        modifier = Modifier.size(26.dp)
+                        tint = if (isHomeActive) Color.White else Color.White.copy(alpha = 0.85f),
+                        modifier = Modifier.size(25.dp)
                     )
                 }
 
-                // Tab 2: Reels
+                // Slot 2: Reels (Screen.Reels)
                 val isReelsActive = (currentRoute == Screen.Reels.route)
                 Box(
                     modifier = Modifier
-                        .size(44.dp)
-                        .clickable { onNavigate(Screen.Reels.route) }
+                        .size(48.dp)
+                        .bounceClick { onNavigate(Screen.Reels.route) }
                         .testTag("nav_tab_reels"),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Outlined.Movie,
+                        imageVector = if (isReelsActive) FilledExtendedIcons.Movie else OutlinedExtendedIcons.Movie,
                         contentDescription = "Reels",
-                        tint = if (isReelsActive) Color.White else Color.White.copy(alpha = 0.7f),
-                        modifier = Modifier.size(26.dp)
+                        tint = if (isReelsActive) Color.White else Color.White.copy(alpha = 0.85f),
+                        modifier = Modifier.size(24.dp)
                     )
                 }
 
-                // Tab 3: People / Profile Avatar
+                // Slot 3: Saved / Favorites
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .bounceClick { onSavedClick() }
+                        .testTag("nav_tab_saved"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (isSavedFilterActive) FilledExtendedIcons.Bookmark else OutlinedExtendedIcons.BookmarkBorder,
+                        contentDescription = "Saved",
+                        tint = if (isSavedFilterActive) Color.White else Color.White.copy(alpha = 0.85f),
+                        modifier = Modifier.size(25.dp)
+                    )
+                }
+
+                // Slot 4: People & Profiles (Screen.People)
                 val isPeopleActive = (currentRoute == Screen.People.route || currentRoute?.startsWith("profile") == true)
                 Box(
                     modifier = Modifier
-                        .size(44.dp)
-                        .clickable { onNavigate(Screen.People.route) }
+                        .size(48.dp)
+                        .bounceClick { onNavigate(Screen.People.route) }
                         .testTag("nav_tab_people"),
                     contentAlignment = Alignment.Center
                 ) {
+                    val outerRingSize = if (isPeopleActive) 34.dp else 27.dp
                     Box(
                         modifier = Modifier
-                            .size(26.dp)
+                            .size(outerRingSize)
                             .clip(CircleShape)
-                            .border(
-                                width = if (isPeopleActive) 2.dp else 1.dp,
-                                color = if (isPeopleActive) Color.White else Color.White.copy(alpha = 0.6f),
-                                shape = CircleShape
+                            .then(
+                                if (isPeopleActive) {
+                                    Modifier
+                                        .border(2.dp, Color.White, CircleShape)
+                                        .padding(3.5.dp) // 2.dp ring + 1.5.dp black inner gap
+                                } else {
+                                    Modifier.border(1.dp, Color.White.copy(alpha = 0.45f), CircleShape)
+                                }
                             ),
                         contentAlignment = Alignment.Center
                     ) {
@@ -426,16 +477,24 @@ fun InstaBottomNavigationBar(
                                 contentDescription = "People Profile",
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier
-                                    .size(24.dp)
+                                    .size(27.dp)
                                     .clip(CircleShape)
                             )
                         } else {
-                            Icon(
-                                imageVector = Icons.Outlined.Person,
-                                contentDescription = "People Profile",
-                                tint = if (isPeopleActive) Color.White else IgTextSecondary,
-                                modifier = Modifier.size(16.dp)
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(27.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF1A1A1E)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Person,
+                                    contentDescription = "People Profile",
+                                    tint = if (isPeopleActive) Color.White else IgTextSecondary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
                         }
                     }
                 }

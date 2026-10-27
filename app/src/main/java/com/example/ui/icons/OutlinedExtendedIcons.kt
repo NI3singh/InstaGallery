@@ -5,101 +5,220 @@ package androidx.compose.material.icons.outlined
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.materialIcon
 import androidx.compose.material.icons.materialPath
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.unit.dp
+
+object OutlinedExtendedIcons {
+
+    val Home: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "OutlinedExtended.Home",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f
+        ).apply {
+            path(
+                fill = null,
+                stroke = SolidColor(Color.White),
+                strokeLineWidth = 2.0f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round
+            ) {
+                // Smooth rounded-peak house arch from (3, 10.5) up to rounded apex (12, 3) down to (21, 10.5),
+                // vertical walls down to (21, 20) and (3, 20) with rounded corners
+                moveTo(3.0f, 10.5f)
+                lineTo(10.8f, 3.65f)
+                curveTo(11.5f, 3.05f, 12.5f, 3.05f, 13.2f, 3.65f)
+                lineTo(21.0f, 10.5f)
+                verticalLineTo(19.2f)
+                curveTo(21.0f, 20.19f, 20.19f, 21.0f, 19.2f, 21.0f)
+                horizontalLineTo(4.8f)
+                curveTo(3.81f, 21.0f, 3.0f, 20.19f, 3.0f, 19.2f)
+                close()
+
+                // Smooth inner arched doorway from (9.2, 21) up to (9.2, 14.5) with rounded top arc to (14.8, 14.5) and down to (14.8, 21)
+                moveTo(9.2f, 21.0f)
+                verticalLineTo(14.5f)
+                curveTo(9.2f, 12.95f, 10.45f, 11.7f, 12.0f, 11.7f)
+                curveTo(13.55f, 11.7f, 14.8f, 12.95f, 14.8f, 14.5f)
+                verticalLineTo(21.0f)
+            }
+        }.build()
+    }
+
+    val Movie: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "OutlinedExtended.Movie",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f
+        ).apply {
+            path(
+                fill = null,
+                stroke = SolidColor(Color.White),
+                strokeLineWidth = 2.0f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round
+            ) {
+                // Smooth rounded square from (3.5, 3.5) to (20.5, 20.5) with 5.5f corner radius
+                moveTo(9.0f, 3.5f)
+                horizontalLineTo(15.0f)
+                curveTo(18.04f, 3.5f, 20.5f, 5.96f, 20.5f, 9.0f)
+                verticalLineTo(15.0f)
+                curveTo(20.5f, 18.04f, 18.04f, 20.5f, 15.0f, 20.5f)
+                horizontalLineTo(9.0f)
+                curveTo(5.96f, 20.5f, 3.5f, 18.04f, 3.5f, 15.0f)
+                verticalLineTo(9.0f)
+                curveTo(3.5f, 5.96f, 5.96f, 3.5f, 9.0f, 3.5f)
+                close()
+
+                // Centered rounded play triangle inside: (10.0, 8.5) -> (16.0, 12.0) -> (10.0, 15.5)
+                moveTo(10.0f, 8.5f)
+                lineTo(16.0f, 12.0f)
+                lineTo(10.0f, 15.5f)
+                close()
+            }
+        }.build()
+    }
+
+    val Reels: ImageVector
+        get() = Movie
+
+    val ChatBubbleOutline: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "OutlinedExtended.ChatBubbleOutline",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f
+        ).apply {
+            // True circular Instagram speech bubble: M20.656 17.008a9.993 9.993 0 1 0-3.59 3.615L22 22Z
+            path(
+                fill = null,
+                stroke = SolidColor(Color.White),
+                strokeLineWidth = 2.0f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round
+            ) {
+                moveTo(20.656f, 17.008f)
+                arcTo(
+                    horizontalEllipseRadius = 9.993f,
+                    verticalEllipseRadius = 9.993f,
+                    theta = 0f,
+                    isMoreThanHalf = true,
+                    isPositiveArc = false,
+                    x1 = 17.066f,
+                    y1 = 20.623f
+                )
+                lineTo(22.0f, 22.0f)
+                close()
+            }
+        }.build()
+    }
+
+    val Send: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "OutlinedExtended.Send",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f
+        ).apply {
+            // Instagram Direct paper plane:
+            // Outer wing frame from (22, 3) to (2, 10.5) to (11.5, 13.5) to (14.5, 22) back to (22, 3),
+            // plus diagonal crease from (22, 3) to (11.5, 13.5)
+            path(
+                fill = null,
+                stroke = SolidColor(Color.White),
+                strokeLineWidth = 2.0f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round
+            ) {
+                moveTo(22.0f, 3.0f)
+                lineTo(2.0f, 10.5f)
+                lineTo(11.5f, 13.5f)
+                lineTo(14.5f, 22.0f)
+                close()
+
+                moveTo(22.0f, 3.0f)
+                lineTo(11.5f, 13.5f)
+            }
+        }.build()
+    }
+
+    val FavoriteBorder: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "OutlinedExtended.FavoriteBorder",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f
+        ).apply {
+            // Wide-lobed smooth bezier curves (strokeLineWidth = 2.0f)
+            path(
+                fill = null,
+                stroke = SolidColor(Color.White),
+                strokeLineWidth = 2.0f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round
+            ) {
+                moveTo(12.0f, 20.6f)
+                curveTo(12.0f, 20.6f, 2.5f, 14.7f, 2.5f, 8.6f)
+                curveTo(2.5f, 5.4f, 5.0f, 3.1f, 8.0f, 3.1f)
+                curveTo(9.85f, 3.1f, 11.35f, 4.05f, 12.0f, 5.35f)
+                curveTo(12.65f, 4.05f, 14.15f, 3.1f, 16.0f, 3.1f)
+                curveTo(19.0f, 3.1f, 21.5f, 5.4f, 21.5f, 8.6f)
+                curveTo(21.5f, 14.7f, 12.0f, 20.6f, 12.0f, 20.6f)
+                close()
+            }
+        }.build()
+    }
+
+    val BookmarkBorder: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "OutlinedExtended.BookmarkBorder",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f
+        ).apply {
+            // Clean ribbon with rounded V-notch: M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z
+            path(
+                fill = null,
+                stroke = SolidColor(Color.White),
+                strokeLineWidth = 2.0f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round
+            ) {
+                moveTo(19.0f, 21.0f)
+                lineTo(12.0f, 16.0f)
+                lineTo(5.0f, 21.0f)
+                verticalLineTo(5.0f)
+                curveTo(5.0f, 3.895f, 5.895f, 3.0f, 7.0f, 3.0f)
+                horizontalLineTo(17.0f)
+                curveTo(18.105f, 3.0f, 19.0f, 3.895f, 19.0f, 5.0f)
+                verticalLineTo(21.0f)
+                close()
+            }
+        }.build()
+    }
+}
 
 val Icons.Outlined.BookmarkBorder: ImageVector
-    get() {
-        if (_bookmarkBorder != null) return _bookmarkBorder!!
-        _bookmarkBorder = materialIcon(name = "Outlined.BookmarkBorder") {
-            materialPath {
-                moveTo(17.0f, 3.0f)
-                horizontalLineTo(7.0f)
-                curveToRelative(-1.1f, 0.0f, -1.99f, 0.9f, -1.99f, 2.0f)
-                lineTo(5.0f, 21.0f)
-                lineToRelative(7.0f, -3.0f)
-                lineToRelative(7.0f, 3.0f)
-                verticalLineTo(5.0f)
-                curveToRelative(0.0f, -1.1f, -0.9f, -2.0f, -2.0f, -2.0f)
-                close()
-                moveTo(17.0f, 18.0f)
-                lineToRelative(-5.0f, -2.18f)
-                lineTo(7.0f, 18.0f)
-                verticalLineTo(5.0f)
-                horizontalLineToRelative(10.0f)
-                verticalLineToRelative(13.0f)
-                close()
-            }
-        }
-        return _bookmarkBorder!!
-    }
-private var _bookmarkBorder: ImageVector? = null
+    get() = OutlinedExtendedIcons.BookmarkBorder
 
 val Icons.Outlined.ChatBubbleOutline: ImageVector
-    get() {
-        if (_chatBubbleOutline != null) return _chatBubbleOutline!!
-        _chatBubbleOutline = materialIcon(name = "Outlined.ChatBubbleOutline") {
-            materialPath {
-                moveTo(20.0f, 2.0f)
-                horizontalLineTo(4.0f)
-                curveToRelative(-1.1f, 0.0f, -2.0f, 0.9f, -2.0f, 2.0f)
-                verticalLineToRelative(18.0f)
-                lineToRelative(4.0f, -4.0f)
-                horizontalLineToRelative(14.0f)
-                curveToRelative(1.1f, 0.0f, 2.0f, -0.9f, 2.0f, -2.0f)
-                verticalLineTo(4.0f)
-                curveToRelative(0.0f, -1.1f, -0.9f, -2.0f, -2.0f, -2.0f)
-                close()
-                moveTo(20.0f, 16.0f)
-                horizontalLineTo(6.0f)
-                lineToRelative(-2.0f, 2.0f)
-                verticalLineTo(4.0f)
-                horizontalLineToRelative(16.0f)
-                verticalLineToRelative(12.0f)
-                close()
-            }
-        }
-        return _chatBubbleOutline!!
-    }
-private var _chatBubbleOutline: ImageVector? = null
+    get() = OutlinedExtendedIcons.ChatBubbleOutline
 
 val Icons.Outlined.Movie: ImageVector
-    get() {
-        if (_movie != null) return _movie!!
-        _movie = materialIcon(name = "Outlined.Movie") {
-            materialPath {
-                moveTo(18.0f, 4.0f)
-                lineToRelative(2.0f, 4.0f)
-                horizontalLineToRelative(-3.0f)
-                lineToRelative(-2.0f, -4.0f)
-                horizontalLineToRelative(-2.0f)
-                lineToRelative(2.0f, 4.0f)
-                horizontalLineToRelative(-3.0f)
-                lineToRelative(-2.0f, -4.0f)
-                horizontalLineTo(8.0f)
-                lineToRelative(2.0f, 4.0f)
-                horizontalLineTo(7.0f)
-                lineTo(5.0f, 4.0f)
-                horizontalLineTo(4.0f)
-                curveToRelative(-1.1f, 0.0f, -1.99f, 0.9f, -1.99f, 2.0f)
-                lineTo(2.0f, 18.0f)
-                curveToRelative(0.0f, 1.1f, 0.9f, 2.0f, 2.0f, 2.0f)
-                horizontalLineToRelative(16.0f)
-                curveToRelative(1.1f, 0.0f, 2.0f, -0.9f, 2.0f, -2.0f)
-                verticalLineTo(4.0f)
-                horizontalLineToRelative(-4.0f)
-                close()
-                moveTo(20.0f, 18.0f)
-                horizontalLineTo(4.0f)
-                verticalLineTo(6.47f)
-                lineTo(5.76f, 10.0f)
-                horizontalLineTo(20.0f)
-                verticalLineToRelative(8.0f)
-                close()
-            }
-        }
-        return _movie!!
-    }
-private var _movie: ImageVector? = null
+    get() = OutlinedExtendedIcons.Movie
 
 val Icons.Outlined.PhotoCamera: ImageVector
     get() {

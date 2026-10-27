@@ -147,6 +147,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         scanMedia()
     }
 
+    fun setFilter(filter: HomeFeedFilter) {
+        _activeFilter.value = filter
+    }
+
     fun toggleFavoritesFilter() {
         _activeFilter.value = if (_activeFilter.value == HomeFeedFilter.FAVORITES) {
             HomeFeedFilter.ALL

@@ -23,6 +23,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -43,12 +44,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FilledExtendedIcons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.MusicNote
+import androidx.compose.material.icons.outlined.OutlinedExtendedIcons
 import androidx.compose.material.icons.outlined.Send
 import androidx.compose.material.icons.outlined.VolumeOff
 import androidx.compose.material.icons.outlined.VolumeUp
@@ -62,6 +65,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -71,10 +75,12 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -97,7 +103,12 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import coil.compose.AsyncImage
+import com.example.data.local.HeartTheme
+import com.example.data.local.OnboardingPreferences
 import com.example.data.local.entity.MediaWithAuthors
+import com.example.ui.components.HeartBurstInstance
+import com.example.ui.components.HeartThemePickerSheet
+import com.example.ui.components.TapHeartBurstOverlay
 import com.example.ui.theme.IgBlack
 import com.example.ui.theme.IgBlue
 import com.example.ui.theme.IgRed
@@ -110,8 +121,10 @@ import kotlinx.coroutines.isActive
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.random.Random
 
 @OptIn(UnstableApi::class)
+@kotlin.OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ReelsScreen(
     viewModel: ReelsViewModel,
@@ -119,6 +132,13 @@ fun ReelsScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
+    LaunchedEffect(context) {
+        OnboardingPreferences.init(context)
+    }
+    val heartTheme by OnboardingPreferences.heartThemeFlow.collectAsStateWithLifecycle()
+    var showHeartThemeSheet by remember { mutableStateOf(false) }
+
     val lifecycleOwner = LocalLifecycleOwner.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -205,7 +225,7 @@ fun ReelsScreen(
     var isPausedByTap by remember { mutableStateOf(false) }
     var isFastForward2x by remember { mutableStateOf(false) }
     var isScrubbing by remember { mutableStateOf(false) }
-    var showDoubleTapHeart by remember { mutableStateOf(false) }
+    val activeBursts = remember { mutableStateListOf<HeartBurstInstance>() }
     var errorRetryCount by remember { mutableIntStateOf(0) }
 
     // Configure ExoPlayer with hardware decoder fallback + audio focus so all phone videos play cleanly
@@ -256,13 +276,6 @@ fun ReelsScreen(
         exoPlayer.addListener(listener)
         onDispose {
             exoPlayer.removeListener(listener)
-        }
-    }
-
-    LaunchedEffect(showDoubleTapHeart) {
-        if (showDoubleTapHeart) {
-            delay(750)
-            showDoubleTapHeart = false
         }
     }
 
@@ -350,8 +363,16 @@ fun ReelsScreen(
                     .background(IgBlack)
                     .pointerInput(video.media.mediaId, video.media.isFavorite) {
                         detectTapGestures(
-                            onDoubleTap = {
-                                showDoubleTapHeart = true
+                            onDoubleTap = { tapOffset ->
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                val randomTilt = Random.nextInt(-15, 16).toFloat()
+                                activeBursts.add(
+                                    HeartBurstInstance(
+                                        id = System.nanoTime(),
+                                        tapOffset = tapOffset,
+                                        rotationDeg = randomTilt
+                                    )
+                                )
                                 if (!video.media.isFavorite) {
                                     viewModel.toggleFavorite(video.media.mediaId, false)
                                 }
@@ -451,24 +472,13 @@ fun ReelsScreen(
                     }
                 }
 
-                // Double-Tap Heart Burst Overlay
-                AnimatedVisibility(
-                    visible = isSettledPage && showDoubleTapHeart,
-                    enter = scaleIn(
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioMediumBouncy,
-                            stiffness = Spring.StiffnessLow
-                        ),
-                        initialScale = 0.3f
-                    ) + fadeIn(),
-                    exit = scaleOut(targetScale = 1.2f) + fadeOut(),
-                    modifier = Modifier.align(Alignment.Center)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Favorite,
-                        contentDescription = "Liked",
-                        tint = Color.White.copy(alpha = 0.92f),
-                        modifier = Modifier.size(96.dp)
+                // Double-Tap Heart Burst Overlay (Exact Tap-Coordinate Canvas Physics, Zero Bounding Box)
+                if (isSettledPage) {
+                    TapHeartBurstOverlay(
+                        bursts = activeBursts,
+                        heartTheme = heartTheme,
+                        onBurstFinished = { burstId -> activeBursts.removeAll { it.id == burstId } },
+                        modifier = Modifier.fillMaxSize()
                     )
                 }
 
@@ -510,7 +520,9 @@ fun ReelsScreen(
                 ReelsActionRail(
                     video = video,
                     isMuted = uiState.isMuted,
+                    heartColor = heartTheme.primaryColor,
                     onToggleFavorite = { viewModel.toggleFavorite(video.media.mediaId, video.media.isFavorite) },
+                    onLongPressFavorite = { showHeartThemeSheet = true },
                     onToggleBookmark = { viewModel.toggleBookmark(video.media.mediaId, video.media.isBookmarked) },
                     onToggleMute = { viewModel.toggleMute() },
                     modifier = Modifier
@@ -550,7 +562,7 @@ fun ReelsScreen(
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 // Crop / Fit Aspect Ratio Pill
                 Box(
@@ -569,15 +581,34 @@ fun ReelsScreen(
                     )
                 }
 
-                IconButton(onClick = { viewModel.toggleFavoritesFilter() }) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .combinedClickable(
+                            onClick = { viewModel.toggleFavoritesFilter() },
+                            onLongClick = { showHeartThemeSheet = true }
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
                     Icon(
-                        imageVector = if (uiState.onlyFavorites) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
+                        imageVector = if (uiState.onlyFavorites) FilledExtendedIcons.Favorite else OutlinedExtendedIcons.FavoriteBorder,
                         contentDescription = "Filter Favorite Reels",
-                        tint = if (uiState.onlyFavorites) IgRed else Color.White,
+                        tint = if (uiState.onlyFavorites) heartTheme.primaryColor else Color.White,
                         modifier = Modifier.size(24.dp)
                     )
                 }
             }
+        }
+
+        if (showHeartThemeSheet) {
+            HeartThemePickerSheet(
+                currentTheme = heartTheme,
+                onSelectTheme = { selected ->
+                    OnboardingPreferences.setHeartTheme(context, selected)
+                    showHeartThemeSheet = false
+                },
+                onDismiss = { showHeartThemeSheet = false }
+            )
         }
 
         // Scrubbing Time Indicator Pill
@@ -741,11 +772,14 @@ private fun applyVideoScaleMatrix(
     textureView.setTransform(matrix)
 }
 
+@kotlin.OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ReelsActionRail(
     video: MediaWithAuthors,
     isMuted: Boolean,
+    heartColor: Color,
     onToggleFavorite: () -> Unit,
+    onLongPressFavorite: () -> Unit,
     onToggleBookmark: () -> Unit,
     onToggleMute: () -> Unit,
     modifier: Modifier = Modifier
@@ -757,15 +791,18 @@ fun ReelsActionRail(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // 1. Heart (Favorite) button
+        // 1. Heart (Favorite) button (long-press opens Heart Color Picker)
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.clickable(onClick = onToggleFavorite)
+            modifier = Modifier.combinedClickable(
+                onClick = onToggleFavorite,
+                onLongClick = onLongPressFavorite
+            )
         ) {
             Icon(
-                imageVector = if (video.media.isFavorite) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
+                imageVector = if (video.media.isFavorite) FilledExtendedIcons.Favorite else OutlinedExtendedIcons.FavoriteBorder,
                 contentDescription = "Like",
-                tint = if (video.media.isFavorite) IgRed else Color.White,
+                tint = if (video.media.isFavorite) heartColor else Color.White,
                 modifier = Modifier.size(28.dp)
             )
             Spacer(modifier = Modifier.height(2.dp))

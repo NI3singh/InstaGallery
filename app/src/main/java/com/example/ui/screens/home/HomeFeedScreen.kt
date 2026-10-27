@@ -1,8 +1,11 @@
 // InstaGallery v1.0
 package com.example.ui.screens.home
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,27 +22,30 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.outlined.BookmarkBorder
-import androidx.compose.material.icons.outlined.FavoriteBorder
-import androidx.compose.material.icons.outlined.Group
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.FilledExtendedIcons
+import androidx.compose.material.icons.outlined.OutlinedExtendedIcons
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -52,21 +58,30 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import coil.compose.AsyncImage
+import com.example.data.local.OnboardingPreferences
 import com.example.data.local.entity.PersonEntity
+import com.example.ui.components.HeartThemePickerSheet
 import com.example.ui.components.IndexingStatusBanner
 import com.example.ui.components.NewPeopleDetectedBanner
 import com.example.ui.components.PostCard
-import com.example.ui.theme.IgBlack
-import com.example.ui.theme.IgBlue
-import com.example.ui.theme.IgBorder
+import com.example.ui.components.bounceClick
 import com.example.ui.theme.GrandHotelFont
-import com.example.ui.theme.IgRed
-import com.example.ui.theme.IgStoryGradient
+import com.example.ui.theme.IgBlack
 import com.example.ui.theme.IgSurfacePill
 import com.example.ui.theme.IgTextPrimary
 import com.example.ui.theme.IgTextSecondary
 import java.io.File
 
+private val StorySunsetGradient = Brush.linearGradient(
+    colors = listOf(
+        Color(0xFFFEDA77),
+        Color(0xFFF58529),
+        Color(0xFFDD2A7B),
+        Color(0xFF8134AF)
+    )
+)
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun HomeFeedScreen(
     viewModel: HomeViewModel,
@@ -74,6 +89,13 @@ fun HomeFeedScreen(
     onReviewNewPeopleClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    LaunchedEffect(context) {
+        OnboardingPreferences.init(context)
+    }
+    val heartTheme by OnboardingPreferences.heartThemeFlow.collectAsStateWithLifecycle()
+    var showHeartThemeSheet by remember { mutableStateOf(false) }
+
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     Column(
@@ -81,64 +103,135 @@ fun HomeFeedScreen(
             .fillMaxSize()
             .background(IgBlack)
     ) {
-        // Top App Bar (56.dp height)
+        // Top App Bar (52.dp height, pure #000000 background, no bottom divider)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(56.dp)
-                .background(IgBlack)
+                .height(52.dp)
+                .background(Color(0xFF000000))
                 .padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
                 text = "InstaGallery",
-                fontSize = 31.sp,
+                fontSize = 30.sp,
                 fontWeight = FontWeight.Normal,
                 fontFamily = GrandHotelFont,
-                color = IgTextPrimary,
+                color = Color.White,
                 modifier = Modifier
-                    .clickable { viewModel.reshuffle() }
+                    .bounceClick { viewModel.reshuffle() }
                     .testTag("app_title")
             )
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(20.dp)
             ) {
-                // Favorites filter toggle
-                IconButton(
-                    onClick = { viewModel.toggleFavoritesFilter() },
+                // Favorites filter toggle (24.dp with tiny heartTheme dot indicator when active; long-press opens Heart Color Picker)
+                Box(
                     modifier = Modifier
-                        .size(36.dp)
-                        .testTag("favorites_filter_button")
+                        .size(28.dp)
+                        .combinedClickable(
+                            onClick = { viewModel.toggleFavoritesFilter() },
+                            onLongClick = { showHeartThemeSheet = true }
+                        )
+                        .testTag("favorites_filter_button"),
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = if (uiState.isFilteringFavorites) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
+                        imageVector = if (uiState.isFilteringFavorites) {
+                            FilledExtendedIcons.Favorite
+                        } else {
+                            OutlinedExtendedIcons.FavoriteBorder
+                        },
                         contentDescription = "Filter Favorites",
-                        tint = if (uiState.isFilteringFavorites) IgRed else Color.White,
+                        tint = if (uiState.isFilteringFavorites) heartTheme.primaryColor else Color.White,
                         modifier = Modifier.size(24.dp)
                     )
+                    if (uiState.isFilteringFavorites) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .size(4.dp)
+                                .clip(CircleShape)
+                                .background(heartTheme.primaryColor)
+                        )
+                    }
                 }
 
-                // Bookmarks / Saved filter toggle
-                IconButton(
-                    onClick = { viewModel.toggleBookmarksFilter() },
+                // Bookmarks / Saved filter toggle (24.dp)
+                Box(
                     modifier = Modifier
-                        .size(36.dp)
-                        .testTag("bookmarks_filter_button")
+                        .size(28.dp)
+                        .bounceClick { viewModel.toggleBookmarksFilter() }
+                        .testTag("bookmarks_filter_button"),
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = if (uiState.isFilteringBookmarks) Icons.Default.Bookmark else Icons.Outlined.BookmarkBorder,
+                        imageVector = if (uiState.isFilteringBookmarks) {
+                            FilledExtendedIcons.Bookmark
+                        } else {
+                            OutlinedExtendedIcons.BookmarkBorder
+                        },
                         contentDescription = "Filter Saved Posts",
-                        tint = if (uiState.isFilteringBookmarks) IgBlue else Color.White,
+                        tint = Color.White,
                         modifier = Modifier.size(24.dp)
                     )
                 }
             }
         }
 
-        HorizontalDivider(color = IgBorder, thickness = 1.dp)
+        // Compact "Heart Color" pill when Favorites filter is active
+        AnimatedVisibility(
+            visible = uiState.isFilteringFavorites,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(IgBlack)
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Showing Favorite Photos",
+                    color = IgTextSecondary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(Color(0xFF18181B))
+                        .border(1.dp, heartTheme.primaryColor.copy(alpha = 0.55f), RoundedCornerShape(50))
+                        .clickable { showHeartThemeSheet = true }
+                        .padding(horizontal = 12.dp, vertical = 5.dp)
+                        .testTag("heart_color_pill"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(
+                                Brush.linearGradient(
+                                    colors = listOf(heartTheme.primaryColor, heartTheme.secondaryColor)
+                                )
+                            )
+                    )
+                    Text(
+                        text = "Heart Color",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
 
         // Live Background Indexing Pill
         AnimatedVisibility(
@@ -155,6 +248,17 @@ fun HomeFeedScreen(
             ) {
                 IndexingStatusBanner(unindexedCount = uiState.unindexedPhotoCount)
             }
+        }
+
+        if (showHeartThemeSheet) {
+            HeartThemePickerSheet(
+                currentTheme = heartTheme,
+                onSelectTheme = { selected ->
+                    OnboardingPreferences.setHeartTheme(context, selected)
+                    showHeartThemeSheet = false
+                },
+                onDismiss = { showHeartThemeSheet = false }
+            )
         }
 
         // Main Feed (LazyColumn)
@@ -202,8 +306,8 @@ fun HomeFeedScreen(
                         ) {
                             Icon(
                                 imageVector = when (uiState.activeFilter) {
-                                    HomeFeedFilter.FAVORITES -> Icons.Outlined.FavoriteBorder
-                                    HomeFeedFilter.BOOKMARKED -> Icons.Outlined.BookmarkBorder
+                                    HomeFeedFilter.FAVORITES -> OutlinedExtendedIcons.FavoriteBorder
+                                    HomeFeedFilter.BOOKMARKED -> OutlinedExtendedIcons.BookmarkBorder
                                     HomeFeedFilter.ALL -> Icons.Outlined.PhotoCamera
                                 },
                                 contentDescription = "No photos",
@@ -251,7 +355,6 @@ fun HomeFeedScreen(
                         onTagPerson = { mediaId, personId -> viewModel.tagPersonInMedia(mediaId, personId) },
                         onUntagPerson = { mediaId, personId -> viewModel.removePersonFromMedia(mediaId, personId) }
                     )
-                    HorizontalDivider(color = IgBorder, thickness = 1.dp)
                 }
             }
         }
@@ -268,19 +371,24 @@ fun StoriesPeopleTray(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(IgBlack)
+            .background(Color(0xFF000000))
     ) {
         LazyRow(
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             items(
                 items = people,
                 key = { it.personId }
             ) { person ->
+                val cleanName = person.name.trim().removePrefix("@").trim()
+                val isPlaceholderName = !person.isNamedByUser &&
+                    cleanName.matches(Regex("^Person\\s+\\d+$", RegexOption.IGNORE_CASE))
+                val storyLabel = if (isPlaceholderName) "@$cleanName" else cleanName
+
                 StoryAvatarItem(
-                    name = "@${person.name}",
+                    label = storyLabel,
                     cropPath = person.avatarCropPath,
                     onClick = { onPersonClick(person.personId) }
                 )
@@ -294,51 +402,54 @@ fun StoriesPeopleTray(
                 )
             }
         }
-        HorizontalDivider(color = IgBorder, thickness = 1.dp)
+        HorizontalDivider(color = Color(0xFF161618), thickness = 0.5.dp)
     }
 }
 
 @Composable
 fun StoryAvatarItem(
-    name: String,
+    label: String,
     cropPath: String,
     onClick: () -> Unit
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .clickable(onClick = onClick)
-            .testTag("story_item_${name.replace("@", "")}")
+            .bounceClick(onClick = onClick)
+            .testTag("story_item_${label.replace("@", "")}")
     ) {
-        // 68dp outer circle with 2.5dp Instagram story gradient
+        // 74dp outer circle: 2.5dp Instagram Sunset Gradient ring + 3dp pure #000000 inner gap + 63dp face avatar
         Box(
             modifier = Modifier
-                .size(68.dp)
+                .size(74.dp)
                 .clip(CircleShape)
-                .background(IgStoryGradient),
+                .background(StorySunsetGradient)
+                .padding(2.5.dp)
+                .clip(CircleShape)
+                .background(Color(0xFF000000))
+                .padding(3.dp),
             contentAlignment = Alignment.Center
         ) {
-            // 2dp inner black border
-            Box(
-                modifier = Modifier
-                    .size(63.dp)
-                    .clip(CircleShape)
-                    .background(IgBlack),
-                contentAlignment = Alignment.Center
-            ) {
-                if (cropPath.isNotBlank() && File(cropPath).exists()) {
-                    AsyncImage(
-                        model = File(cropPath),
-                        contentDescription = name,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .size(59.dp)
-                            .clip(CircleShape)
-                    )
-                } else {
+            if (cropPath.isNotBlank() && File(cropPath).exists()) {
+                AsyncImage(
+                    model = File(cropPath),
+                    contentDescription = label,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(63.dp)
+                        .clip(CircleShape)
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(63.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF16161A)),
+                    contentAlignment = Alignment.Center
+                ) {
                     Icon(
                         imageVector = Icons.Outlined.Person,
-                        contentDescription = name,
+                        contentDescription = label,
                         tint = IgTextSecondary,
                         modifier = Modifier.size(30.dp)
                     )
@@ -349,12 +460,13 @@ fun StoryAvatarItem(
         Spacer(modifier = Modifier.height(6.dp))
 
         Text(
-            text = name,
-            fontSize = 11.sp,
-            color = IgTextPrimary,
+            text = label,
+            fontSize = 11.5.sp,
+            fontWeight = FontWeight.Normal,
+            color = Color(0xFFF5F5F7),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.width(68.dp),
+            modifier = Modifier.width(74.dp),
             textAlign = TextAlign.Center
         )
     }
@@ -368,27 +480,31 @@ fun StoryOtherItem(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .clickable(onClick = onClick)
+            .bounceClick(onClick = onClick)
             .testTag("story_item_other")
     ) {
         Box(
             modifier = Modifier
-                .size(68.dp)
+                .size(74.dp)
                 .clip(CircleShape)
-                .background(IgStoryGradient),
+                .background(StorySunsetGradient)
+                .padding(2.5.dp)
+                .clip(CircleShape)
+                .background(Color(0xFF000000))
+                .padding(3.dp),
             contentAlignment = Alignment.Center
         ) {
             Box(
                 modifier = Modifier
                     .size(63.dp)
                     .clip(CircleShape)
-                    .background(IgSurfacePill),
+                    .background(Color(0xFF16161A)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Outlined.Group,
+                    imageVector = Icons.Filled.AutoAwesome,
                     contentDescription = "Other",
-                    tint = IgTextSecondary,
+                    tint = Color.White,
                     modifier = Modifier.size(26.dp)
                 )
             }
@@ -398,11 +514,12 @@ fun StoryOtherItem(
 
         Text(
             text = "@Other",
-            fontSize = 11.sp,
-            color = IgTextPrimary,
+            fontSize = 11.5.sp,
+            fontWeight = FontWeight.Normal,
+            color = Color(0xFFF5F5F7),
             maxLines = 1,
             textAlign = TextAlign.Center,
-            modifier = Modifier.width(68.dp)
+            modifier = Modifier.width(74.dp)
         )
     }
 }

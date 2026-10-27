@@ -130,7 +130,6 @@ fun PostDetailScreen(
                         onTagPerson = onTagPerson,
                         onUntagPerson = onUntagPerson
                     )
-                    HorizontalDivider(color = IgBorder, thickness = 1.dp)
                 }
             }
         }
