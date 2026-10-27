@@ -305,6 +305,9 @@ interface MediaDao {
     @Query("UPDATE media_items SET isBookmarked = :isBookmarked WHERE mediaId = :mediaId")
     suspend fun setBookmarked(mediaId: Long, isBookmarked: Boolean)
 
+    @Query("UPDATE media_items SET customCaption = :caption WHERE mediaId = :mediaId")
+    suspend fun updateCustomCaption(mediaId: Long, caption: String?)
+
     @Query("UPDATE media_items SET isProcessedForFaces = :isProcessed, hasFaces = :hasFaces WHERE mediaId = :mediaId")
     suspend fun updateMediaProcessed(mediaId: Long, isProcessed: Boolean, hasFaces: Boolean)
 

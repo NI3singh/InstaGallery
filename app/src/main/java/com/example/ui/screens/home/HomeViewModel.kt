@@ -190,4 +190,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             repository.removeMediaFromPerson(mediaId, personId)
         }
     }
+
+    fun updateCaption(mediaId: Long, caption: String?) {
+        viewModelScope.launch {
+            repository.updateMediaCaption(mediaId, caption)
+        }
+    }
 }

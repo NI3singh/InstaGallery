@@ -38,21 +38,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FilledExtendedIcons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.OutlinedExtendedIcons
 import androidx.compose.material.icons.outlined.Person
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -89,11 +83,6 @@ import com.example.data.local.entity.MediaWithAuthors
 import com.example.data.local.entity.PersonEntity
 import com.example.ui.theme.IgBlack
 import com.example.ui.theme.IgBlue
-import com.example.ui.theme.IgBorderNav
-import com.example.ui.theme.IgRed
-import com.example.ui.theme.IgSurfaceModal
-import com.example.ui.theme.IgSurfacePill
-import com.example.ui.theme.IgTextPrimary
 import com.example.ui.theme.IgTextSecondary
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -106,6 +95,7 @@ fun PostCard(
     onAuthorClick: (Long) -> Unit,
     onToggleFavorite: (Long, Boolean) -> Unit,
     onToggleBookmark: (Long, Boolean) -> Unit,
+    onUpdateCaption: (String?) -> Unit = {},
     allPeople: List<PersonEntity> = emptyList(),
     onTagPerson: ((Long, Long) -> Unit)? = null,
     onUntagPerson: ((Long, Long) -> Unit)? = null,
@@ -123,8 +113,9 @@ fun PostCard(
     }
     val heartTheme by OnboardingPreferences.heartThemeFlow.collectAsState()
 
-    var showMenu by remember { mutableStateOf(false) }
-    var showInfoSheet by remember { mutableStateOf(false) }
+    var showInspectorSheet by remember { mutableStateOf(false) }
+    var showCaptionSheet by remember { mutableStateOf(false) }
+    var showInstaCardStudio by remember { mutableStateOf(false) }
     var showTagOverlay by remember { mutableStateOf(false) }
     var showHeartThemeSheet by remember { mutableStateOf(false) }
     val activeBursts = remember { mutableStateListOf<HeartBurstInstance>() }
@@ -154,6 +145,10 @@ fun PostCard(
 
     val primaryAuthorName = remember(authors) {
         if (authors.isEmpty()) "Other" else authors[0].name.removePrefix("@")
+    }
+
+    val primaryAuthorAvatarPath = remember(authors) {
+        authors.firstOrNull()?.avatarCropPath
     }
 
     val authorHandles = remember(authors) {
@@ -243,55 +238,18 @@ fun PostCard(
                 )
             }
 
-            Box {
-                IconButton(
-                    onClick = { showMenu = true },
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.MoreVert,
-                        contentDescription = "More options",
-                        tint = IgTextSecondary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-
-                DropdownMenu(
-                    expanded = showMenu,
-                    onDismissRequest = { showMenu = false },
-                    modifier = Modifier.background(IgSurfaceModal)
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Details & Manage Tags", color = IgTextPrimary) },
-                        onClick = {
-                            showMenu = false
-                            showInfoSheet = true
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Heart Reaction Color", color = IgTextPrimary) },
-                        onClick = {
-                            showMenu = false
-                            showHeartThemeSheet = true
-                        }
-                    )
-                    if (authors.isNotEmpty()) {
-                        DropdownMenuItem(
-                            text = { Text("View @${authors[0].name} profile", color = IgTextPrimary) },
-                            onClick = {
-                                showMenu = false
-                                onAuthorClick(authors[0].personId)
-                            }
-                        )
-                    }
-                    DropdownMenuItem(
-                        text = { Text("Share media", color = IgTextPrimary) },
-                        onClick = {
-                            showMenu = false
-                            shareMedia(context, media.uri, media.isVideo)
-                        }
-                    )
-                }
+            IconButton(
+                onClick = { showInspectorSheet = true },
+                modifier = Modifier
+                    .size(32.dp)
+                    .testTag("more_menu_button_${media.mediaId}")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.MoreVert,
+                    contentDescription = "Post Inspector & Options",
+                    tint = IgTextSecondary,
+                    modifier = Modifier.size(20.dp)
+                )
             }
         }
 
@@ -474,31 +432,58 @@ fun PostCard(
                     )
                 }
 
-                // Comment Bubble Button
+                // Comment Bubble Button (with #0095F6 dot indicator if customCaption exists)
                 Box(
                     modifier = Modifier
                         .size(26.dp)
-                        .bounceClick { showInfoSheet = true },
+                        .bounceClick { showCaptionSheet = true }
+                        .testTag("comment_button_${media.mediaId}"),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = OutlinedExtendedIcons.ChatBubbleOutline,
-                        contentDescription = "Details & Tags",
+                        contentDescription = "Add or Edit Memory Note",
                         tint = Color.White,
                         modifier = Modifier.size(23.dp)
                     )
+                    if (!media.customCaption.isNullOrBlank()) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(IgBlue)
+                        )
+                    }
                 }
 
                 // Share Paper Plane Button
                 Box(
                     modifier = Modifier
                         .size(26.dp)
-                        .bounceClick { shareMedia(context, media.uri, media.isVideo) },
+                        .bounceClick { shareMedia(context, media.uri, media.isVideo) }
+                        .testTag("share_button_${media.mediaId}"),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = OutlinedExtendedIcons.Send,
-                        contentDescription = "Share",
+                        contentDescription = "Share Original",
+                        tint = Color.White,
+                        modifier = Modifier.size(23.dp)
+                    )
+                }
+
+                // InstaCard 1080p Snapshot Studio Button
+                Box(
+                    modifier = Modifier
+                        .size(26.dp)
+                        .bounceClick { showInstaCardStudio = true }
+                        .testTag("snapshot_studio_button_${media.mediaId}"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = SnapshotStudioIcon,
+                        contentDescription = "InstaCard Snapshot Studio",
                         tint = Color.White,
                         modifier = Modifier.size(23.dp)
                     )
@@ -522,37 +507,68 @@ fun PostCard(
             }
         }
 
-        // 4. Compact Native-Feeling Post Caption Footer
+        // 4. Smart Post Caption Footer (Custom Memory Note / Meaningful Title / Subtle Prompt)
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp)
         ) {
-            val cleanDisplayName = remember(media.displayName) {
-                media.displayName.substringBeforeLast('.')
+            val hasCustomCaption = !media.customCaption.isNullOrBlank()
+            val isMachineFilename = remember(media.displayName) {
+                isMachineGeneratedFilename(media.displayName)
             }
-            val captionText = buildAnnotatedString {
-                withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = Color.White)) {
-                    append("@$primaryAuthorName")
-                }
-                withStyle(SpanStyle(fontWeight = FontWeight.Normal, color = Color(0xFFE5E5EA))) {
-                    append("  $cleanDisplayName")
-                }
-            }
-            Text(
-                text = captionText,
-                fontSize = 13.sp,
-                lineHeight = 17.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.clickable {
-                    if (authors.isNotEmpty()) {
-                        onAuthorClick(authors[0].personId)
-                    } else {
-                        showInfoSheet = true
+
+            if (hasCustomCaption) {
+                val captionText = buildAnnotatedString {
+                    withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = Color.White)) {
+                        append("@$primaryAuthorName")
+                    }
+                    withStyle(SpanStyle(fontWeight = FontWeight.Normal, color = Color.White)) {
+                        append("  ${media.customCaption}")
                     }
                 }
-            )
+                Text(
+                    text = captionText,
+                    fontSize = 13.5.sp,
+                    lineHeight = 18.sp,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .clickable { showCaptionSheet = true }
+                        .testTag("post_caption_text_${media.mediaId}")
+                )
+            } else if (!isMachineFilename) {
+                val cleanDisplayName = remember(media.displayName) {
+                    media.displayName.substringBeforeLast('.')
+                }
+                val captionText = buildAnnotatedString {
+                    withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = Color.White)) {
+                        append("@$primaryAuthorName")
+                    }
+                    withStyle(SpanStyle(fontWeight = FontWeight.Normal, color = Color(0xFFE5E5EA))) {
+                        append("  $cleanDisplayName")
+                    }
+                }
+                Text(
+                    text = captionText,
+                    fontSize = 13.5.sp,
+                    lineHeight = 18.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .clickable { showCaptionSheet = true }
+                        .testTag("post_caption_text_${media.mediaId}")
+                )
+            } else {
+                Text(
+                    text = "Add a memory note...",
+                    fontSize = 12.5.sp,
+                    color = Color(0xFF737373),
+                    modifier = Modifier
+                        .clickable { showCaptionSheet = true }
+                        .testTag("add_memory_note_prompt_${media.mediaId}")
+                )
+            }
 
             Spacer(modifier = Modifier.height(6.dp))
 
@@ -582,163 +598,43 @@ fun PostCard(
         )
     }
 
-    // Modal Bottom Sheet showing photo metadata, tagged people & manual tagging
-    if (showInfoSheet) {
-        val sheetState = rememberModalBottomSheetState()
-        val taggedIds = remember(authors) { authors.map { it.personId }.toSet() }
-        val untaggedPeople = remember(allPeople, taggedIds) {
-            allPeople.filter { !taggedIds.contains(it.personId) }
-        }
+    if (showCaptionSheet) {
+        CaptionEditorSheet(
+            media = media,
+            primaryAuthorName = primaryAuthorName,
+            formattedDate = formattedDate,
+            onSaveCaption = { newCaption ->
+                onUpdateCaption(newCaption)
+            },
+            onDismiss = { showCaptionSheet = false }
+        )
+    }
 
-        ModalBottomSheet(
-            onDismissRequest = { showInfoSheet = false },
-            sheetState = sheetState,
-            containerColor = IgSurfaceModal
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 12.dp)
-            ) {
-                Text(
-                    text = "Media Info & People Tags",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = IgTextPrimary
-                )
-                Spacer(modifier = Modifier.height(12.dp))
+    if (showInstaCardStudio) {
+        InstaCardStudioSheet(
+            media = media,
+            primaryAuthorName = primaryAuthorName,
+            authorAvatarPath = primaryAuthorAvatarPath,
+            heartColor = heartTheme.primaryColor,
+            onDismiss = { showInstaCardStudio = false }
+        )
+    }
 
-                Text(
-                    text = if (authors.isEmpty()) "No people tagged yet" else "People in this memory:",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = IgTextSecondary
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-
-                if (authors.isNotEmpty()) {
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        authors.forEach { person ->
-                            Row(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(50))
-                                    .background(IgBlack)
-                                    .border(1.dp, IgBorderNav, RoundedCornerShape(50))
-                                    .clickable {
-                                        showInfoSheet = false
-                                        onAuthorClick(person.personId)
-                                    }
-                                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                OverlappingAvatars(
-                                    authors = listOf(person),
-                                    avatarSize = 22.dp
-                                )
-                                Text(
-                                    text = "@${person.name}",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = IgTextPrimary
-                                )
-                                if (onUntagPerson != null) {
-                                    Icon(
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = "Remove tag",
-                                        tint = IgTextSecondary,
-                                        modifier = Modifier
-                                            .size(16.dp)
-                                            .clickable {
-                                                onUntagPerson(media.mediaId, person.personId)
-                                            }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(16.dp))
-                }
-
-                // Manual tagging section if there are other people available
-                if (onTagPerson != null && untaggedPeople.isNotEmpty()) {
-                    HorizontalDivider(color = IgBorderNav, thickness = 0.5.dp)
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = "Tag a person:",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = IgTextSecondary
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        untaggedPeople.forEach { person ->
-                            Row(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(50))
-                                    .background(IgSurfacePill)
-                                    .border(1.dp, IgBorderNav, RoundedCornerShape(50))
-                                    .clickable {
-                                        onTagPerson(media.mediaId, person.personId)
-                                    }
-                                    .padding(horizontal = 10.dp, vertical = 5.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Add,
-                                    contentDescription = "Tag",
-                                    tint = IgBlue,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Text(
-                                    text = "@${person.name}",
-                                    fontSize = 12.5.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = IgTextPrimary
-                                )
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(16.dp))
-                }
-
-                HorizontalDivider(color = IgBorderNav, thickness = 0.5.dp)
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Text(
-                    text = "File: ${media.displayName}",
-                    fontSize = 12.5.sp,
-                    color = IgTextSecondary
-                )
-                if (media.width > 0 && media.height > 0) {
-                    Text(
-                        text = "Resolution: ${media.width} × ${media.height}",
-                        fontSize = 12.5.sp,
-                        color = IgTextSecondary
-                    )
-                }
-                Text(
-                    text = "Type: ${media.mimeType}",
-                    fontSize = 12.5.sp,
-                    color = IgTextSecondary
-                )
-                Text(
-                    text = "Captured: $formattedDate",
-                    fontSize = 12.5.sp,
-                    color = IgTextSecondary
-                )
-                Spacer(modifier = Modifier.height(24.dp))
-            }
-        }
+    if (showInspectorSheet) {
+        PostInspectorSheet(
+            media = media,
+            authors = authors,
+            allPeople = allPeople,
+            formattedDate = formattedDate,
+            onOpenInstaCardStudio = { showInstaCardStudio = true },
+            onOpenCaptionEditor = { showCaptionSheet = true },
+            onOpenHeartThemePicker = { showHeartThemeSheet = true },
+            onShareOriginal = { shareMedia(context, media.uri, media.isVideo) },
+            onAuthorClick = onAuthorClick,
+            onTagPerson = onTagPerson,
+            onUntagPerson = onUntagPerson,
+            onDismiss = { showInspectorSheet = false }
+        )
     }
 }
 

@@ -28,5 +28,6 @@ data class MediaEntity(
     val isProcessedForFaces: Boolean = false,
     val hasFaces: Boolean = false,
     val isFavorite: Boolean = false,
-    val isBookmarked: Boolean = false
+    val isBookmarked: Boolean = false,
+    val customCaption: String? = null
 )

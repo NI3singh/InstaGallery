@@ -291,6 +291,10 @@ class GalleryRepository(
         mediaDao.setBookmarked(mediaId, !currentBookmarked)
     }
 
+    suspend fun updateMediaCaption(mediaId: Long, caption: String?) = withContext(Dispatchers.IO) {
+        mediaDao.updateCustomCaption(mediaId, caption?.trim()?.takeIf { it.isNotEmpty() })
+    }
+
     suspend fun updatePersonName(personId: Long, rawName: String) = withContext(Dispatchers.IO) {
         val newName = rawName.trim().removePrefix("@").trim()
         if (newName.isBlank()) {

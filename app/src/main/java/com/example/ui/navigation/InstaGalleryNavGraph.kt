@@ -358,6 +358,7 @@ fun InstaGalleryNavGraph(
                     },
                     onToggleFavorite = { id, current -> profileViewModel.toggleFavorite(id, current) },
                     onToggleBookmark = { id, current -> profileViewModel.toggleBookmark(id, current) },
+                    onUpdateCaption = { id, newCaption -> profileViewModel.updateCaption(id, newCaption) },
                     allPeople = uiState.allPeople,
                     onTagPerson = { mediaId, targetPersonId ->
                         profileViewModel.tagPersonInMedia(mediaId, targetPersonId)

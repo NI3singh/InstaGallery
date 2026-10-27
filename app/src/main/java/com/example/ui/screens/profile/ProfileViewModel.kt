@@ -123,4 +123,10 @@ class ProfileViewModel(
             onComplete()
         }
     }
+
+    fun updateCaption(mediaId: Long, caption: String?) {
+        viewModelScope.launch {
+            repository.updateMediaCaption(mediaId, caption)
+        }
+    }
 }

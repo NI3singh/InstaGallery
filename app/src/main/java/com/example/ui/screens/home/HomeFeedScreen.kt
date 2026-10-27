@@ -351,6 +351,7 @@ fun HomeFeedScreen(
                         onAuthorClick = onPersonClick,
                         onToggleFavorite = { id, current -> viewModel.toggleFavorite(id, current) },
                         onToggleBookmark = { id, current -> viewModel.toggleBookmark(id, current) },
+                        onUpdateCaption = { newCaption -> viewModel.updateCaption(item.media.mediaId, newCaption) },
                         allPeople = uiState.people,
                         onTagPerson = { mediaId, personId -> viewModel.tagPersonInMedia(mediaId, personId) },
                         onUntagPerson = { mediaId, personId -> viewModel.removePersonFromMedia(mediaId, personId) }

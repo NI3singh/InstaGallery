@@ -47,6 +47,7 @@ fun PostDetailScreen(
     onPersonClick: (Long) -> Unit,
     onToggleFavorite: (Long, Boolean) -> Unit,
     onToggleBookmark: (Long, Boolean) -> Unit,
+    onUpdateCaption: (Long, String?) -> Unit = { _, _ -> },
     allPeople: List<PersonEntity> = emptyList(),
     onTagPerson: ((Long, Long) -> Unit)? = null,
     onUntagPerson: ((Long, Long) -> Unit)? = null,
@@ -126,6 +127,7 @@ fun PostDetailScreen(
                         onAuthorClick = onPersonClick,
                         onToggleFavorite = onToggleFavorite,
                         onToggleBookmark = onToggleBookmark,
+                        onUpdateCaption = { newCaption -> onUpdateCaption(item.media.mediaId, newCaption) },
                         allPeople = allPeople,
                         onTagPerson = onTagPerson,
                         onUntagPerson = onUntagPerson

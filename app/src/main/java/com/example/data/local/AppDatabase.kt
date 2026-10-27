@@ -21,7 +21,7 @@ import com.example.data.local.entity.PersonEntity
         FaceEntity::class,
         MediaPersonCrossRef::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -49,6 +49,22 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private fun addCustomCaptionColumnIfMissing(database: SupportSQLiteDatabase) {
+            var hasCustomCaption = false
+            database.query("PRAGMA table_info(media_items)").use { cursor ->
+                val nameCol = cursor.getColumnIndex("name")
+                while (cursor.moveToNext()) {
+                    if (nameCol >= 0 && cursor.getString(nameCol) == "customCaption") {
+                        hasCustomCaption = true
+                        break
+                    }
+                }
+            }
+            if (!hasCustomCaption) {
+                database.execSQL("ALTER TABLE media_items ADD COLUMN customCaption TEXT DEFAULT NULL")
+            }
+        }
+
         val MIGRATION_6_7 = object : Migration(6, 7) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 addDecisionStateColumnIfMissing(db)
@@ -61,6 +77,12 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addCustomCaptionColumnIfMissing(db)
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -68,7 +90,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "instagallery.db"
                 )
-                    .addMigrations(MIGRATION_6_7, MIGRATION_7_8)
+                    .addMigrations(MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance
