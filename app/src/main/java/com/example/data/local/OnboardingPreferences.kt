@@ -31,6 +31,7 @@ object OnboardingPreferences {
     private const val KEY_SCAN_COMPLETED = "initial_scan_completed"
     private const val KEY_SETUP_COMPLETED = "profile_setup_completed"
     private const val KEY_HEART_THEME_ID = "heart_theme_id"
+    private const val KEY_VIEWED_STORY_IDS = "viewed_story_person_ids"
 
     private val _isScanCompleted = MutableStateFlow(false)
     val isScanCompleted: StateFlow<Boolean> = _isScanCompleted.asStateFlow()
@@ -40,6 +41,9 @@ object OnboardingPreferences {
 
     private val _heartThemeFlow = MutableStateFlow(HeartTheme.CRIMSON_RED)
     val heartThemeFlow: StateFlow<HeartTheme> = _heartThemeFlow.asStateFlow()
+
+    private val _viewedStoryPersonIdsFlow = MutableStateFlow<Set<Long>>(emptySet())
+    val viewedStoryPersonIdsFlow: StateFlow<Set<Long>> = _viewedStoryPersonIdsFlow.asStateFlow()
 
     private var appContext: Context? = null
     private var initialized = false
@@ -55,7 +59,28 @@ object OnboardingPreferences {
         _heartThemeFlow.value = HeartTheme.fromId(
             prefs.getString(KEY_HEART_THEME_ID, HeartTheme.CRIMSON_RED.id)
         )
+        val savedIds = prefs.getStringSet(KEY_VIEWED_STORY_IDS, emptySet())
+            ?.mapNotNull { it.toLongOrNull() }
+            ?.toSet()
+            ?: emptySet()
+        _viewedStoryPersonIdsFlow.value = savedIds
         initialized = true
+    }
+
+    fun markStoryViewed(personId: Long) {
+        val updated = _viewedStoryPersonIdsFlow.value + personId
+        _viewedStoryPersonIdsFlow.value = updated
+        appContext?.let { ctx ->
+            ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putStringSet(KEY_VIEWED_STORY_IDS, updated.map { it.toString() }.toSet())
+                .apply()
+        }
+    }
+
+    fun markStoryViewed(context: Context, personId: Long) {
+        init(context)
+        markStoryViewed(personId)
     }
 
     fun setHeartTheme(theme: HeartTheme) {

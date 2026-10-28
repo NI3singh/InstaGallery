@@ -68,6 +68,8 @@ import com.example.ui.screens.profile.ProfileScreen
 import com.example.ui.screens.profile.ProfileViewModel
 import com.example.ui.screens.reels.ReelsScreen
 import com.example.ui.screens.reels.ReelsViewModel
+import com.example.ui.screens.story.StoryPlayerScreen
+import com.example.ui.screens.story.StoryPlayerViewModel
 import com.example.ui.theme.IgBlack
 import com.example.ui.theme.IgTextSecondary
 import java.io.File
@@ -91,7 +93,8 @@ fun InstaGalleryNavGraph(
 
     val showBottomBar = currentRoute != Screen.PermissionGate.route &&
         currentRoute != Screen.FaceScanning.route &&
-        currentRoute != Screen.ProfileSetup.route
+        currentRoute != Screen.ProfileSetup.route &&
+        currentRoute?.startsWith("story_player") != true
 
     val startDestination = remember {
         when {
@@ -263,6 +266,9 @@ fun InstaGalleryNavGraph(
                     onPersonClick = { personId ->
                         navController.navigate(Screen.Profile.createRoute(personId))
                     },
+                    onOpenStory = { personId ->
+                        navController.navigate(Screen.StoryPlayer.createRoute(personId))
+                    },
                     onReviewNewPeopleClick = {
                         onboardingViewModel.prepareForPostOnboardingReview()
                         navController.navigate(Screen.ProfileSetup.route)
@@ -365,6 +371,41 @@ fun InstaGalleryNavGraph(
                     },
                     onUntagPerson = { mediaId, targetPersonId ->
                         profileViewModel.removePhotoFromPerson(mediaId, targetPersonId)
+                    }
+                )
+            }
+
+            composable(
+                route = Screen.StoryPlayer.route,
+                arguments = listOf(navArgument("personId") { type = NavType.LongType }),
+                enterTransition = {
+                    scaleIn(initialScale = 0.88f, animationSpec = tween(260, easing = FastOutSlowInEasing)) +
+                        fadeIn(tween(260))
+                },
+                exitTransition = {
+                    scaleOut(targetScale = 0.88f, animationSpec = tween(220)) +
+                        fadeOut(tween(220))
+                }
+            ) { backStackEntry ->
+                val personId = backStackEntry.arguments?.getLong("personId") ?: -1L
+                val storyViewModel: StoryPlayerViewModel = viewModel(
+                    key = "story_player_$personId",
+                    factory = object : androidx.lifecycle.ViewModelProvider.Factory {
+                        @Suppress("UNCHECKED_CAST")
+                        override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                            return StoryPlayerViewModel(
+                                context.applicationContext as android.app.Application,
+                                personId
+                            ) as T
+                        }
+                    }
+                )
+
+                StoryPlayerScreen(
+                    viewModel = storyViewModel,
+                    onNavigateBack = { navController.popBackStack() },
+                    onNavigateToProfile = { pid ->
+                        navController.navigate(Screen.Profile.createRoute(pid))
                     }
                 )
             }

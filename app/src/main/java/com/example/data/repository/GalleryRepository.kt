@@ -58,6 +58,8 @@ class GalleryRepository(
      */
     val allPeople: Flow<List<PersonEntity>> = personDao.getVisiblePeopleFlow()
 
+    fun getVisiblePeopleFlow(): Flow<List<PersonEntity>> = personDao.getVisiblePeopleFlow()
+
     /**
      * Newly detected undecided people with >= 3 distinct photos (for the "New People Found" review banner).
      */

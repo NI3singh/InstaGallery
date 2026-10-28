@@ -43,8 +43,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -81,11 +83,19 @@ private val StorySunsetGradient = Brush.linearGradient(
     )
 )
 
+private val StoryViewedSilverGradient = Brush.linearGradient(
+    colors = listOf(
+        Color(0xFF52525B),
+        Color(0xFF27272A)
+    )
+)
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun HomeFeedScreen(
     viewModel: HomeViewModel,
     onPersonClick: (Long) -> Unit,
+    onOpenStory: (Long) -> Unit = onPersonClick,
     onReviewNewPeopleClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -94,6 +104,7 @@ fun HomeFeedScreen(
         OnboardingPreferences.init(context)
     }
     val heartTheme by OnboardingPreferences.heartThemeFlow.collectAsStateWithLifecycle()
+    val viewedStoryIds by OnboardingPreferences.viewedStoryPersonIdsFlow.collectAsStateWithLifecycle()
     var showHeartThemeSheet by remember { mutableStateOf(false) }
 
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -272,6 +283,8 @@ fun HomeFeedScreen(
                 StoriesPeopleTray(
                     people = uiState.people,
                     unassociatedCount = uiState.unassociatedCount,
+                    viewedStoryIds = viewedStoryIds,
+                    onOpenStory = onOpenStory,
                     onPersonClick = onPersonClick
                 )
             }
@@ -366,6 +379,8 @@ fun HomeFeedScreen(
 fun StoriesPeopleTray(
     people: List<PersonEntity>,
     unassociatedCount: Int,
+    viewedStoryIds: Set<Long> = emptySet(),
+    onOpenStory: (Long) -> Unit,
     onPersonClick: (Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -391,7 +406,9 @@ fun StoriesPeopleTray(
                 StoryAvatarItem(
                     label = storyLabel,
                     cropPath = person.avatarCropPath,
-                    onClick = { onPersonClick(person.personId) }
+                    isViewed = person.personId in viewedStoryIds,
+                    onClick = { onOpenStory(person.personId) },
+                    onLongClick = { onPersonClick(person.personId) }
                 )
             }
 
@@ -399,7 +416,9 @@ fun StoriesPeopleTray(
             item(key = "story_other") {
                 StoryOtherItem(
                     count = unassociatedCount,
-                    onClick = { onPersonClick(-1L) }
+                    isViewed = -1L in viewedStoryIds,
+                    onClick = { onOpenStory(-1L) },
+                    onLongClick = { onPersonClick(-1L) }
                 )
             }
         }
@@ -407,28 +426,41 @@ fun StoriesPeopleTray(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun StoryAvatarItem(
     label: String,
     cropPath: String,
-    onClick: () -> Unit
+    isViewed: Boolean = false,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = onClick
 ) {
+    val haptic = LocalHapticFeedback.current
+    val ringBrush = if (isViewed) StoryViewedSilverGradient else StorySunsetGradient
+    val ringThickness = if (isViewed) 1.8.dp else 2.5.dp
+    val innerGap = if (isViewed) 3.7.dp else 3.dp
+
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .bounceClick(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onLongClick()
+                }
+            )
             .testTag("story_item_${label.replace("@", "")}")
     ) {
-        // 74dp outer circle: 2.5dp Instagram Sunset Gradient ring + 3dp pure #000000 inner gap + 63dp face avatar
         Box(
             modifier = Modifier
                 .size(74.dp)
                 .clip(CircleShape)
-                .background(StorySunsetGradient)
-                .padding(2.5.dp)
+                .background(ringBrush)
+                .padding(ringThickness)
                 .clip(CircleShape)
                 .background(Color(0xFF000000))
-                .padding(3.dp),
+                .padding(innerGap),
             contentAlignment = Alignment.Center
         ) {
             if (cropPath.isNotBlank() && File(cropPath).exists()) {
@@ -464,7 +496,7 @@ fun StoryAvatarItem(
             text = label,
             fontSize = 11.5.sp,
             fontWeight = FontWeight.Normal,
-            color = Color(0xFFF5F5F7),
+            color = if (isViewed) Color(0xFFA1A1AA) else Color(0xFFF5F5F7),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.width(74.dp),
@@ -473,26 +505,40 @@ fun StoryAvatarItem(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun StoryOtherItem(
     count: Int,
-    onClick: () -> Unit
+    isViewed: Boolean = false,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = onClick
 ) {
+    val haptic = LocalHapticFeedback.current
+    val ringBrush = if (isViewed) StoryViewedSilverGradient else StorySunsetGradient
+    val ringThickness = if (isViewed) 1.8.dp else 2.5.dp
+    val innerGap = if (isViewed) 3.7.dp else 3.dp
+
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .bounceClick(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onLongClick()
+                }
+            )
             .testTag("story_item_other")
     ) {
         Box(
             modifier = Modifier
                 .size(74.dp)
                 .clip(CircleShape)
-                .background(StorySunsetGradient)
-                .padding(2.5.dp)
+                .background(ringBrush)
+                .padding(ringThickness)
                 .clip(CircleShape)
                 .background(Color(0xFF000000))
-                .padding(3.dp),
+                .padding(innerGap),
             contentAlignment = Alignment.Center
         ) {
             Box(
@@ -517,7 +563,7 @@ fun StoryOtherItem(
             text = "@Other",
             fontSize = 11.5.sp,
             fontWeight = FontWeight.Normal,
-            color = Color(0xFFF5F5F7),
+            color = if (isViewed) Color(0xFFA1A1AA) else Color(0xFFF5F5F7),
             maxLines = 1,
             textAlign = TextAlign.Center,
             modifier = Modifier.width(74.dp)
