@@ -13,64 +13,69 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.FilledExtendedIcons
+import androidx.compose.material.icons.outlined.Face
 import androidx.compose.material.icons.outlined.OutlinedExtendedIcons
-import androidx.compose.material.icons.outlined.Share
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.local.entity.MediaEntity
 import com.example.data.local.entity.PersonEntity
-import com.example.ui.theme.IgBlack
-import com.example.ui.theme.IgBlue
-import com.example.ui.theme.IgBorderNav
-import com.example.ui.theme.IgSurfacePill
-import com.example.ui.theme.IgTextPrimary
-import com.example.ui.theme.IgTextSecondary
+import com.example.data.repository.GalleryRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -97,24 +102,15 @@ fun isMachineGeneratedFilename(displayName: String): Boolean {
     ) {
         return true
     }
-    // Check UUID-like or hex-like strings
     val hexAndHyphenCount = stem.count { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' || it == '-' || it == '_' }
     if (stem.length >= 12 && hexAndHyphenCount == stem.length && digitCount >= 3) return true
     return false
 }
 
-private val QuickMemoryTags = listOf(
-    "Family ❤️",
-    "Throwback ✨",
-    "Trip 🌍",
-    "Celebration 🎉",
-    "Golden Hour 🌅"
-)
-
 /**
- * ModalBottomSheet for adding or editing a persistent custom memory caption (MediaEntity.customCaption).
+ * Native Instagram Dark Mode CaptionEditorSheet.
  */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CaptionEditorSheet(
     media: MediaEntity,
@@ -131,226 +127,165 @@ fun CaptionEditorSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF121216)
+        containerColor = Color(0xFF121214),
+        dragHandle = {
+            BottomSheetDefaults.DragHandle(color = Color(0xFF3A3A3E))
+        }
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
-                .padding(horizontal = 20.dp, vertical = 10.dp)
+                .padding(bottom = 18.dp)
                 .testTag("caption_editor_sheet")
         ) {
-            Text(
-                text = "Memory Note & Caption",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = "Saved privately to your device gallery database",
-                fontSize = 12.sp,
-                color = Color(0xFF8E8E93)
-            )
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // 48.dp rounded thumbnail preview + @AuthorName and capture date
-            Row(
+            // Header Row: Cancel | Caption | Save
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Color(0xFF18181E))
-                    .padding(10.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
             ) {
-                AsyncImage(
-                    model = media.uri,
-                    contentDescription = media.displayName,
-                    contentScale = ContentScale.Crop,
+                Text(
+                    text = "Cancel",
+                    fontSize = 15.sp,
+                    color = Color(0xFFA0A0A5),
                     modifier = Modifier
-                        .size(48.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Color(0xFF101014))
+                        .align(Alignment.CenterStart)
+                        .clickable { onDismiss() }
+                        .padding(vertical = 6.dp, horizontal = 4.dp)
+                        .testTag("cancel_caption_button")
                 )
 
-                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = "Caption",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    modifier = Modifier.align(Alignment.Center)
+                )
 
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "@${primaryAuthorName.removePrefix("@")}",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = formattedDate,
-                        fontSize = 12.sp,
-                        color = Color(0xFF8E8E93)
-                    )
-                }
+                Text(
+                    text = "Save",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF0095F6),
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .clickable {
+                            onSaveCaption(captionInput.trim().takeIf { it.isNotEmpty() })
+                            onDismiss()
+                        }
+                        .padding(vertical = 6.dp, horizontal = 4.dp)
+                        .testTag("save_caption_button")
+                )
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
-            // Multi-line OutlinedTextField (#1C1C22 fill, #0095F6 focused border, RoundedCornerShape(14.dp))
-            OutlinedTextField(
-                value = captionInput,
-                onValueChange = { captionInput = it },
-                placeholder = {
-                    Text(
-                        text = "Write a caption or memory for this photo...",
-                        color = Color(0xFF737373),
-                        fontSize = 14.sp
-                    )
-                },
-                minLines = 3,
-                maxLines = 5,
-                shape = RoundedCornerShape(14.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = Color(0xFF1C1C22),
-                    unfocusedContainerColor = Color(0xFF1C1C22),
-                    focusedBorderColor = Color(0xFF0095F6),
-                    unfocusedBorderColor = Color(0xFF2C2C34),
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White,
-                    cursorColor = Color(0xFF0095F6)
-                ),
+            HorizontalDivider(
+                color = Color(0xFF262629),
+                thickness = 0.5.dp
+            )
+
+            // Clean Editor Area
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .testTag("caption_text_field")
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Text(
-                text = "Quick memory tags:",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                color = Color(0xFF8E8E93)
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                    .padding(16.dp)
             ) {
-                QuickMemoryTags.forEach { chipText ->
-                    Box(
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    AsyncImage(
+                        model = media.uri,
+                        contentDescription = media.displayName,
+                        contentScale = ContentScale.Crop,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(Color(0xFF1E1E24))
-                            .border(1.dp, Color(0xFF2E2E38), RoundedCornerShape(50))
-                            .clickable {
-                                val trimmed = captionInput.trim()
-                                captionInput = if (trimmed.isEmpty()) {
-                                    chipText
-                                } else if (trimmed.contains(chipText)) {
-                                    trimmed
-                                } else {
-                                    "$trimmed  •  $chipText"
-                                }
-                            }
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
-                    ) {
-                        Text(
-                            text = chipText,
-                            fontSize = 12.5.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color(0xFFE4E4E7)
-                        )
-                    }
-                }
-            }
+                            .padding(top = 6.dp)
+                            .size(48.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF1C1C20))
+                    )
 
-            Spacer(modifier = Modifier.height(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                if (!media.customCaption.isNullOrBlank() || captionInput.isNotBlank()) {
-                    OutlinedButton(
-                        onClick = {
-                            onSaveCaption(null)
-                            onDismiss()
+                    TextField(
+                        value = captionInput,
+                        onValueChange = { captionInput = it },
+                        placeholder = {
+                            Text(
+                                text = "Write a caption...",
+                                fontSize = 15.sp,
+                                color = Color(0xFF6E6E73)
+                            )
                         },
-                        shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = Color(0xFFFF453A)
+                        textStyle = TextStyle(
+                            fontSize = 15.sp,
+                            color = Color.White,
+                            lineHeight = 20.sp
+                        ),
+                        minLines = 3,
+                        maxLines = 6,
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            disabledContainerColor = Color.Transparent,
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent,
+                            disabledIndicatorColor = Color.Transparent,
+                            cursorColor = Color(0xFF0095F6),
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White
                         ),
                         modifier = Modifier
-                            .weight(0.4f)
-                            .height(48.dp)
-                            .testTag("clear_caption_button")
-                    ) {
-                        Text(
-                            text = "Clear",
-                            fontSize = 13.5.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
+                            .weight(1f)
+                            .testTag("caption_text_field")
+                    )
                 }
 
-                Button(
-                    onClick = {
-                        onSaveCaption(captionInput.trim().takeIf { it.isNotEmpty() })
-                        onDismiss()
-                    },
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.White,
-                        contentColor = Color.Black
-                    ),
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(48.dp)
-                        .testTag("save_caption_button")
-                ) {
+                if (!media.customCaption.isNullOrBlank() || captionInput.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Save Note",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold
+                        text = "Clear caption",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFFFF453A),
+                        modifier = Modifier
+                            .clickable {
+                                captionInput = ""
+                                onSaveCaption(null)
+                                onDismiss()
+                            }
+                            .padding(vertical = 4.dp)
+                            .testTag("clear_caption_button")
                     )
                 }
             }
-
-            Spacer(modifier = Modifier.height(16.dp))
         }
     }
 }
 
 data class OfflineExifMetadata(
-    val dimensionsText: String,
-    val capturedText: String,
-    val cameraMakeModel: String?,
-    val lensAndExposure: String?,
-    val fileSizeText: String?,
-    val fileName: String,
-    val mimeType: String
+    val deviceModel: String?,
+    val capturedDateText: String,
+    val exposureSpecs: List<String>,
+    val footerLine: String
 )
 
 private suspend fun loadOfflineExifMetadata(
     context: Context,
-    media: MediaEntity,
-    formattedDate: String
+    media: MediaEntity
 ): OfflineExifMetadata = withContext(Dispatchers.IO) {
     val uri = runCatching { Uri.parse(media.uri) }.getOrNull()
 
     var exifW = media.width
     var exifH = media.height
     var cameraDevice: String? = null
-    var lensDetails: String? = null
-    var capturedTime = formattedDate
+    val exposureParts = mutableListOf<String>()
     var sizeStr: String? = null
 
     if (uri != null) {
-        // Query file size if available
         runCatching {
             context.contentResolver.query(
                 uri,
@@ -373,7 +308,6 @@ private suspend fun loadOfflineExifMetadata(
             }
         }
 
-        // Read EXIF tags
         runCatching {
             context.contentResolver.openInputStream(uri)?.use { stream ->
                 val exif = ExifInterface(stream)
@@ -396,14 +330,18 @@ private suspend fun loadOfflineExifMetadata(
                     else -> null
                 }
 
-                val exposureParts = mutableListOf<String>()
                 val focal35 = exif.getAttributeInt(ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM, 0)
                 if (focal35 > 0) {
                     exposureParts.add("${focal35}mm")
                 } else {
                     val focalRaw = exif.getAttributeDouble(ExifInterface.TAG_FOCAL_LENGTH, 0.0)
                     if (focalRaw > 0.0) {
-                        exposureParts.add(String.format(Locale.US, "%.1fmm", focalRaw))
+                        val formattedFocal = if (focalRaw % 1.0 == 0.0) {
+                            "${focalRaw.toInt()}mm"
+                        } else {
+                            String.format(Locale.US, "%.1fmm", focalRaw)
+                        }
+                        exposureParts.add(formattedFocal)
                     }
                 }
 
@@ -436,10 +374,6 @@ private suspend fun loadOfflineExifMetadata(
                 if (!iso.isNullOrBlank()) {
                     exposureParts.add("ISO ${iso.trim()}")
                 }
-
-                if (exposureParts.isNotEmpty()) {
-                    lensDetails = exposureParts.joinToString("  •  ")
-                }
             }
         }
     }
@@ -449,28 +383,31 @@ private suspend fun loadOfflineExifMetadata(
         String.format(Locale.US, "%.1f MP", megapixels)
     } else null
 
-    val dimText = if (exifW > 0 && exifH > 0) {
-        if (mp != null) "${exifW} × ${exifH} px ($mp)" else "${exifW} × ${exifH} px"
-    } else {
-        "Original Resolution"
+    val footerSegments = mutableListOf<String>()
+    if (exifW > 0 && exifH > 0) {
+        footerSegments.add("${exifW} × ${exifH}")
     }
+    if (mp != null) {
+        footerSegments.add(mp)
+    }
+    if (!sizeStr.isNullOrBlank()) {
+        footerSegments.add(sizeStr!!)
+    }
+    footerSegments.add(media.displayName)
 
-    val fullDateSdf = SimpleDateFormat("MMMM d, yyyy • h:mm a", Locale.getDefault())
-    capturedTime = fullDateSdf.format(Date(media.dateAddedSeconds * 1000L))
+    val captureDateSdf = SimpleDateFormat("MMM d, yyyy • h:mm a", Locale.getDefault())
+    val capturedDateText = captureDateSdf.format(Date(media.dateAddedSeconds * 1000L))
 
     OfflineExifMetadata(
-        dimensionsText = dimText,
-        capturedText = capturedTime,
-        cameraMakeModel = cameraDevice,
-        lensAndExposure = lensDetails,
-        fileSizeText = sizeStr,
-        fileName = media.displayName,
-        mimeType = media.mimeType
+        deviceModel = cameraDevice,
+        capturedDateText = capturedDateText,
+        exposureSpecs = exposureParts,
+        footerLine = footerSegments.joinToString("  •  ")
     )
 }
 
 /**
- * Post Inspector & Offline EXIF Sheet triggered by the top-right `⋮` menu on PostCard.
+ * Native Instagram Dark Mode PostInspectorSheet (Three-Dot `⋮` Menu).
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -481,342 +418,333 @@ fun PostInspectorSheet(
     formattedDate: String,
     onOpenInstaCardStudio: () -> Unit,
     onOpenCaptionEditor: () -> Unit,
-    onOpenHeartThemePicker: () -> Unit,
+    onOpenHeartThemePicker: () -> Unit = {},
     onShareOriginal: () -> Unit,
     onAuthorClick: (Long) -> Unit,
     onTagPerson: ((Long, Long) -> Unit)?,
     onUntagPerson: ((Long, Long) -> Unit)?,
+    onToggleBookmark: (() -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
+    val repository = remember(context) { GalleryRepository(context) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var exifInfo by remember(media.mediaId) { mutableStateOf<OfflineExifMetadata?>(null) }
 
     val taggedIds = remember(authors) { authors.map { it.personId }.toSet() }
-    val untaggedPeople = remember(allPeople, taggedIds) {
-        allPeople.filter { !taggedIds.contains(it.personId) }
+    val orderedPeople = remember(authors, allPeople, taggedIds) {
+        val untagged = allPeople.filter { !taggedIds.contains(it.personId) }
+        (authors + untagged).distinctBy { it.personId }
     }
 
     LaunchedEffect(media.mediaId) {
-        exifInfo = loadOfflineExifMetadata(context, media, formattedDate)
+        exifInfo = loadOfflineExifMetadata(context, media)
     }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF121216)
+        containerColor = Color(0xFF121214),
+        dragHandle = {
+            BottomSheetDefaults.DragHandle(color = Color(0xFF3A3A3E))
+        }
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 8.dp)
+                .padding(bottom = 24.dp)
                 .testTag("post_inspector_sheet")
         ) {
-            Text(
-                text = "Post Inspector & Details",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White
-            )
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // 1. Quick Action Pills at Top
+            // 1. Top Grouped Action Strip (padding(horizontal = 16.dp))
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0xFF1C1C20))
+                    .padding(vertical = 14.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                InspectorActionPill(
+                NativeActionStripItem(
+                    icon = if (media.isBookmarked) FilledExtendedIcons.Bookmark else OutlinedExtendedIcons.BookmarkBorder,
+                    label = if (media.isBookmarked) "Saved" else "Save",
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        if (onToggleBookmark != null) {
+                            onToggleBookmark()
+                        } else {
+                            scope.launch {
+                                repository.toggleBookmark(media)
+                            }
+                        }
+                        onDismiss()
+                    },
+                    modifier = Modifier.testTag("inspector_save_action")
+                )
+
+                NativeActionStripItem(
                     icon = SnapshotStudioIcon,
-                    label = "InstaCard\nSnapshot",
-                    accentColor = Color(0xFF0095F6),
+                    label = "InstaCard",
                     onClick = {
                         onDismiss()
                         onOpenInstaCardStudio()
                     },
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("inspector_instacard_action")
+                    modifier = Modifier.testTag("inspector_instacard_action")
                 )
 
-                InspectorActionPill(
-                    icon = Icons.Outlined.Edit,
-                    label = "Edit Memory\nNote",
-                    accentColor = Color.White,
+                NativeActionStripItem(
+                    icon = OutlinedExtendedIcons.ChatBubbleOutline,
+                    label = "Caption",
                     onClick = {
                         onDismiss()
                         onOpenCaptionEditor()
                     },
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("inspector_caption_action")
+                    modifier = Modifier.testTag("inspector_caption_action")
                 )
 
-                InspectorActionPill(
-                    icon = Icons.Outlined.Share,
-                    label = "Share\nOriginal",
-                    accentColor = Color.White,
+                NativeActionStripItem(
+                    icon = OutlinedExtendedIcons.Send,
+                    label = "Share",
                     onClick = {
                         onDismiss()
                         onShareOriginal()
                     },
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("inspector_share_action")
-                )
-
-                InspectorActionPill(
-                    icon = OutlinedExtendedIcons.FavoriteBorder,
-                    label = "Heart\nColor",
-                    accentColor = Color(0xFFFF3040),
-                    onClick = {
-                        onDismiss()
-                        onOpenHeartThemePicker()
-                    },
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("inspector_heart_color_action")
+                    modifier = Modifier.testTag("inspector_share_action")
                 )
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
-
-            // 2. Offline EXIF & File Details Card (#18181E container, 14.dp radius)
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xFF18181E))
-                    .border(1.dp, Color(0xFF26262E), RoundedCornerShape(14.dp))
-                    .padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+            // 2. Visual People Tagging Strip (padding(top = 18.dp))
+            if (orderedPeople.isNotEmpty()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 18.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Filled.AutoAwesome,
-                        contentDescription = null,
-                        tint = Color(0xFF0095F6),
-                        modifier = Modifier.size(16.dp)
-                    )
                     Text(
-                        text = "OFFLINE EXIF & CAMERA METADATA",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
+                        text = "People in this photo",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
                         color = Color(0xFF8E8E93),
-                        letterSpacing = 0.6.sp
+                        modifier = Modifier.padding(horizontal = 18.dp)
                     )
-                }
 
-                val info = exifInfo
-                ExifDetailRow(
-                    label = "Dimensions",
-                    value = info?.dimensionsText ?: "${media.width} × ${media.height} px"
-                )
-                ExifDetailRow(
-                    label = "Captured",
-                    value = info?.capturedText ?: formattedDate
-                )
-                if (!info?.cameraMakeModel.isNullOrBlank()) {
-                    ExifDetailRow(
-                        label = "Camera / Device",
-                        value = info?.cameraMakeModel ?: ""
-                    )
-                }
-                if (!info?.lensAndExposure.isNullOrBlank()) {
-                    ExifDetailRow(
-                        label = "Lens / Exposure",
-                        value = info?.lensAndExposure ?: ""
-                    )
-                }
-                ExifDetailRow(
-                    label = "File Name",
-                    value = if (info?.fileSizeText != null) {
-                        "${media.displayName} (${info.fileSizeText})"
-                    } else {
-                        media.displayName
-                    }
-                )
-            }
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        items(
+                            items = orderedPeople,
+                            key = { it.personId }
+                        ) { person ->
+                            val isTagged = taggedIds.contains(person.personId)
+                            val cleanName = person.name.removePrefix("@")
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // 3. People Tagged & Manual Tagging Section
-            Text(
-                text = if (authors.isEmpty()) "No people tagged in this photo" else "People in this memory",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = IgTextSecondary
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-
-            if (authors.isNotEmpty()) {
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    authors.forEach { person ->
-                        Row(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(50))
-                                .background(IgBlack)
-                                .border(1.dp, IgBorderNav, RoundedCornerShape(50))
-                                .clickable {
-                                    onDismiss()
-                                    onAuthorClick(person.personId)
-                                }
-                                .padding(horizontal = 12.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            OverlappingAvatars(
-                                authors = listOf(person),
-                                avatarSize = 22.dp
-                            )
-                            Text(
-                                text = "@${person.name.removePrefix("@")}",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = IgTextPrimary
-                            )
-                            if (onUntagPerson != null) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Remove tag",
-                                    tint = IgTextSecondary,
-                                    modifier = Modifier
-                                        .size(16.dp)
-                                        .clickable {
-                                            onUntagPerson(media.mediaId, person.personId)
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .width(64.dp)
+                                    .clickable {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        if (isTagged) {
+                                            onUntagPerson?.invoke(media.mediaId, person.personId)
+                                        } else {
+                                            onTagPerson?.invoke(media.mediaId, person.personId)
                                         }
+                                    }
+                                    .testTag("inspector_person_avatar_${person.personId}")
+                            ) {
+                                Box(
+                                    modifier = Modifier.size(56.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(54.dp)
+                                            .clip(CircleShape)
+                                            .border(
+                                                width = if (isTagged) 2.dp else 1.dp,
+                                                color = if (isTagged) Color(0xFF0095F6) else Color(0xFF2C2C30),
+                                                shape = CircleShape
+                                            )
+                                            .padding(if (isTagged) 3.dp else 2.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(0xFF1C1C20)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        val avatarFile = person.avatarCropPath.takeIf { it.isNotBlank() }?.let { File(it) }
+                                        if (avatarFile != null && avatarFile.exists()) {
+                                            AsyncImage(
+                                                model = avatarFile,
+                                                contentDescription = cleanName,
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .clip(CircleShape)
+                                                    .alpha(if (isTagged) 1f else 0.72f)
+                                            )
+                                        } else {
+                                            Icon(
+                                                imageVector = Icons.Outlined.Face,
+                                                contentDescription = cleanName,
+                                                tint = Color(0xFF8E8E93),
+                                                modifier = Modifier.size(24.dp)
+                                            )
+                                        }
+                                    }
+
+                                    // Bottom-right checkmark or + badge
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomEnd)
+                                            .size(18.dp)
+                                            .clip(CircleShape)
+                                            .background(
+                                                if (isTagged) Color(0xFF0095F6) else Color(0xFF26262B).copy(alpha = 0.85f)
+                                            )
+                                            .border(1.5.dp, Color(0xFF121214), CircleShape),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isTagged) Icons.Default.Check else Icons.Default.Add,
+                                            contentDescription = if (isTagged) "Tagged" else "Tag",
+                                            tint = if (isTagged) Color.White else Color.White.copy(alpha = 0.65f),
+                                            modifier = Modifier.size(11.dp)
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(5.dp))
+
+                                Text(
+                                    text = "@$cleanName",
+                                    fontSize = 11.5.sp,
+                                    fontWeight = if (isTagged) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = if (isTagged) Color.White else Color(0xFF8E8E93),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    textAlign = TextAlign.Center
                                 )
                             }
                         }
                     }
                 }
-                Spacer(modifier = Modifier.height(14.dp))
             }
 
-            if (onTagPerson != null && untaggedPeople.isNotEmpty()) {
-                HorizontalDivider(color = IgBorderNav, thickness = 0.5.dp)
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = "Tag a person:",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = IgTextSecondary
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                FlowRow(
+            // 3. Minimal Apple/Instagram Camera Info Group (padding(horizontal = 16.dp, vertical = 8.dp))
+            val info = exifInfo
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0xFF1C1C20))
+                    .padding(16.dp)
+            ) {
+                // Top Row: Camera/Device title on left, capture date on right
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    untaggedPeople.forEach { person ->
-                        Row(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(50))
-                                .background(IgSurfacePill)
-                                .border(1.dp, IgBorderNav, RoundedCornerShape(50))
-                                .clickable {
-                                    onTagPerson(media.mediaId, person.personId)
-                                }
-                                .padding(horizontal = 10.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(5.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = "Tag",
-                                tint = IgBlue,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Text(
-                                text = "@${person.name.removePrefix("@")}",
-                                fontSize = 12.5.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = IgTextPrimary
-                            )
+                    Text(
+                        text = info?.deviceModel ?: "Local Gallery Photo",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = info?.capturedDateText ?: formattedDate,
+                        fontSize = 12.5.sp,
+                        color = Color(0xFF8E8E93)
+                    )
+                }
+
+                // Middle Row (if lens/exposure specs exist): compact dark pills
+                val specs = info?.exposureSpecs.orEmpty()
+                if (specs.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        specs.forEach { spec ->
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color(0xFF26262B))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = spec,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color(0xFFD4D4D8)
+                                )
+                            }
                         }
                     }
                 }
-            }
 
-            Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Bottom Hairline + File Footer
+                HorizontalDivider(
+                    color = Color(0xFF2A2A2E),
+                    thickness = 0.5.dp
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Text(
+                    text = info?.footerLine
+                        ?: "${media.width} × ${media.height}  •  ${media.displayName}",
+                    fontSize = 12.sp,
+                    color = Color(0xFF8E8E93),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun InspectorActionPill(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+private fun NativeActionStripItem(
+    icon: ImageVector,
     label: String,
-    accentColor: Color,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(Color(0xFF18181E))
-            .border(1.dp, Color(0xFF282830), RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick)
-            .padding(vertical = 12.dp, horizontal = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.Center,
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 4.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .size(34.dp)
-                .clip(CircleShape)
-                .background(Color(0xFF22222A)),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = label,
-                tint = accentColor,
-                modifier = Modifier.size(18.dp)
-            )
-        }
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = Color.White,
+            modifier = Modifier.size(24.dp)
+        )
         Spacer(modifier = Modifier.height(6.dp))
         Text(
             text = label,
-            fontSize = 11.sp,
-            lineHeight = 13.5.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = Color(0xFFE4E4E7),
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-        )
-    }
-}
-
-@Composable
-private fun ExifDetailRow(
-    label: String,
-    value: String
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.Top
-    ) {
-        Text(
-            text = label,
-            fontSize = 12.5.sp,
-            color = Color(0xFF8E8E93),
-            modifier = Modifier.width(116.dp)
-        )
-        Text(
-            text = value,
-            fontSize = 12.5.sp,
+            fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
-            color = Color(0xFFF4F4F6),
-            modifier = Modifier.weight(1f)
+            color = Color.White
         )
     }
 }

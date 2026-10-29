@@ -508,6 +508,7 @@ suspend fun generateInstaCardBitmap(
             val avatarRadius = 34f
 
             drawAuthorAvatarWithStoryRing(
+                context = context,
                 canvas = canvas,
                 avatarPath = authorAvatarPath,
                 centerX = avatarCenterX,
@@ -673,6 +674,7 @@ suspend fun generateInstaCardBitmap(
 
             // Circular author face avatar on the right side of the chin
             drawAuthorAvatarWithStoryRing(
+                context = context,
                 canvas = canvas,
                 avatarPath = authorAvatarPath,
                 centerX = 942f,
@@ -716,6 +718,7 @@ private fun drawCenterCroppedRoundedBitmap(
 }
 
 private fun drawAuthorAvatarWithStoryRing(
+    context: Context,
     canvas: Canvas,
     avatarPath: String?,
     centerX: Float,
@@ -745,11 +748,33 @@ private fun drawAuthorAvatarWithStoryRing(
     canvas.drawCircle(centerX, centerY, radius, ringPaint)
 
     val innerRadius = radius - ringStrokeWidth - 2f
-    val avatarBmp = avatarPath?.takeIf { it.isNotBlank() && File(it).exists() }?.let {
-        runCatching { BitmapFactory.decodeFile(it) }.getOrNull()
+    val avatarBmp: Bitmap? = avatarPath?.trim()?.takeIf { it.isNotEmpty() }?.let { rawPath ->
+        runCatching {
+            val fileObj = File(rawPath)
+            when {
+                fileObj.exists() -> BitmapFactory.decodeFile(fileObj.absolutePath)
+                rawPath.startsWith("content://") || rawPath.startsWith("file://") -> {
+                    val parsedUri = Uri.parse(rawPath)
+                    context.contentResolver.openInputStream(parsedUri)?.use { stream ->
+                        BitmapFactory.decodeStream(stream)
+                    } ?: parsedUri.path?.let { p ->
+                        val f = File(p)
+                        if (f.exists()) BitmapFactory.decodeFile(f.absolutePath) else null
+                    }
+                }
+                else -> null
+            }
+        }.getOrNull()
     }
 
     if (avatarBmp != null) {
+        val minEdge = min(avatarBmp.width, avatarBmp.height).coerceAtLeast(1)
+        val cropX = ((avatarBmp.width - minEdge) / 2).coerceAtLeast(0)
+        val cropY = ((avatarBmp.height - minEdge) / 2).coerceAtLeast(0)
+        val squareCrop = Bitmap.createBitmap(avatarBmp, cropX, cropY, minEdge, minEdge)
+        val targetDiameter = (innerRadius * 2f).roundToInt().coerceAtLeast(2)
+        val scaledSquare = Bitmap.createScaledBitmap(squareCrop, targetDiameter, targetDiameter, true)
+
         val save = canvas.save()
         val circlePath = Path().apply {
             addCircle(centerX, centerY, innerRadius, Path.Direction.CW)
@@ -762,19 +787,50 @@ private fun drawAuthorAvatarWithStoryRing(
             centerY + innerRadius
         )
         canvas.drawBitmap(
-            avatarBmp,
+            scaledSquare,
             null,
             dest,
             Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
         )
         canvas.restoreToCount(save)
+        if (scaledSquare != squareCrop && scaledSquare != avatarBmp) scaledSquare.recycle()
+        if (squareCrop != avatarBmp) squareCrop.recycle()
         avatarBmp.recycle()
     } else {
+        // Dark #16161C inner circle inside the Instagram Sunset gradient ring
         val fallbackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = 0xFF22222A.toInt()
+            style = Paint.Style.FILL
+            color = 0xFF16161C.toInt()
         }
         canvas.drawCircle(centerX, centerY, innerRadius, fallbackPaint)
+
+        // Crisp white 4-point sparkles star Path centered at (centerX, centerY)
+        val starRadius = innerRadius * 0.55f
+        val starPath = Path().apply {
+            moveTo(centerX, centerY - starRadius)
+            quadTo(centerX, centerY, centerX + starRadius, centerY)
+            quadTo(centerX, centerY, centerX, centerY + starRadius)
+            quadTo(centerX, centerY, centerX - starRadius, centerY)
+            quadTo(centerX, centerY, centerX, centerY - starRadius)
+            close()
+        }
+        val starPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            color = android.graphics.Color.WHITE
+        }
+        canvas.drawPath(starPath, starPaint)
     }
+}
+
+fun drawCommentBubbleIcon(canvas: Canvas, cx: Float, cy: Float, radius: Float, paint: Paint) {
+    val path = android.graphics.Path()
+    val oval = android.graphics.RectF(cx - radius, cy - radius, cx + radius, cy + radius)
+    // Start at bottom-right ~55 degrees, sweep 300 degrees around the circle
+    path.arcTo(oval, 55f, 300f)
+    // Draw the bottom-right speech tail tip and connect back
+    path.lineTo(cx + radius * 1.02f, cy + radius * 1.02f)
+    path.close()
+    canvas.drawPath(path, paint)
 }
 
 private fun drawInstaActionIconsRow(
@@ -807,15 +863,14 @@ private fun drawInstaActionIconsRow(
 
     val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = 3.4f
+        strokeWidth = 4.2f
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
         color = android.graphics.Color.WHITE
     }
 
-    // 2. Comment bubble outline at x = 180f
-    val cx = 182f
-    canvas.drawCircle(cx, centerY, 17f, strokePaint)
+    // 2. True Instagram speech-bubble comment outline at x = 182f
+    drawCommentBubbleIcon(canvas, cx = 182f, cy = centerY, radius = 17f, paint = strokePaint)
 
     // 3. Share paper plane outline at x = 256f
     val sx = 240f

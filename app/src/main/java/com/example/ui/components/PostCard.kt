@@ -748,6 +748,11 @@ fun PostCard(
             onAuthorClick = onAuthorClick,
             onTagPerson = onTagPerson,
             onUntagPerson = onUntagPerson,
+            onToggleBookmark = {
+                val wasBookmarked = media.isBookmarked
+                onToggleBookmark(media.mediaId, wasBookmarked)
+                showSavedFloatingBanner = !wasBookmarked
+            },
             onDismiss = { showInspectorSheet = false }
         )
     }

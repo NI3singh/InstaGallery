@@ -33,6 +33,12 @@ interface CollectionDao {
     @Query("DELETE FROM collection_media_cross_ref WHERE collectionId = :collectionId AND mediaId = :mediaId")
     suspend fun removeMediaFromCollection(collectionId: Long, mediaId: Long)
 
+    @Query("DELETE FROM collection_media_cross_ref WHERE mediaId = :mediaId")
+    suspend fun removeMediaFromAllCollections(mediaId: Long)
+
+    @Query("SELECT EXISTS(SELECT 1 FROM collection_media_cross_ref WHERE mediaId = :mediaId)")
+    suspend fun isMediaInAnyCollection(mediaId: Long): Boolean
+
     @Query("SELECT collectionId FROM collection_media_cross_ref WHERE mediaId = :mediaId")
     fun getCollectionIdsForMediaFlow(mediaId: Long): Flow<List<Long>>
 
@@ -44,7 +50,7 @@ interface CollectionDao {
         """
         SELECT m.* FROM media_items m
         INNER JOIN collection_media_cross_ref ref ON m.mediaId = ref.mediaId
-        WHERE ref.collectionId = :collectionId AND m.isVideo = 0
+        WHERE ref.collectionId = :collectionId AND m.isVideo = 0 AND m.isBookmarked = 1
         ORDER BY ref.addedAt DESC
         """
     )
@@ -56,7 +62,7 @@ interface CollectionDao {
         """
         SELECT m.* FROM media_items m
         INNER JOIN collection_media_cross_ref ref ON m.mediaId = ref.mediaId
-        WHERE ref.collectionId = :collectionId AND m.isVideo = 0
+        WHERE ref.collectionId = :collectionId AND m.isVideo = 0 AND m.isBookmarked = 1
         ORDER BY ref.addedAt DESC
         """
     )

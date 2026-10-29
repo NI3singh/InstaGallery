@@ -312,12 +312,21 @@ class GalleryRepository(
         mediaDao.setFavorite(mediaId, isFavorite)
     }
 
-    suspend fun toggleBookmarked(mediaId: Long, currentBookmarked: Boolean) {
-        mediaDao.setBookmarked(mediaId, !currentBookmarked)
+    suspend fun toggleBookmarked(mediaId: Long, currentBookmarked: Boolean) = withContext(Dispatchers.IO) {
+        val newBookmarkedState = !currentBookmarked
+        mediaDao.setBookmarked(mediaId, newBookmarkedState)
+        if (!newBookmarkedState) {
+            collectionDao.removeMediaFromAllCollections(mediaId)
+        }
     }
 
-    suspend fun setBookmarked(mediaId: Long, bookmarked: Boolean) {
+    suspend fun toggleBookmark(media: MediaEntity) = toggleBookmarked(media.mediaId, media.isBookmarked)
+
+    suspend fun setBookmarked(mediaId: Long, bookmarked: Boolean) = withContext(Dispatchers.IO) {
         mediaDao.setBookmarked(mediaId, bookmarked)
+        if (!bookmarked) {
+            collectionDao.removeMediaFromAllCollections(mediaId)
+        }
     }
 
     val allCollectionsFlow: Flow<List<CollectionEntity>> = collectionDao.getAllCollectionsFlow()
@@ -364,21 +373,32 @@ class GalleryRepository(
         collectionDao.deleteCollection(collectionId)
     }
 
+    suspend fun addMediaToCollection(collectionId: Long, mediaId: Long) = withContext(Dispatchers.IO) {
+        collectionDao.addMediaToCollection(
+            CollectionMediaCrossRef(
+                collectionId = collectionId,
+                mediaId = mediaId
+            )
+        )
+        mediaDao.setBookmarked(mediaId, true)
+    }
+
+    suspend fun removeMediaFromCollection(collectionId: Long, mediaId: Long) = withContext(Dispatchers.IO) {
+        collectionDao.removeMediaFromCollection(collectionId, mediaId)
+        if (!collectionDao.isMediaInAnyCollection(mediaId)) {
+            mediaDao.setBookmarked(mediaId, false)
+        }
+    }
+
     suspend fun toggleMediaInCollection(
         collectionId: Long,
         mediaId: Long,
         isCurrentlyInCollection: Boolean
     ) = withContext(Dispatchers.IO) {
         if (isCurrentlyInCollection) {
-            collectionDao.removeMediaFromCollection(collectionId, mediaId)
+            removeMediaFromCollection(collectionId, mediaId)
         } else {
-            collectionDao.addMediaToCollection(
-                CollectionMediaCrossRef(
-                    collectionId = collectionId,
-                    mediaId = mediaId
-                )
-            )
-            mediaDao.setBookmarked(mediaId, true)
+            addMediaToCollection(collectionId, mediaId)
         }
     }
 

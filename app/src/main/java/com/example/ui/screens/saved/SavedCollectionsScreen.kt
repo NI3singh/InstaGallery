@@ -62,6 +62,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.example.data.local.entity.CollectionEntity
@@ -75,8 +76,12 @@ import com.example.ui.theme.IgBlue
 import com.example.ui.theme.IgSurfacePill
 import com.example.ui.theme.IgTextPrimary
 import com.example.ui.theme.IgTextSecondary
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalCoroutinesApi::class)
 @Composable
 fun SavedCollectionsScreen(
     onBackClick: () -> Unit,
@@ -93,13 +98,7 @@ fun SavedCollectionsScreen(
 
     val collections by repository.allCollectionsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val allBookmarkedPhotos by repository.bookmarkedPhotosWithAuthors.collectAsStateWithLifecycle(initialValue = emptyList())
-    val allCrossRefs by repository.getAllCollectionCrossRefsFlow().collectAsStateWithLifecycle(initialValue = emptyList())
-    val allPhotos by repository.photosWithAuthors.collectAsStateWithLifecycle(initialValue = emptyList())
     val allPeople by repository.allPeople.collectAsStateWithLifecycle(initialValue = emptyList())
-
-    val mediaWithAuthorsById = remember(allPhotos) {
-        allPhotos.associateBy { it.media.mediaId }
-    }
 
     // 0 = Collections tab, 1 = All Saved tab
     var selectedTabIndex by rememberSaveable { mutableIntStateOf(0) }
@@ -111,6 +110,17 @@ fun SavedCollectionsScreen(
     val activeCollection = remember(collections, activeCollectionId) {
         collections.find { it.collectionId == activeCollectionId }
     }
+
+    val boardPhotos by remember(repository) {
+        snapshotFlow { activeCollectionId }
+            .flatMapLatest { selectedId ->
+                when (selectedId) {
+                    null -> flowOf(emptyList())
+                    -1L -> repository.bookmarkedPhotosWithAuthors
+                    else -> repository.getMediaWithAuthorsForCollectionFlow(selectedId)
+                }
+            }
+    }.collectAsStateWithLifecycle(initialValue = emptyList())
 
     // Handle system back when viewing a specific collection detail view
     BackHandler(enabled = activeCollectionId != null) {
@@ -127,16 +137,6 @@ fun SavedCollectionsScreen(
         if (activeCollection != null || activeCollectionId == -1L) {
             // Collection Detail View (-1L represents "All Saved" opened from mosaic card)
             val boardTitle = if (activeCollectionId == -1L) "All Saved" else activeCollection?.name ?: "Collection"
-            val boardPhotos: List<MediaWithAuthors> = remember(activeCollectionId, allBookmarkedPhotos, allCrossRefs, mediaWithAuthorsById) {
-                if (activeCollectionId == -1L) {
-                    allBookmarkedPhotos
-                } else {
-                    val refs = allCrossRefs
-                        .filter { it.collectionId == activeCollectionId }
-                        .sortedByDescending { it.addedAt }
-                    refs.mapNotNull { mediaWithAuthorsById[it.mediaId] }
-                }
-            }
 
             // Detail Top Bar
             Row(
@@ -352,9 +352,7 @@ fun SavedCollectionsScreen(
                 ) {
                     // Card 0: "All Saved" showing up to 4 recent bookmarked photos in a 2x2 mini-mosaic
                     item(key = "board_all_saved") {
-                        val recentBookmarkedMedia = remember(allBookmarkedPhotos) {
-                            allBookmarkedPhotos.take(4).map { it.media }
-                        }
+                        val recentBookmarkedMedia = allBookmarkedPhotos.take(4).map { it.media }
                         CollectionMosaicBoardCard(
                             title = "All Saved",
                             photoCount = allBookmarkedPhotos.size,
@@ -367,19 +365,15 @@ fun SavedCollectionsScreen(
                         )
                     }
 
-                    // Cards 1..N: Each CollectionEntity
+                    // Cards 1..N: Each CollectionEntity observed directly from Room Flow
                     items(
                         items = collections,
                         key = { "board_${it.collectionId}" }
                     ) { collection ->
-                        val refs = remember(allCrossRefs, collection.collectionId) {
-                            allCrossRefs
-                                .filter { it.collectionId == collection.collectionId }
-                                .sortedByDescending { it.addedAt }
-                        }
-                        val boardMedia = remember(refs, mediaWithAuthorsById) {
-                            refs.mapNotNull { mediaWithAuthorsById[it.mediaId]?.media }
-                        }
+                        val boardMedia by remember(repository, collection.collectionId) {
+                            repository.getMediaForCollectionFlow(collection.collectionId)
+                        }.collectAsStateWithLifecycle(initialValue = emptyList())
+
                         CollectionMosaicBoardCard(
                             title = collection.name,
                             photoCount = boardMedia.size,

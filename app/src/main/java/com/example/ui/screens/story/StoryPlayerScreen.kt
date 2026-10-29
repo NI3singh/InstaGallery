@@ -15,8 +15,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -67,6 +67,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -214,10 +215,7 @@ fun StoryPlayerScreen(
         return
     }
 
-    val swipeThresholdPx = with(density) { 120.dp.toPx() }
-    var verticalDragOffset by remember { mutableFloatStateOf(0f) }
-    var pressDownTimestamp by remember { mutableLongStateOf(0L) }
-
+    var lastCenterTapTimeMs by remember { mutableLongStateOf(0L) }
     val currentMedia by rememberUpdatedState(currentSlide.media)
 
     Column(
@@ -237,46 +235,56 @@ fun StoryPlayerScreen(
                 .clip(RoundedCornerShape(20.dp))
                 .background(Color(0xFF08080C))
                 .pointerInput(currentDeck.personId, uiState.currentSlideIndex) {
-                    detectVerticalDragGestures(
-                        onDragStart = { verticalDragOffset = 0f },
-                        onVerticalDrag = { _, dragAmount ->
-                            verticalDragOffset += dragAmount
-                            if (verticalDragOffset > swipeThresholdPx) {
-                                verticalDragOffset = 0f
-                                currentOnNavigateBack()
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val downTime = System.currentTimeMillis()
+                        val downPos = down.position
+                        var totalDragY = 0f
+
+                        // Immediately pause story timer on finger down; if held > 180ms, LaunchedEffect hides HUD
+                        isFingerHolding = true
+                        var upOrCancel: PointerInputChange? = null
+                        try {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull() ?: break
+                                if (!change.pressed) {
+                                    upOrCancel = change
+                                    break
+                                }
+                                val dragDeltaY = change.position.y - downPos.y
+                                totalDragY = dragDeltaY
                             }
-                        },
-                        onDragEnd = { verticalDragOffset = 0f },
-                        onDragCancel = { verticalDragOffset = 0f }
-                    )
-                }
-                .pointerInput(currentDeck.personId) {
-                    detectTapGestures(
-                        onPress = {
-                            pressDownTimestamp = System.currentTimeMillis()
-                            isFingerHolding = true
-                            try {
-                                tryAwaitRelease()
-                            } finally {
-                                isFingerHolding = false
-                            }
-                        },
-                        onDoubleTap = { tapOffset ->
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            val randomTilt = ((-15..15).random()).toFloat()
-                            activeBursts.add(
-                                HeartBurstInstance(
-                                    id = System.nanoTime(),
-                                    tapOffset = tapOffset,
-                                    rotationDeg = randomTilt
+                        } finally {
+                            isFingerHolding = false
+                        }
+
+                        val pressDuration = System.currentTimeMillis() - downTime
+
+                        if (totalDragY > 140.dp.toPx()) {
+                            currentOnNavigateBack()
+                        } else if (upOrCancel != null && !upOrCancel.isConsumed && pressDuration < 250L && kotlin.math.abs(totalDragY) < 28.dp.toPx()) {
+                            val tapOffset = upOrCancel.position
+                            val tapX = tapOffset.x
+                            val now = System.currentTimeMillis()
+                            val isCenterZone = tapX in (size.width * 0.34f)..(size.width * 0.66f)
+                            if (isCenterZone && (now - lastCenterTapTimeMs) in 40L..260L) {
+                                lastCenterTapTimeMs = 0L
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                val randomTilt = ((-15..15).random()).toFloat()
+                                activeBursts.add(
+                                    HeartBurstInstance(
+                                        id = System.nanoTime(),
+                                        tapOffset = tapOffset,
+                                        rotationDeg = randomTilt
+                                    )
                                 )
-                            )
-                            viewModel.setFavoriteTrue(currentMedia)
-                        },
-                        onTap = { tapOffset ->
-                            val heldDuration = System.currentTimeMillis() - pressDownTimestamp
-                            if (heldDuration < 220L) {
-                                if (tapOffset.x < size.width * 0.32f) {
+                                viewModel.setFavoriteTrue(currentMedia)
+                            } else {
+                                if (isCenterZone) {
+                                    lastCenterTapTimeMs = now
+                                }
+                                if (tapX < size.width * 0.34f) {
                                     scope.launch { slideProgress.snapTo(0f) }
                                     viewModel.previousSlide()
                                 } else {
@@ -285,7 +293,7 @@ fun StoryPlayerScreen(
                                 }
                             }
                         }
-                    )
+                    }
                 }
         ) {
             // Layer 1 — Ambient Blurred/Dimmed Backdrop (zero harsh black bars)

@@ -94,12 +94,6 @@ fun SaveToCollectionSheet(
     val selectedCollectionIds by remember(media.mediaId) {
         repository.getCollectionIdsForMediaFlow(media.mediaId)
     }.collectAsStateWithLifecycle(initialValue = emptyList())
-    val allCrossRefs by repository.getAllCollectionCrossRefsFlow().collectAsStateWithLifecycle(initialValue = emptyList())
-    val allPhotos by repository.photosWithAuthors.collectAsStateWithLifecycle(initialValue = emptyList())
-
-    val mediaById = remember(allPhotos) {
-        allPhotos.associate { it.media.mediaId to it.media }
-    }
 
     var showNewBoardInput by remember { mutableStateOf(false) }
     var newBoardName by remember { mutableStateOf("") }
@@ -274,13 +268,11 @@ fun SaveToCollectionSheet(
                     key = { it.collectionId }
                 ) { collection ->
                     val isSelected = selectedCollectionIds.contains(collection.collectionId)
-                    val refsForCollection = remember(allCrossRefs, collection.collectionId) {
-                        allCrossRefs
-                            .filter { it.collectionId == collection.collectionId }
-                            .sortedByDescending { it.addedAt }
-                    }
-                    val itemCount = refsForCollection.size
-                    val coverMedia = refsForCollection.firstNotNullOfOrNull { mediaById[it.mediaId] }
+                    val collectionMedia by remember(repository, collection.collectionId) {
+                        repository.getMediaForCollectionFlow(collection.collectionId)
+                    }.collectAsStateWithLifecycle(initialValue = emptyList())
+                    val itemCount = collectionMedia.size
+                    val coverMedia = collectionMedia.firstOrNull()
 
                     Row(
                         modifier = Modifier

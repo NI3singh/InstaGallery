@@ -1,6 +1,7 @@
 // InstaGallery v1.0
 package com.example.ui.screens.home
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -24,6 +25,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.FilledExtendedIcons
 import androidx.compose.material.icons.outlined.OutlinedExtendedIcons
@@ -31,6 +33,7 @@ import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -110,6 +113,11 @@ fun HomeFeedScreen(
 
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
+    // Prevent app exit when pressing system Back from Liked Posts view
+    BackHandler(enabled = uiState.isFilteringFavorites) {
+        viewModel.toggleFavoritesFilter()
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -125,76 +133,72 @@ fun HomeFeedScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(
-                text = "InstaGallery",
-                fontSize = 30.sp,
-                fontWeight = FontWeight.Normal,
-                fontFamily = GrandHotelFont,
-                color = Color.White,
-                modifier = Modifier
-                    .bounceClick { viewModel.reshuffle() }
-                    .testTag("app_title")
-            )
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(20.dp)
-            ) {
-                // Favorites filter toggle (24.dp with tiny heartTheme dot indicator when active; long-press opens Heart Color Picker)
-                Box(
-                    modifier = Modifier
-                        .size(28.dp)
-                        .combinedClickable(
-                            onClick = { viewModel.toggleFavoritesFilter() },
-                            onLongClick = { showHeartThemeSheet = true }
-                        )
-                        .testTag("favorites_filter_button"),
-                    contentAlignment = Alignment.Center
+            if (uiState.isFilteringFavorites) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(
-                        imageVector = if (uiState.isFilteringFavorites) {
-                            FilledExtendedIcons.Favorite
-                        } else {
-                            OutlinedExtendedIcons.FavoriteBorder
-                        },
-                        contentDescription = "Filter Favorites",
-                        tint = if (uiState.isFilteringFavorites) heartTheme.primaryColor else Color.White,
-                        modifier = Modifier.size(24.dp)
-                    )
-                    if (uiState.isFilteringFavorites) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .size(4.dp)
-                                .clip(CircleShape)
-                                .background(heartTheme.primaryColor)
+                    IconButton(
+                        onClick = { viewModel.toggleFavoritesFilter() },
+                        modifier = Modifier
+                            .size(34.dp)
+                            .testTag("liked_posts_back_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back to Home Feed",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
                         )
                     }
+                    Text(
+                        text = "Liked Posts",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
                 }
-
-                // Bookmarks / Saved Collections button (24.dp)
-                Box(
+            } else {
+                Text(
+                    text = "InstaGallery",
+                    fontSize = 30.sp,
+                    fontWeight = FontWeight.Normal,
+                    fontFamily = GrandHotelFont,
+                    color = Color.White,
                     modifier = Modifier
-                        .size(28.dp)
-                        .bounceClick {
-                            if (onOpenSavedCollections != null) {
-                                onOpenSavedCollections()
-                            } else {
-                                viewModel.toggleBookmarksFilter()
-                            }
-                        }
-                        .testTag("bookmarks_filter_button"),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = if (uiState.isFilteringBookmarks) {
-                            FilledExtendedIcons.Bookmark
-                        } else {
-                            OutlinedExtendedIcons.BookmarkBorder
-                        },
-                        contentDescription = "Saved Collections",
-                        tint = Color.White,
-                        modifier = Modifier.size(24.dp)
+                        .bounceClick { viewModel.reshuffle() }
+                        .testTag("app_title")
+                )
+            }
+
+            // Right Action: ONLY the Heart icon (Saved Collections has its dedicated bottom nav tab)
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .combinedClickable(
+                        onClick = { viewModel.toggleFavoritesFilter() },
+                        onLongClick = { showHeartThemeSheet = true }
+                    )
+                    .testTag("favorites_filter_button"),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = if (uiState.isFilteringFavorites) {
+                        FilledExtendedIcons.Favorite
+                    } else {
+                        OutlinedExtendedIcons.FavoriteBorder
+                    },
+                    contentDescription = "Filter Favorites",
+                    tint = if (uiState.isFilteringFavorites) heartTheme.primaryColor else Color.White,
+                    modifier = Modifier.size(24.dp)
+                )
+                if (uiState.isFilteringFavorites) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .size(4.dp)
+                            .clip(CircleShape)
+                            .background(heartTheme.primaryColor)
                     )
                 }
             }
