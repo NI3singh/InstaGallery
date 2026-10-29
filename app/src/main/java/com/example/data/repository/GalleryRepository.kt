@@ -801,6 +801,22 @@ class GalleryRepository(
         scanner.enqueueFaceIndexingWorker(replace = true)
     }
 
+    suspend fun repairAndSyncDatabaseCounts() = withContext(Dispatchers.IO) {
+        personDao.reconcilePeopleAfterMediaDeletion()
+        val allPeopleInDb = personDao.getAllPeopleIncludeHiddenSync()
+        for (person in allPeopleInDb) {
+            val cropValid = person.avatarCropPath.isNotBlank() && File(person.avatarCropPath).exists()
+            if (!cropValid) {
+                val bestFace = personDao.getHighestQualityFaceForPersonSync(person.personId)
+                if (bestFace != null && bestFace.cropPath.isNotBlank() && File(bestFace.cropPath).exists()) {
+                    personDao.updateAvatar(person.personId, bestFace.cropPath)
+                }
+            }
+        }
+        mediaDao.syncAllMediaHasFaces()
+        clusterManager.invalidateCache()
+    }
+
     fun findPossibleDuplicatePair(
         people: List<PersonEntity>,
         ignoredPairKeys: Set<String> = emptySet()
@@ -810,3 +826,4 @@ class GalleryRepository(
 
     fun pairKey(id1: Long, id2: Long): String = clusterManager.pairKey(id1, id2)
 }
+

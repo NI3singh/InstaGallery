@@ -1,4 +1,4 @@
-// InstaGallery v1.0
+// InstaGallery v2.0
 
 package com.example.data.local
 
@@ -33,6 +33,16 @@ object OnboardingPreferences {
     private const val KEY_HEART_THEME_ID = "heart_theme_id"
     private const val KEY_VIEWED_STORY_IDS = "viewed_story_person_ids"
 
+    private const val KEY_MY_PROFILE_PERSON_ID = "my_profile_person_id"
+    private const val KEY_MY_PROFILE_BIO = "my_profile_bio"
+    private const val KEY_PERSON_BIO_PREFIX = "person_bio_"
+    private const val KEY_HIDE_OTHER_FROM_HOME = "hide_other_from_home_feed"
+    private const val KEY_DEFAULT_CROP_MODE = "default_crop_mode_4x5"
+    private const val KEY_STORY_DURATION_SECONDS = "story_duration_seconds"
+    private const val KEY_DEFAULT_INSTACARD_TEMPLATE = "default_instacard_template"
+
+    const val DEFAULT_PROFILE_BIO = "Capturing moments on device"
+
     private val _isScanCompleted = MutableStateFlow(false)
     val isScanCompleted: StateFlow<Boolean> = _isScanCompleted.asStateFlow()
 
@@ -44,6 +54,27 @@ object OnboardingPreferences {
 
     private val _viewedStoryPersonIdsFlow = MutableStateFlow<Set<Long>>(emptySet())
     val viewedStoryPersonIdsFlow: StateFlow<Set<Long>> = _viewedStoryPersonIdsFlow.asStateFlow()
+
+    private val _myProfilePersonIdFlow = MutableStateFlow(-1L)
+    val myProfilePersonIdFlow: StateFlow<Long> = _myProfilePersonIdFlow.asStateFlow()
+
+    private val _customProfileBioFlow = MutableStateFlow(DEFAULT_PROFILE_BIO)
+    val customProfileBioFlow: StateFlow<String> = _customProfileBioFlow.asStateFlow()
+
+    private val _personBiosFlow = MutableStateFlow<Map<Long, String>>(emptyMap())
+    val personBiosFlow: StateFlow<Map<Long, String>> = _personBiosFlow.asStateFlow()
+
+    private val _hideOtherFromHomeFeedFlow = MutableStateFlow(false)
+    val hideOtherFromHomeFeedFlow: StateFlow<Boolean> = _hideOtherFromHomeFeedFlow.asStateFlow()
+
+    private val _defaultCropModeFlow = MutableStateFlow(false)
+    val defaultCropModeFlow: StateFlow<Boolean> = _defaultCropModeFlow.asStateFlow()
+
+    private val _storyDurationSecondsFlow = MutableStateFlow(5)
+    val storyDurationSecondsFlow: StateFlow<Int> = _storyDurationSecondsFlow.asStateFlow()
+
+    private val _defaultInstaCardTemplateFlow = MutableStateFlow("OLED_DARK")
+    val defaultInstaCardTemplateFlow: StateFlow<String> = _defaultInstaCardTemplateFlow.asStateFlow()
 
     private var appContext: Context? = null
     private var initialized = false
@@ -64,7 +95,150 @@ object OnboardingPreferences {
             ?.toSet()
             ?: emptySet()
         _viewedStoryPersonIdsFlow.value = savedIds
+
+        _myProfilePersonIdFlow.value = prefs.getLong(KEY_MY_PROFILE_PERSON_ID, -1L)
+        _customProfileBioFlow.value = prefs.getString(KEY_MY_PROFILE_BIO, DEFAULT_PROFILE_BIO)
+            ?: DEFAULT_PROFILE_BIO
+
+        val loadedBios = mutableMapOf<Long, String>()
+        for ((key, value) in prefs.all) {
+            if (key.startsWith(KEY_PERSON_BIO_PREFIX) && value is String) {
+                val id = key.removePrefix(KEY_PERSON_BIO_PREFIX).toLongOrNull()
+                if (id != null) {
+                    loadedBios[id] = value
+                }
+            }
+        }
+        _personBiosFlow.value = loadedBios
+
+        _hideOtherFromHomeFeedFlow.value = prefs.getBoolean(KEY_HIDE_OTHER_FROM_HOME, false)
+        _defaultCropModeFlow.value = prefs.getBoolean(KEY_DEFAULT_CROP_MODE, false)
+        _storyDurationSecondsFlow.value = prefs.getInt(KEY_STORY_DURATION_SECONDS, 5).coerceIn(3, 8)
+        _defaultInstaCardTemplateFlow.value = prefs.getString(KEY_DEFAULT_INSTACARD_TEMPLATE, "OLED_DARK")
+            ?: "OLED_DARK"
+
         initialized = true
+    }
+
+    fun setMyProfilePersonId(personId: Long) {
+        _myProfilePersonIdFlow.value = personId
+        appContext?.let { ctx ->
+            ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putLong(KEY_MY_PROFILE_PERSON_ID, personId)
+                .apply()
+        }
+    }
+
+    fun setMyProfilePersonId(context: Context, personId: Long) {
+        init(context)
+        setMyProfilePersonId(personId)
+    }
+
+    fun getMyProfilePersonId(): Long = _myProfilePersonIdFlow.value
+
+    fun getMyProfilePersonId(context: Context): Long {
+        init(context)
+        return _myProfilePersonIdFlow.value
+    }
+
+    fun setCustomProfileBio(personId: Long, bio: String) {
+        val cleanBio = bio.trim().ifEmpty { DEFAULT_PROFILE_BIO }
+        _customProfileBioFlow.value = cleanBio
+        if (personId > 0L) {
+            _personBiosFlow.value = _personBiosFlow.value + (personId to cleanBio)
+        }
+        appContext?.let { ctx ->
+            val editor = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            editor.putString(KEY_MY_PROFILE_BIO, cleanBio)
+            if (personId > 0L) {
+                editor.putString("$KEY_PERSON_BIO_PREFIX$personId", cleanBio)
+            }
+            editor.apply()
+        }
+    }
+
+    fun setCustomProfileBio(context: Context, personId: Long, bio: String) {
+        init(context)
+        setCustomProfileBio(personId, bio)
+    }
+
+    fun getCustomProfileBio(personId: Long): String {
+        return _personBiosFlow.value[personId]
+            ?: if (personId == _myProfilePersonIdFlow.value || personId <= 0L) {
+                _customProfileBioFlow.value
+            } else {
+                DEFAULT_PROFILE_BIO
+            }
+    }
+
+    fun getCustomProfileBio(context: Context, personId: Long): String {
+        init(context)
+        return getCustomProfileBio(personId)
+    }
+
+    fun setHideOtherFromHomeFeed(hide: Boolean) {
+        _hideOtherFromHomeFeedFlow.value = hide
+        appContext?.let { ctx ->
+            ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_HIDE_OTHER_FROM_HOME, hide)
+                .apply()
+        }
+    }
+
+    fun setHideOtherFromHomeFeed(context: Context, hide: Boolean) {
+        init(context)
+        setHideOtherFromHomeFeed(hide)
+    }
+
+    fun setDefaultCropMode(crop4x5: Boolean) {
+        _defaultCropModeFlow.value = crop4x5
+        appContext?.let { ctx ->
+            ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_DEFAULT_CROP_MODE, crop4x5)
+                .apply()
+        }
+    }
+
+    fun setDefaultCropMode(context: Context, crop4x5: Boolean) {
+        init(context)
+        setDefaultCropMode(crop4x5)
+    }
+
+    fun setStoryDurationSeconds(seconds: Int) {
+        val valid = when (seconds) {
+            3, 5, 8 -> seconds
+            else -> 5
+        }
+        _storyDurationSecondsFlow.value = valid
+        appContext?.let { ctx ->
+            ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putInt(KEY_STORY_DURATION_SECONDS, valid)
+                .apply()
+        }
+    }
+
+    fun setStoryDurationSeconds(context: Context, seconds: Int) {
+        init(context)
+        setStoryDurationSeconds(seconds)
+    }
+
+    fun setDefaultInstaCardTemplate(templateName: String) {
+        _defaultInstaCardTemplateFlow.value = templateName
+        appContext?.let { ctx ->
+            ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(KEY_DEFAULT_INSTACARD_TEMPLATE, templateName)
+                .apply()
+        }
+    }
+
+    fun setDefaultInstaCardTemplate(context: Context, templateName: String) {
+        init(context)
+        setDefaultInstaCardTemplate(templateName)
     }
 
     fun markStoryViewed(personId: Long) {

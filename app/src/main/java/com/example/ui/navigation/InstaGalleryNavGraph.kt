@@ -69,6 +69,7 @@ import com.example.ui.screens.profile.ProfileViewModel
 import com.example.ui.screens.reels.ReelsScreen
 import com.example.ui.screens.reels.ReelsViewModel
 import com.example.ui.screens.saved.SavedCollectionsScreen
+import com.example.ui.screens.settings.SettingsScreen
 import com.example.ui.screens.story.StoryPlayerScreen
 import com.example.ui.screens.story.StoryPlayerViewModel
 import com.example.ui.theme.IgBlack
@@ -86,7 +87,11 @@ fun InstaGalleryNavGraph(
 
     val repository = remember(context) { GalleryRepository(context) }
     val allPeople by repository.allPeople.collectAsStateWithLifecycle(initialValue = emptyList())
-    val topPersonAvatar = allPeople.firstOrNull()?.avatarCropPath ?: ""
+    val myProfilePersonId by OnboardingPreferences.myProfilePersonIdFlow.collectAsStateWithLifecycle()
+    val myProfilePerson = remember(allPeople, myProfilePersonId) {
+        allPeople.firstOrNull { it.personId == myProfilePersonId } ?: allPeople.firstOrNull()
+    }
+    val topPersonAvatar = myProfilePerson?.avatarCropPath ?: ""
 
     val onboardingViewModel: OnboardingViewModel = viewModel()
     val homeViewModel: HomeViewModel = viewModel()
@@ -95,6 +100,7 @@ fun InstaGalleryNavGraph(
     val showBottomBar = currentRoute != Screen.PermissionGate.route &&
         currentRoute != Screen.FaceScanning.route &&
         currentRoute != Screen.ProfileSetup.route &&
+        currentRoute != Screen.Settings.route &&
         currentRoute?.startsWith("story_player") != true
 
     val startDestination = remember {
@@ -310,6 +316,72 @@ fun InstaGalleryNavGraph(
                     onRescanGalleryClick = {
                         onboardingViewModel.triggerFullRescan()
                         navController.navigate(Screen.FaceScanning.route)
+                    },
+                    onBackClick = { navController.popBackStack() },
+                    onOpenSettingsClick = { navController.navigate(Screen.Settings.route) }
+                )
+            }
+
+            composable(Screen.MyProfile.route) {
+                val profileViewModel: ProfileViewModel = viewModel(
+                    key = "my_profile_root",
+                    factory = object : androidx.lifecycle.ViewModelProvider.Factory {
+                        @Suppress("UNCHECKED_CAST")
+                        override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                            return ProfileViewModel(
+                                context.applicationContext as android.app.Application,
+                                -2L
+                            ) as T
+                        }
+                    }
+                )
+                val uiState by profileViewModel.uiState.collectAsStateWithLifecycle()
+                val activePersonId = uiState.person?.personId ?: -1L
+
+                ProfileScreen(
+                    viewModel = profileViewModel,
+                    onBackClick = {
+                        navController.navigate(Screen.Home.route) {
+                            popUpTo(Screen.Home.route) { inclusive = false }
+                            launchSingleTop = true
+                        }
+                    },
+                    onMediaClick = { mediaId ->
+                        navController.navigate(Screen.PostDetail.createRoute(activePersonId, mediaId))
+                    },
+                    onMergedToPerson = { mergedPersonId ->
+                        navController.navigate(Screen.Profile.createRoute(mergedPersonId))
+                    },
+                    onPersonClick = { targetPersonId ->
+                        navController.navigate(Screen.Profile.createRoute(targetPersonId))
+                    },
+                    onOpenStory = { targetPersonId ->
+                        navController.navigate(Screen.StoryPlayer.createRoute(targetPersonId))
+                    },
+                    onOpenPeopleDirectory = {
+                        navController.navigate(Screen.People.route)
+                    },
+                    onOpenSettings = {
+                        navController.navigate(Screen.Settings.route)
+                    }
+                )
+            }
+
+            composable(Screen.Settings.route) {
+                SettingsScreen(
+                    onBackClick = { navController.popBackStack() },
+                    onOpenProfileSetup = {
+                        onboardingViewModel.prepareForPostOnboardingReview()
+                        navController.navigate(Screen.ProfileSetup.route)
+                    },
+                    onResetAndRescanTriggered = {
+                        onboardingViewModel.triggerFullRescan()
+                        navController.navigate(Screen.FaceScanning.route) {
+                            popUpTo(Screen.Home.route) { inclusive = false }
+                        }
+                    },
+                    onNavigateToProfile = { personId ->
+                        navController.navigate(Screen.Profile.createRoute(personId))
                     }
                 )
             }
@@ -320,6 +392,7 @@ fun InstaGalleryNavGraph(
             ) { backStackEntry ->
                 val personId = backStackEntry.arguments?.getLong("personId") ?: -1L
                 val profileViewModel: ProfileViewModel = viewModel(
+                    key = "profile_$personId",
                     factory = object : androidx.lifecycle.ViewModelProvider.Factory {
                         @Suppress("UNCHECKED_CAST")
                         override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
@@ -343,6 +416,15 @@ fun InstaGalleryNavGraph(
                     },
                     onPersonClick = { targetPersonId ->
                         navController.navigate(Screen.Profile.createRoute(targetPersonId))
+                    },
+                    onOpenStory = { targetPersonId ->
+                        navController.navigate(Screen.StoryPlayer.createRoute(targetPersonId))
+                    },
+                    onOpenPeopleDirectory = {
+                        navController.navigate(Screen.People.route)
+                    },
+                    onOpenSettings = {
+                        navController.navigate(Screen.Settings.route)
                     }
                 )
             }
@@ -358,6 +440,7 @@ fun InstaGalleryNavGraph(
                 val initialMediaId = backStackEntry.arguments?.getLong("initialMediaId") ?: 0L
 
                 val profileViewModel: ProfileViewModel = viewModel(
+                    key = "post_detail_$personId",
                     factory = object : androidx.lifecycle.ViewModelProvider.Factory {
                         @Suppress("UNCHECKED_CAST")
                         override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
@@ -504,22 +587,25 @@ fun InstaBottomNavigationBar(
                     )
                 }
 
-                // Slot 4: People & Profiles (Screen.People)
-                val isPeopleActive = (currentRoute == Screen.People.route || currentRoute?.startsWith("profile") == true)
+                // Slot 4: My Profile & People (Screen.MyProfile)
+                val isProfileActive = currentRoute == Screen.MyProfile.route ||
+                    currentRoute == Screen.People.route ||
+                    currentRoute == Screen.Settings.route ||
+                    currentRoute?.startsWith("profile") == true
                 Box(
                     modifier = Modifier
                         .size(48.dp)
-                        .bounceClick { onNavigate(Screen.People.route) }
+                        .bounceClick { onNavigate(Screen.MyProfile.route) }
                         .testTag("nav_tab_people"),
                     contentAlignment = Alignment.Center
                 ) {
-                    val outerRingSize = if (isPeopleActive) 34.dp else 27.dp
+                    val outerRingSize = if (isProfileActive) 34.dp else 27.dp
                     Box(
                         modifier = Modifier
                             .size(outerRingSize)
                             .clip(CircleShape)
                             .then(
-                                if (isPeopleActive) {
+                                if (isProfileActive) {
                                     Modifier
                                         .border(2.dp, Color.White, CircleShape)
                                         .padding(3.5.dp) // 2.dp ring + 1.5.dp black inner gap
@@ -532,7 +618,7 @@ fun InstaBottomNavigationBar(
                         if (topPersonAvatar.isNotBlank() && File(topPersonAvatar).exists()) {
                             AsyncImage(
                                 model = File(topPersonAvatar),
-                                contentDescription = "People Profile",
+                                contentDescription = "My Profile",
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier
                                     .size(27.dp)
@@ -548,8 +634,8 @@ fun InstaBottomNavigationBar(
                             ) {
                                 Icon(
                                     imageVector = Icons.Outlined.Person,
-                                    contentDescription = "People Profile",
-                                    tint = if (isPeopleActive) Color.White else IgTextSecondary,
+                                    contentDescription = "My Profile",
+                                    tint = if (isProfileActive) Color.White else IgTextSecondary,
                                     modifier = Modifier.size(16.dp)
                                 )
                             }
@@ -560,3 +646,4 @@ fun InstaBottomNavigationBar(
         }
     }
 }
+

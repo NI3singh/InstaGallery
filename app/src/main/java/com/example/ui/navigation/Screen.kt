@@ -18,4 +18,7 @@ sealed class Screen(val route: String) {
         fun createRoute(personId: Long): String = "story_player/$personId"
     }
     data object SavedCollections : Screen("saved_collections")
+    data object MyProfile : Screen("my_profile")
+    data object Settings : Screen("settings")
 }
+

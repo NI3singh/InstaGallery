@@ -42,6 +42,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = GalleryRepository(application)
     private var sessionSeed = System.currentTimeMillis()
 
+    init {
+        com.example.data.local.OnboardingPreferences.init(application)
+    }
+
     private val _activeFilter = MutableStateFlow(HomeFeedFilter.ALL)
     private val _isRefreshing = MutableStateFlow(false)
     private val _seedTrigger = MutableStateFlow(sessionSeed)
@@ -50,12 +54,18 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         repository.photosWithAuthors,
         repository.favoritePhotosWithAuthors,
         repository.bookmarkedPhotosWithAuthors,
-        _activeFilter
-    ) { allPhotos, favPhotos, savedPhotos, filter ->
-        when (filter) {
+        _activeFilter,
+        com.example.data.local.OnboardingPreferences.hideOtherFromHomeFeedFlow
+    ) { allPhotos, favPhotos, savedPhotos, filter, hideOther ->
+        val base = when (filter) {
             HomeFeedFilter.ALL -> allPhotos
             HomeFeedFilter.FAVORITES -> favPhotos
             HomeFeedFilter.BOOKMARKED -> savedPhotos
+        }
+        if (hideOther && filter == HomeFeedFilter.ALL) {
+            base.filter { it.authors.isNotEmpty() }
+        } else {
+            base
         }
     }
 

@@ -113,6 +113,8 @@ fun StoryPlayerScreen(
         OnboardingPreferences.init(context)
     }
     val heartTheme by OnboardingPreferences.heartThemeFlow.collectAsStateWithLifecycle()
+    val storyDurationSeconds by OnboardingPreferences.storyDurationSecondsFlow.collectAsStateWithLifecycle()
+    val slideDurationMs = (storyDurationSeconds.coerceIn(3, 8) * 1000)
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     val currentDeck = uiState.currentDeck
@@ -158,24 +160,25 @@ fun StoryPlayerScreen(
         slideProgress.snapTo(0f)
     }
 
-    // Drive or pause the 4500ms slide progress timer
+    // Drive or pause the slide progress timer
     LaunchedEffect(
         uiState.currentDeckIndex,
         uiState.currentSlideIndex,
         currentSlide?.media?.mediaId,
         isTimerPaused,
-        uiState.isLoading
+        uiState.isLoading,
+        slideDurationMs
     ) {
         if (uiState.isLoading || currentSlide == null) return@LaunchedEffect
         if (isTimerPaused) {
             slideProgress.stop()
         } else {
             val remainingFraction = (1f - slideProgress.value).coerceIn(0f, 1f)
-            val remainingMs = (remainingFraction * STORY_SLIDE_DURATION_MS).roundToInt()
+            val remainingMs = (remainingFraction * slideDurationMs).roundToInt()
             if (remainingMs <= 16) {
                 viewModel.nextSlide(onAllFinished = currentOnNavigateBack)
             } else {
-                val result = slideProgress.animateTo(
+                slideProgress.animateTo(
                     targetValue = 1f,
                     animationSpec = tween(durationMillis = remainingMs, easing = LinearEasing)
                 )

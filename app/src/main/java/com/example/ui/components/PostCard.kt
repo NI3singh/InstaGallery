@@ -120,6 +120,7 @@ fun PostCard(
         true
     }
     val heartTheme by OnboardingPreferences.heartThemeFlow.collectAsState()
+    val defaultCropMode by OnboardingPreferences.defaultCropModeFlow.collectAsState()
 
     var showInspectorSheet by remember { mutableStateOf(false) }
     var showCaptionSheet by remember { mutableStateOf(false) }
@@ -147,7 +148,7 @@ fun PostCard(
         mutableFloatStateOf(dbRatio)
     }
 
-    var forceCropMode by rememberSaveable(media.mediaId) { mutableStateOf(false) }
+    var forceCropMode by rememberSaveable(media.mediaId, defaultCropMode) { mutableStateOf(defaultCropMode) }
 
     val formattedDate = remember(media.dateAddedSeconds) {
         val date = Date(media.dateAddedSeconds * 1000L)

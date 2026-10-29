@@ -984,7 +984,17 @@ fun InstaCardStudioSheet(
     val scope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    var selectedTemplate by remember { mutableStateOf(InstaCardTemplate.OLED_DARK) }
+    remember(context) {
+        com.example.data.local.OnboardingPreferences.init(context)
+        true
+    }
+    val defaultTemplateName = com.example.data.local.OnboardingPreferences.defaultInstaCardTemplateFlow.value
+    val initialTemplate = remember(defaultTemplateName) {
+        InstaCardTemplate.entries.firstOrNull { it.name == defaultTemplateName }
+            ?: InstaCardTemplate.OLED_DARK
+    }
+
+    var selectedTemplate by remember(initialTemplate) { mutableStateOf(initialTemplate) }
     var showWatermark by remember { mutableStateOf(true) }
     var renderedBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var isRendering by remember { mutableStateOf(true) }

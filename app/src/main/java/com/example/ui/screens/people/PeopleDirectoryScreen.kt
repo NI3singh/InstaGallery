@@ -1,4 +1,4 @@
-// InstaGallery v1.0
+// InstaGallery v2.0
 package com.example.ui.screens.people
 
 import androidx.compose.animation.AnimatedVisibility
@@ -22,22 +22,29 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.outlined.AutoFixHigh
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Group
-import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.GroupAdd
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tune
@@ -45,14 +52,20 @@ import androidx.compose.material.icons.outlined.Verified
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -74,11 +87,13 @@ import coil.compose.AsyncImage
 import com.example.data.local.entity.PersonEntity
 import com.example.ui.components.IndexingStatusBanner
 import com.example.ui.components.NewPeopleDetectedBanner
-import com.example.ui.theme.IgAmber
+import com.example.ui.components.bounceClick
+import com.example.ui.screens.profile.InstagramHamburgerIcon
 import com.example.ui.theme.IgBlack
 import com.example.ui.theme.IgBlue
 import com.example.ui.theme.IgBorderNav
 import com.example.ui.theme.IgElevated
+import com.example.ui.theme.IgRed
 import com.example.ui.theme.IgStoryGradient
 import com.example.ui.theme.IgSurfaceHigh
 import com.example.ui.theme.IgSurfaceModal
@@ -87,19 +102,23 @@ import com.example.ui.theme.IgTextSecondary
 import kotlinx.coroutines.delay
 import java.io.File
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PeopleDirectoryScreen(
     viewModel: PeopleViewModel,
     onPersonClick: (Long) -> Unit,
+    onBackClick: () -> Unit = {},
     onOpenSetupClick: () -> Unit = {},
+    onOpenSettingsClick: () -> Unit = {},
     onRescanGalleryClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    var showMergeDialog by remember { mutableStateOf(false) }
-    var showRescanConfirmDialog by remember { mutableStateOf(false) }
+    var showMultiMergeSheet by remember { mutableStateOf(false) }
+    var preselectedMergePersonId by remember { mutableStateOf<Long?>(null) }
+    var longPressedPerson by remember { mutableStateOf<PersonEntity?>(null) }
+    var personToRename by remember { mutableStateOf<PersonEntity?>(null) }
 
-    // Auto-dismiss toast
     LaunchedEffect(uiState.toastMessage) {
         if (uiState.toastMessage != null) {
             delay(3500)
@@ -110,107 +129,95 @@ fun PeopleDirectoryScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(IgBlack)
+            .background(Color.Black)
             .testTag("people_directory_screen")
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Sub-Header / Directory Action Bar (48.dp)
+            // 1. Clean Top Bar (52.dp height, #000000)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
-                    .background(IgBlack)
+                    .height(52.dp)
+                    .background(Color.Black)
                     .padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text(
-                        text = "People",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = IgTextPrimary
-                    )
-
-                    Box(
+                    IconButton(
+                        onClick = onBackClick,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(IgSurfaceModal)
-                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                            .size(36.dp)
+                            .testTag("people_directory_back_button")
                     ) {
-                        Text(
-                            text = "${uiState.people.size} detected",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color(0xFFBFC7D4)
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
                         )
                     }
+
+                    Text(
+                        text = "People",
+                        fontSize = 19.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+
+                    Text(
+                        text = "${uiState.people.size}",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF8E8E93)
+                    )
                 }
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(IgSurfaceModal)
-                            .border(1.dp, IgBorderNav, RoundedCornerShape(50))
-                            .clickable { onOpenSetupClick() }
-                            .padding(horizontal = 10.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = "Name Faces",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = IgTextPrimary
-                        )
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(IgSurfaceModal)
-                            .border(1.dp, IgBorderNav, RoundedCornerShape(50))
-                            .clickable { showRescanConfirmDialog = true }
-                            .padding(horizontal = 10.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = "Re-Scan",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = IgTextSecondary
-                        )
-                    }
-
                     Text(
-                        text = if (uiState.isSelectionMode) "Cancel" else "Merge",
+                        text = "Merge",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = IgBlue,
+                        color = Color(0xFF0095F6),
                         modifier = Modifier
-                            .clickable { viewModel.toggleSelectionMode() }
+                            .bounceClick {
+                                preselectedMergePersonId = null
+                                showMultiMergeSheet = true
+                            }
                             .padding(vertical = 4.dp, horizontal = 4.dp)
                             .testTag("merge_toggle_button")
                     )
+
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .bounceClick { onOpenSettingsClick() }
+                            .testTag("people_directory_settings_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        InstagramHamburgerIcon(modifier = Modifier.size(22.dp))
+                    }
                 }
             }
 
-            // Search Input Bar
+            // 2. Sleek #1C1C1E Search Bar (height = 40.dp, RoundedCornerShape(10.dp), zero border)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(38.dp)
-                        .clip(RoundedCornerShape(50))
-                        .background(IgSurfaceModal)
+                        .height(40.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFF1C1C1E))
                         .padding(horizontal = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -218,7 +225,7 @@ fun PeopleDirectoryScreen(
                     Icon(
                         imageVector = Icons.Outlined.Search,
                         contentDescription = "Search",
-                        tint = IgTextSecondary,
+                        tint = Color(0xFF8E8E93),
                         modifier = Modifier.size(18.dp)
                     )
                     BasicTextField(
@@ -227,26 +234,28 @@ fun PeopleDirectoryScreen(
                         singleLine = true,
                         textStyle = TextStyle(
                             fontSize = 14.sp,
-                            color = IgTextPrimary
+                            color = Color.White
                         ),
-                        cursorBrush = SolidColor(IgBlue),
+                        cursorBrush = SolidColor(Color(0xFF0095F6)),
                         decorationBox = { innerTextField ->
                             if (uiState.searchQuery.isEmpty()) {
                                 Text(
                                     text = "Search people...",
                                     fontSize = 14.sp,
-                                    color = IgTextSecondary
+                                    color = Color(0xFF8E8E93)
                                 )
                             }
                             innerTextField()
                         },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("people_search_input")
                     )
                     if (uiState.searchQuery.isNotEmpty()) {
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = "Clear search",
-                            tint = IgTextSecondary,
+                            tint = Color(0xFF8E8E93),
                             modifier = Modifier
                                 .size(16.dp)
                                 .clickable { viewModel.onSearchQueryChange("") }
@@ -255,11 +264,49 @@ fun PeopleDirectoryScreen(
                     Icon(
                         imageVector = Icons.Outlined.Tune,
                         contentDescription = "Sort people (${uiState.sortOrder.label})",
-                        tint = IgTextSecondary,
+                        tint = Color(0xFF8E8E93),
                         modifier = Modifier
                             .size(18.dp)
                             .clickable { viewModel.cycleSortOrder() }
                     )
+                }
+            }
+
+            // Native Filter Chips Row (All, Named, Unnamed, Hidden (@Other))
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                items(
+                    items = PeopleFilterTab.entries,
+                    key = { it.name }
+                ) { tab ->
+                    val isSelected = uiState.filterTab == tab
+                    val labelText = when (tab) {
+                        PeopleFilterTab.ALL -> "All (${uiState.people.size})"
+                        PeopleFilterTab.HIDDEN_OTHER ->
+                            if (uiState.hiddenPeople.isNotEmpty()) "Hidden (@Other) (${uiState.hiddenPeople.size})"
+                            else "Hidden (@Other)"
+                        else -> tab.label
+                    }
+                    Box(
+                        modifier = Modifier
+                            .height(32.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isSelected) Color.White else Color(0xFF1C1C1E))
+                            .bounceClick { viewModel.setFilterTab(tab) }
+                            .padding(horizontal = 14.dp)
+                            .testTag("people_filter_chip_${tab.name.lowercase()}"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = labelText,
+                            fontSize = 13.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                            color = if (isSelected) Color.Black else Color(0xFFE4E4E7)
+                        )
+                    }
                 }
             }
 
@@ -272,7 +319,7 @@ fun PeopleDirectoryScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(IgBlack)
+                        .background(Color.Black)
                         .padding(horizontal = 16.dp, vertical = 6.dp),
                     contentAlignment = Alignment.Center
                 ) {
@@ -280,7 +327,7 @@ fun PeopleDirectoryScreen(
                 }
             }
 
-            // 3-Column People Grid
+            // 4. 3-Column People Grid
             LazyVerticalGrid(
                 columns = GridCells.Fixed(3),
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp),
@@ -289,7 +336,7 @@ fun PeopleDirectoryScreen(
                 modifier = Modifier.fillMaxSize()
             ) {
                 // "New People Detected" Banner when >= 3 photos of a new undecided person exist
-                if (uiState.newUndecidedPeople.isNotEmpty() && !uiState.isSelectionMode) {
+                if (uiState.newUndecidedPeople.isNotEmpty()) {
                     item(span = { GridItemSpan(3) }) {
                         NewPeopleDetectedBanner(
                             newUndecidedPeople = uiState.newUndecidedPeople,
@@ -298,13 +345,13 @@ fun PeopleDirectoryScreen(
                     }
                 }
 
-                // Micro Banner: Smart Duplicate Detection
+                // 3. Redesigned Visual Duplicate Merge Banner (Shows Both Face Avatars Side-by-Side)
                 val dup = uiState.duplicatePair
-                if (dup != null && !uiState.isSelectionMode) {
+                if (dup != null && uiState.filterTab != PeopleFilterTab.HIDDEN_OTHER) {
                     item(span = { GridItemSpan(3) }) {
-                        DuplicateSuggestionBanner(
+                        VisualDuplicateMergeCard(
                             pair = dup,
-                            onReview = { viewModel.reviewDuplicate(dup) },
+                            onMerge = { viewModel.mergeDuplicatePairDirectly(dup) },
                             onDismiss = { viewModel.ignoreDuplicatePair(dup) }
                         )
                     }
@@ -315,78 +362,30 @@ fun PeopleDirectoryScreen(
                     items = uiState.filteredPeople,
                     key = { it.personId }
                 ) { person ->
-                    val isSelected = uiState.selectedPersonIds.contains(person.personId)
+                    val isMe = (person.personId == uiState.myProfilePersonId)
                     PersonGridItem(
                         person = person,
-                        isSelectionMode = uiState.isSelectionMode,
-                        isSelected = isSelected,
-                        onClick = {
-                            if (uiState.isSelectionMode) {
-                                viewModel.togglePersonSelection(person.personId)
-                            } else {
-                                onPersonClick(person.personId)
-                            }
-                        },
-                        onLongClick = {
-                            viewModel.togglePersonSelection(person.personId)
-                        }
+                        isMyProfile = isMe,
+                        isSelectionMode = false,
+                        isSelected = false,
+                        onClick = { onPersonClick(person.personId) },
+                        onLongClick = { longPressedPerson = person }
                     )
                 }
 
-                // Final Grid Item: @Other
-                item {
-                    OtherGridItem(
-                        count = uiState.unassociatedCount,
-                        onClick = { onPersonClick(-1L) }
-                    )
+                // Final Grid Item: @Other (unassigned photos)
+                if (uiState.filterTab == PeopleFilterTab.ALL || uiState.filterTab == PeopleFilterTab.HIDDEN_OTHER) {
+                    item(key = "other_unassigned_bucket") {
+                        OtherGridItem(
+                            count = uiState.unassociatedCount,
+                            onClick = { onPersonClick(-1L) }
+                        )
+                    }
                 }
             }
         }
 
-        // Floating Merge Action Pill at bottom center
-        AnimatedVisibility(
-            visible = uiState.selectedPersonIds.size >= 2,
-            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 24.dp)
-        ) {
-            val count = uiState.selectedPersonIds.size
-            val selectedPeople = uiState.people.filter { uiState.selectedPersonIds.contains(it.personId) }
-            val totalPosts = selectedPeople.sumOf { it.faceCount }
-
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(IgBlue)
-                    .clickable { showMergeDialog = true }
-                    .padding(horizontal = 20.dp, vertical = 12.dp)
-                    .testTag("floating_merge_button"),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Link,
-                    contentDescription = "Merge",
-                    tint = Color.White,
-                    modifier = Modifier.size(19.dp)
-                )
-                Text(
-                    text = "Merge $count Profiles",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White
-                )
-                Text(
-                    text = "• $totalPosts posts",
-                    fontSize = 12.sp,
-                    color = Color.White.copy(alpha = 0.8f)
-                )
-            }
-        }
-
-        // Top Delight Toast Banner
+        // Top Toast Banner
         AnimatedVisibility(
             visible = uiState.toastMessage != null,
             enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
@@ -397,16 +396,15 @@ fun PeopleDirectoryScreen(
         ) {
             Row(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(IgSurfaceHigh.copy(alpha = 0.95f))
-                    .border(1.dp, IgBorderNav, RoundedCornerShape(50))
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(IgSurfaceHigh.copy(alpha = 0.96f))
                     .padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Box(
                     modifier = Modifier
-                        .size(26.dp)
+                        .size(24.dp)
                         .clip(CircleShape)
                         .background(IgBlue),
                     contentAlignment = Alignment.Center
@@ -415,7 +413,7 @@ fun PeopleDirectoryScreen(
                         imageVector = Icons.Outlined.Verified,
                         contentDescription = "Success",
                         tint = Color.White,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(15.dp)
                     )
                 }
                 Text(
@@ -427,6 +425,7 @@ fun PeopleDirectoryScreen(
                 Text(
                     text = "Dismiss",
                     fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
                     color = IgBlue,
                     modifier = Modifier.clickable { viewModel.dismissToast() }
                 )
@@ -434,178 +433,398 @@ fun PeopleDirectoryScreen(
         }
     }
 
-    // Merge Confirmation Dialog
-    if (showMergeDialog) {
-        val selectedPeople = uiState.people.filter { uiState.selectedPersonIds.contains(it.personId) }
-        var targetName by remember { mutableStateOf(selectedPeople.firstOrNull()?.name ?: "Family") }
+    // Long-press Quick Action Sheet for any Person in the Grid
+    longPressedPerson?.let { targetPerson ->
+        val sheetState = rememberModalBottomSheetState()
+        val cleanName = targetPerson.name.removePrefix("@")
+        val isCurrentlyMe = (targetPerson.personId == uiState.myProfilePersonId)
+        val isHidden = targetPerson.isHiddenToOther
 
+        ModalBottomSheet(
+            onDismissRequest = { longPressedPerson = null },
+            sheetState = sheetState,
+            containerColor = Color(0xFF121216)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(IgStoryGradient)
+                            .padding(1.5.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (targetPerson.avatarCropPath.isNotBlank() && File(targetPerson.avatarCropPath).exists()) {
+                            AsyncImage(
+                                model = File(targetPerson.avatarCropPath),
+                                contentDescription = cleanName,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clip(CircleShape)
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Outlined.Person,
+                                contentDescription = cleanName,
+                                tint = IgTextSecondary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    }
+                    Column {
+                        Text(
+                            text = "@$cleanName",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "${targetPerson.faceCount} posts",
+                            fontSize = 12.sp,
+                            color = Color(0xFF8E8E93)
+                        )
+                    }
+                }
+
+                HorizontalDivider(color = Color(0xFF26262A), thickness = 0.5.dp)
+
+                // 1. Set as My Profile (Me)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable {
+                            val selected = targetPerson
+                            longPressedPerson = null
+                            viewModel.setAsMyProfile(selected)
+                        }
+                        .padding(horizontal = 12.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = if (isCurrentlyMe) "Current Primary Profile (You)" else "Set as My Profile (Me)",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF0095F6)
+                    )
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "Set as Me",
+                        tint = Color(0xFF0095F6),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                HorizontalDivider(color = Color(0xFF26262A), thickness = 0.5.dp)
+
+                // 2. Rename
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable {
+                            val selected = targetPerson
+                            longPressedPerson = null
+                            personToRename = selected
+                        }
+                        .padding(horizontal = 12.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Rename",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color.White
+                    )
+                    Icon(
+                        imageVector = Icons.Outlined.Edit,
+                        contentDescription = "Rename",
+                        tint = Color(0xFF8E8E93),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                HorizontalDivider(color = Color(0xFF26262A), thickness = 0.5.dp)
+
+                // 3. Merge with...
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable {
+                            val selected = targetPerson
+                            longPressedPerson = null
+                            preselectedMergePersonId = selected.personId
+                            showMultiMergeSheet = true
+                        }
+                        .padding(horizontal = 12.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Merge with...",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color.White
+                    )
+                    Icon(
+                        imageVector = Icons.Outlined.GroupAdd,
+                        contentDescription = "Merge",
+                        tint = Color(0xFF8E8E93),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                HorizontalDivider(color = Color(0xFF26262A), thickness = 0.5.dp)
+
+                // 4. Move to @Other / Restore
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable {
+                            val selected = targetPerson
+                            longPressedPerson = null
+                            if (isHidden) {
+                                viewModel.restorePersonFromOther(selected)
+                            } else {
+                                viewModel.movePersonToOther(selected)
+                            }
+                        }
+                        .padding(horizontal = 12.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = if (isHidden) "Restore from @Other" else "Move to @Other",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = if (isHidden) Color(0xFF0095F6) else IgRed
+                    )
+                    Icon(
+                        imageVector = if (isHidden) Icons.Default.Refresh else Icons.Outlined.DeleteOutline,
+                        contentDescription = if (isHidden) "Restore" else "Move to @Other",
+                        tint = if (isHidden) Color(0xFF0095F6) else IgRed,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
+    }
+
+    // Rename Dialog
+    personToRename?.let { target ->
+        var newName by remember(target.personId) { mutableStateOf(target.name.removePrefix("@")) }
         AlertDialog(
-            onDismissRequest = { showMergeDialog = false },
+            onDismissRequest = { personToRename = null },
             containerColor = IgSurfaceModal,
             title = {
                 Text(
-                    text = "Merge ${selectedPeople.size} Profiles",
+                    text = "Rename Profile",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
                     color = IgTextPrimary
                 )
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(
-                        text = "All photos and facial embeddings from these profiles will be combined under a single profile.",
-                        fontSize = 13.sp,
-                        color = IgTextSecondary
-                    )
-                    OutlinedTextField(
-                        value = targetName,
-                        onValueChange = { targetName = it },
-                        label = { Text("Profile Name") },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = IgBlue,
-                            unfocusedBorderColor = IgBorderNav,
-                            focusedTextColor = IgTextPrimary,
-                            unfocusedTextColor = IgTextPrimary
-                        ),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
+                OutlinedTextField(
+                    value = newName,
+                    onValueChange = { newName = it },
+                    label = { Text("Name") },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = IgBlue,
+                        unfocusedBorderColor = IgBorderNav,
+                        focusedTextColor = IgTextPrimary,
+                        unfocusedTextColor = IgTextPrimary
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        showMergeDialog = false
-                        viewModel.mergeSelectedPeople(targetName.trim())
+                        val pid = target.personId
+                        personToRename = null
+                        viewModel.renamePerson(pid, newName)
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = IgBlue)
                 ) {
-                    Text("Confirm Merge")
+                    Text("Save")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showMergeDialog = false }) {
+                TextButton(onClick = { personToRename = null }) {
                     Text("Cancel", color = IgTextSecondary)
                 }
             }
         )
     }
 
-    // Re-Scan Gallery Confirmation Dialog
-    if (showRescanConfirmDialog) {
-        AlertDialog(
-            onDismissRequest = { showRescanConfirmDialog = false },
-            containerColor = IgSurfaceModal,
-            title = {
-                Text(
-                    text = "Re-Scan All Gallery Faces?",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = IgTextPrimary
-                )
+    // Multi-Merge Face Grid Bottom Sheet
+    if (showMultiMergeSheet) {
+        MultiMergeFaceGridSheet(
+            people = uiState.people,
+            initialSelectedId = preselectedMergePersonId,
+            onMergeSelected = { selectedIds, targetName ->
+                showMultiMergeSheet = false
+                viewModel.mergePeopleIds(selectedIds, targetName)
             },
-            text = {
-                Text(
-                    text = "This will run fresh on-device AI face detection across all your photos and reels, and open the Profile Setup screen so you can name detected faces.",
-                    fontSize = 13.sp,
-                    color = IgTextSecondary
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showRescanConfirmDialog = false
-                        onRescanGalleryClick()
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = IgBlue)
-                ) {
-                    Text("Start Re-Scan")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showRescanConfirmDialog = false }) {
-                    Text("Cancel", color = IgTextSecondary)
-                }
-            }
+            onDismiss = { showMultiMergeSheet = false }
         )
     }
 }
 
 @Composable
-fun DuplicateSuggestionBanner(
+fun VisualDuplicateMergeCard(
     pair: Pair<PersonEntity, PersonEntity>,
-    onReview: () -> Unit,
+    onMerge: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val personA = pair.first
+    val personB = pair.second
+    val nameA = personA.name.removePrefix("@")
+    val nameB = personB.name.removePrefix("@")
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(50))
-            .background(Color(0xFF1F1F1F))
-            .border(1.dp, IgBorderNav, RoundedCornerShape(50))
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFF16161A))
+            .padding(12.dp)
+            .testTag("visual_duplicate_merge_banner"),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier.weight(1f)
+        // Left: Two overlapping 38.dp circular face avatars
+        Box(
+            modifier = Modifier
+                .width(64.dp)
+                .height(38.dp),
+            contentAlignment = Alignment.CenterStart
         ) {
             Box(
                 modifier = Modifier
-                    .size(30.dp)
+                    .size(38.dp)
                     .clip(CircleShape)
-                    .background(Color(0xFFE07304).copy(alpha = 0.3f)),
+                    .background(Color.Black)
+                    .border(1.5.dp, Color(0xFF26262A), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = Icons.Outlined.AutoFixHigh,
-                    contentDescription = "Duplicate",
-                    tint = IgAmber,
-                    modifier = Modifier.size(18.dp)
-                )
+                if (personA.avatarCropPath.isNotBlank() && File(personA.avatarCropPath).exists()) {
+                    AsyncImage(
+                        model = File(personA.avatarCropPath),
+                        contentDescription = nameA,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(CircleShape)
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Outlined.Person,
+                        contentDescription = nameA,
+                        tint = IgTextSecondary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
-            Column {
-                Text(
-                    text = "Possible Duplicate Found",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = IgTextPrimary
-                )
-                Text(
-                    text = "@${pair.first.name} and @${pair.second.name} look very similar",
-                    fontSize = 11.5.sp,
-                    color = IgTextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+
+            Box(
+                modifier = Modifier
+                    .offset(x = 24.dp)
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black)
+                    .border(2.dp, Color(0xFF16161A), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                if (personB.avatarCropPath.isNotBlank() && File(personB.avatarCropPath).exists()) {
+                    AsyncImage(
+                        model = File(personB.avatarCropPath),
+                        contentDescription = nameB,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(CircleShape)
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Outlined.Person,
+                        contentDescription = nameB,
+                        tint = IgTextSecondary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
         }
 
+        // Center: "Same person?" + "@PersonA & @PersonB"
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 10.dp)
+        ) {
+            Text(
+                text = "Same person?",
+                fontSize = 13.5.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White
+            )
+            Text(
+                text = "@$nameA & @$nameB",
+                fontSize = 12.sp,
+                color = Color(0xFF8E8E93),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+
+        // Right: Solid #0095F6 "Merge" button + subtle ✕ dismiss icon
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(IgSurfaceModal)
-                    .clickable(onClick = onReview)
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                    .height(30.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF0095F6))
+                    .bounceClick { onMerge() }
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "Review",
-                    fontSize = 12.sp,
+                    text = "Merge",
+                    fontSize = 12.5.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = IgBlue
+                    color = Color.White
                 )
             }
 
             Icon(
                 imageVector = Icons.Default.Close,
                 contentDescription = "Dismiss duplicate suggestion",
-                tint = IgTextSecondary,
+                tint = Color(0xFF8E8E93),
                 modifier = Modifier
                     .size(18.dp)
                     .clickable(onClick = onDismiss)
@@ -618,8 +837,9 @@ fun DuplicateSuggestionBanner(
 @Composable
 fun PersonGridItem(
     person: PersonEntity,
-    isSelectionMode: Boolean,
-    isSelected: Boolean,
+    isMyProfile: Boolean = false,
+    isSelectionMode: Boolean = false,
+    isSelected: Boolean = false,
     onClick: () -> Unit,
     onLongClick: () -> Unit = {}
 ) {
@@ -636,7 +856,6 @@ fun PersonGridItem(
             modifier = Modifier.size(88.dp),
             contentAlignment = Alignment.Center
         ) {
-            // Gradient Ring + Selection Glow
             Box(
                 modifier = Modifier
                     .size(88.dp)
@@ -675,6 +894,25 @@ fun PersonGridItem(
                 }
             }
 
+            // "You" Pill Badge on Primary User's Avatar Ring
+            if (isMyProfile && !isSelected) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .clip(RoundedCornerShape(50))
+                        .background(Color(0xFF0095F6))
+                        .border(1.5.dp, Color.Black, RoundedCornerShape(50))
+                        .padding(horizontal = 7.dp, vertical = 1.5.dp)
+                ) {
+                    Text(
+                        text = "You",
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
+
             // Selection Checkmark Badge
             if (isSelected) {
                 Box(
@@ -699,7 +937,7 @@ fun PersonGridItem(
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "@${person.name}",
+            text = "@${person.name.removePrefix("@")}",
             fontSize = 13.5.sp,
             fontWeight = FontWeight.SemiBold,
             color = IgTextPrimary,
@@ -772,5 +1010,220 @@ fun OtherGridItem(
             color = IgTextSecondary,
             textAlign = TextAlign.Center
         )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun MultiMergeFaceGridSheet(
+    people: List<PersonEntity>,
+    initialSelectedId: Long? = null,
+    onMergeSelected: (List<Long>, String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val selectedIds = remember(initialSelectedId) {
+        mutableStateListOf<Long>().apply {
+            if (initialSelectedId != null && initialSelectedId > 0L) {
+                add(initialSelectedId)
+            }
+        }
+    }
+    var customMergeName by remember { mutableStateOf("") }
+
+    val selectedPeople = remember(selectedIds.toList(), people) {
+        selectedIds.mapNotNull { id -> people.firstOrNull { it.personId == id } }
+    }
+
+    LaunchedEffect(selectedPeople.firstOrNull()?.personId) {
+        if (customMergeName.isBlank() && selectedPeople.isNotEmpty()) {
+            customMergeName = selectedPeople.first().name.removePrefix("@")
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = Color(0xFF121216)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp, vertical = 8.dp)
+                .testTag("multi_merge_face_grid_sheet")
+        ) {
+            Text(
+                text = "Merge Duplicate Profiles",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Select 2 or more profiles of the same person to combine their photos",
+                fontSize = 12.5.sp,
+                color = Color(0xFF8E8E93)
+            )
+            Spacer(modifier = Modifier.height(14.dp))
+
+            if (selectedIds.size >= 2) {
+                OutlinedTextField(
+                    value = customMergeName,
+                    onValueChange = { customMergeName = it },
+                    label = { Text("Merged Profile Name") },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color(0xFF0095F6),
+                        unfocusedBorderColor = Color(0xFF26262A),
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp)
+                )
+            }
+
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(3),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(340.dp)
+            ) {
+                items(
+                    items = people,
+                    key = { "merge_item_${it.personId}" }
+                ) { person ->
+                    val isSelected = selectedIds.contains(person.personId)
+                    val cleanName = person.name.removePrefix("@")
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (isSelected) Color(0xFF1E2638) else Color(0xFF18181C))
+                            .border(
+                                width = if (isSelected) 1.5.dp else 0.5.dp,
+                                color = if (isSelected) Color(0xFF0095F6) else Color(0xFF26262A),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            .bounceClick {
+                                if (isSelected) {
+                                    selectedIds.remove(person.personId)
+                                } else {
+                                    selectedIds.add(person.personId)
+                                    if (customMergeName.isBlank()) {
+                                        customMergeName = cleanName
+                                    }
+                                }
+                            }
+                            .padding(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier.size(64.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .clip(CircleShape)
+                                    .background(IgStoryGradient)
+                                    .padding(2.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.Black),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (person.avatarCropPath.isNotBlank() && File(person.avatarCropPath).exists()) {
+                                    AsyncImage(
+                                        model = File(person.avatarCropPath),
+                                        contentDescription = cleanName,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .clip(CircleShape)
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Person,
+                                        contentDescription = cleanName,
+                                        tint = IgTextSecondary,
+                                        modifier = Modifier.size(26.dp)
+                                    )
+                                }
+                            }
+
+                            if (isSelected) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(20.dp)
+                                        .align(Alignment.TopEnd)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF0095F6))
+                                        .border(1.5.dp, Color.Black, CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = "Selected",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "@$cleanName",
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "${person.faceCount} posts",
+                            fontSize = 11.sp,
+                            color = Color(0xFF8E8E93)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            Button(
+                onClick = {
+                    val finalName = customMergeName.trim().ifEmpty {
+                        selectedPeople.firstOrNull()?.name?.removePrefix("@") ?: "Person"
+                    }
+                    onMergeSelected(selectedIds.toList(), finalName)
+                },
+                enabled = selectedIds.size >= 2,
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF0095F6),
+                    disabledContainerColor = Color(0xFF26262A),
+                    contentColor = Color.White,
+                    disabledContentColor = Color(0xFF8E8E93)
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(46.dp)
+            ) {
+                Text(
+                    text = if (selectedIds.size >= 2) {
+                        "Merge ${selectedIds.size} Profiles into @${customMergeName.ifBlank { "Profile" }}"
+                    } else {
+                        "Select at least 2 profiles to merge"
+                    },
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+        }
     }
 }
