@@ -12,11 +12,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/NI3singh/InstaGallery/releases/latest/download/InstaGallery-v1.1.6.apk">
+  <a href="https://github.com/NI3singh/InstaGallery/releases/latest/download/InstaGallery-v2.0.0.apk">
     <img src="https://img.shields.io/badge/Download-APK-0095F6?style=for-the-badge&logo=android&logoColor=white" alt="Download APK" />
   </a>
   <a href="https://github.com/NI3singh/InstaGallery/releases">
-    <img src="https://img.shields.io/badge/Releases-v1.1.6-833AB4?style=for-the-badge&logo=github&logoColor=white" alt="View releases" />
+    <img src="https://img.shields.io/badge/Releases-v2.0.0-833AB4?style=for-the-badge&logo=github&logoColor=white" alt="View releases" />
   </a>
   <img src="https://img.shields.io/badge/Android-8.0%2B%20(API%2026)-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Android 8.0 or newer" />
   <img src="https://img.shields.io/badge/Network-No%20INTERNET%20permission-222222?style=for-the-badge" alt="No INTERNET permission declared in the app manifest" />
@@ -92,11 +92,11 @@ InstaGallery is designed for local use. The current app manifest **does not decl
 
 ## Download and install
 
-The latest published release is **v1.1.6**.
+The latest published release is **v2.0.0**.
 
 <p align="center">
-  <a href="https://github.com/NI3singh/InstaGallery/releases/latest/download/InstaGallery-v1.1.6.apk">
-    <img src="https://img.shields.io/badge/Download-InstaGallery--v1.1.6.apk-0095F6?style=for-the-badge&logo=android&logoColor=white" alt="Download InstaGallery APK" />
+  <a href="https://github.com/NI3singh/InstaGallery/releases/latest/download/InstaGallery-v2.0.0.apk">
+    <img src="https://img.shields.io/badge/Download-InstaGallery--v2.0.0.apk-0095F6?style=for-the-badge&logo=android&logoColor=white" alt="Download InstaGallery APK" />
   </a>
   <br />
   <a href="https://github.com/NI3singh/InstaGallery/releases">View release notes and assets</a>
@@ -105,7 +105,7 @@ The latest published release is **v1.1.6**.
 ### Install on Android
 
 1. Open the APK link above on your Android phone.
-2. Open the downloaded `InstaGallery-v1.1.6.apk`. If Android prompts you, allow your browser or file manager to install unknown apps for this installation.
+2. Open the downloaded `InstaGallery-v2.0.0.apk`. If Android prompts you, allow your browser or file manager to install unknown apps for this installation.
 3. Launch InstaGallery and grant media access when prompted.
 4. Browse your local media. Face indexing may continue in the background after the initial scan begins.
 

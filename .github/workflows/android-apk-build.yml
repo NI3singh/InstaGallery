@@ -9,8 +9,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_TAG: v1.1.6
-  APK_FILENAME: InstaGallery-v1.1.6.apk
+  RELEASE_TAG: v2.0.0
+  APK_FILENAME: InstaGallery-v2.0.0.apk
 
 jobs:
   build:
@@ -122,7 +122,7 @@ jobs:
       - name: Upload InstaGallery APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: InstaGallery-v1.1.6-APK
+          name: InstaGallery-v2.0.0-APK
           path: dist/${{ env.APK_FILENAME }}
           if-no-files-found: error
 
@@ -133,7 +133,7 @@ jobs:
         run: |
           APK_SIZE=$(du -h "dist/${APK_FILENAME}" | cut -f1)
           cat << EOF > RELEASE_NOTES.md
-          ## 📸 InstaGallery ${RELEASE_TAG} — Exact Post Scroll Index, True Uncropped Photo Aspect Ratios & Standalone Reels
+          ## 🚀 InstaGallery ${RELEASE_TAG} — Interactive Story Player, 1080p InstaCard Studio, Saved Collections & Relational Co-Occurrence Graph
 
           ### ⚡ Fast APK Download (\`${APK_SIZE}\` — Slim Optimized Build)
           - **Option 1 — Direct GitHub Release Asset**: Tap **\`${APK_FILENAME}\`** under **Assets** below.
@@ -145,18 +145,21 @@ jobs:
           ### 📲 Installation Steps
           1. Download **\`${APK_FILENAME}\`** on your Android 8.0+ (API 26+) phone.
           2. Open the \`.apk\` file and allow *Install unknown apps* if prompted.
-          3. Launch **InstaGallery** — enjoy exact post scrolling, uncropped photos with 1-tap Fit/Crop toggle, and standalone Reels.
+          3. Launch **InstaGallery** — all existing faces, profiles, captions, and bookmarks upgrade automatically via non-destructive SQLite migrations.
 
           ### ✨ What's New in ${RELEASE_TAG}
-          - **Exact Profile Grid-to-Post Scroll Position**:
-            - Tapping the 5th, 50th, or 90th photo in a profile grid now opens \`PostDetailScreen\` at that exact photo immediately without jumping back to the 1st photo.
-          - **True Intrinsic Photo Aspect Ratio & 1-Tap Fit/Crop Toggle**:
-            - \`PostCard\` now decodes the true drawable aspect ratio via Coil and renders photos uncropped (\`ContentScale.Fit\`) by default so tall portraits, square photos, and landscapes are never awkwardly cut off.
-            - Includes a \`28.dp\` circular Fit/Crop toggle button in the bottom-right corner of every photo to switch between true uncropped proportions and \`4:5\` fill mode.
-          - **Photo-Only Profiles & Automatic Video Link Cleanup**:
-            - Purges any legacy video-to-person links during media scanning and keeps profiles strictly photo-only (\`isVideo = 0\`) with a clean 3-column photo grid.
-          - **Pure Standalone \`@Reels\` Experience**:
-            - Removed person filter chips, person tag counters, and profile links from Reels so videos play as a pure standalone \`@Reels\` feed with the Instagram-gradient clapperboard badge.
+          - **Full-Screen Interactive Story Player (\`StoryPlayerScreen\`)**:
+            - Smart 12-slide curation per person (*On This Day* flashbacks, *Favorite Memories*, and *Recent Captures*) with segmented 4.5s auto-advancing progress bars, subtle Ken Burns motion, tap left/right navigation, stationary press-and-hold pause with HUD fade-out, and swipe-down dismiss.
+          - **InstaCard 1080p Snapshot Studio (\`InstaCardStudio\`)**:
+            - Export and share razor-sharp \`1080p\` social cards in 3 templates (*OLED Dark*, *Ambient Glass*, and *Polaroid EXIF*) directly to \`Pictures/InstaGallery_Cards\` or the Android share sheet.
+          - **"Together With" Co-Occurrence & Solo Portrait Filters**:
+            - Filter any person's profile grid by *All Photos*, *Solo* portraits, or co-occurring duo photos (*Together With @PersonB*) powered by SQLite self-joins on \`media_person_cross_ref\`.
+          - **Interactive Collab Post Headers**:
+            - Overlapping dual avatars and \`@PersonA & @PersonB\` collab attribution on group photos with a 1-tap \`CollabAuthorsSheet\` to jump to any co-star's profile.
+          - **Instagram-Style Saved Collections Boards (\`SavedCollectionsScreen\`)**:
+            - Organize bookmarked memories into custom local boards (*Favorites & Highlights*, *Trips & Outings*, *Family & Friends*, *Wallpapers*, plus custom boards) with \`2x2\` mosaic covers, 3-column grid / vertical feed toggle, and instant real-time SQLite synchronization.
+          - **Native Instagram Dark Mode Captions, EXIF Inspector & Custom Heart Themes**:
+            - Add personal captions that replace raw camera filenames, inspect camera/lens/ISO metadata and tag people in 1 tap from the \`⋮\` sheet, and customize double-tap heart burst physics with 6 color themes.
           EOF
 
           git tag -f "${RELEASE_TAG}"
@@ -165,12 +168,12 @@ jobs:
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
             gh release upload "${RELEASE_TAG}" "dist/${APK_FILENAME}" --clobber
             gh release edit "${RELEASE_TAG}" \
-              --title "InstaGallery ${RELEASE_TAG} — Uncropped Photos, Exact Post Scroll & Standalone Reels APK (${APK_SIZE})" \
+              --title "InstaGallery ${RELEASE_TAG} — Stories, 1080p InstaCard Studio, Saved Collections & Co-Occurrence Graph (${APK_SIZE})" \
               --notes-file RELEASE_NOTES.md \
               --latest
           else
             gh release create "${RELEASE_TAG}" "dist/${APK_FILENAME}" \
-              --title "InstaGallery ${RELEASE_TAG} — Uncropped Photos, Exact Post Scroll & Standalone Reels APK (${APK_SIZE})" \
+              --title "InstaGallery ${RELEASE_TAG} — Stories, 1080p InstaCard Studio, Saved Collections & Co-Occurrence Graph (${APK_SIZE})" \
               --notes-file RELEASE_NOTES.md \
               --latest
           fi
