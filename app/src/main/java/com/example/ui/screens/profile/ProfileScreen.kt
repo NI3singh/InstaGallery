@@ -9,6 +9,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -18,9 +19,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -69,6 +72,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.example.data.local.entity.MediaWithAuthors
+import com.example.ui.components.bounceClick
 import com.example.ui.theme.IgBlack
 import com.example.ui.theme.IgBlue
 import com.example.ui.theme.IgBorderNav
@@ -88,6 +92,7 @@ fun ProfileScreen(
     onBackClick: () -> Unit,
     onMediaClick: (Long) -> Unit,
     onMergedToPerson: (Long) -> Unit = {},
+    onPersonClick: (Long) -> Unit = onMergedToPerson,
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -387,6 +392,220 @@ fun ProfileScreen(
             }
         } else {
             Spacer(modifier = Modifier.height(8.dp))
+        }
+
+        // "Together With" & Solo Filter Strip (for clustered profiles)
+        if (!isOther && (uiState.coOccurringPeople.isNotEmpty() || uiState.soloPhotoCount > 0)) {
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("profile_cooccurrence_filter_row")
+            ) {
+                // Item 1: "All Photos" Chip
+                item(key = "filter_all") {
+                    val isSelected = uiState.selectedFilter is ProfilePhotoFilter.All
+                    Box(
+                        modifier = Modifier
+                            .height(36.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (isSelected) Color.White else Color(0xFF1A1A1E))
+                            .border(
+                                width = 1.dp,
+                                color = if (isSelected) Color.White else Color(0xFF28282E),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            .bounceClick { viewModel.setFilter(ProfilePhotoFilter.All) }
+                            .padding(horizontal = 14.dp)
+                            .testTag("filter_chip_all"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (uiState.totalPhotoCount > 0) "All Photos (${uiState.totalPhotoCount})" else "All Photos",
+                            fontSize = 12.5.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                            color = if (isSelected) Color.Black else Color(0xFFE4E4E7)
+                        )
+                    }
+                }
+
+                // Item 2: "Solo" Chip
+                item(key = "filter_solo") {
+                    val isSelected = uiState.selectedFilter is ProfilePhotoFilter.SoloOnly
+                    Box(
+                        modifier = Modifier
+                            .height(36.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (isSelected) Color.White else Color(0xFF1A1A1E))
+                            .border(
+                                width = 1.dp,
+                                color = if (isSelected) Color.White else Color(0xFF28282E),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            .bounceClick { viewModel.toggleFilter(ProfilePhotoFilter.SoloOnly) }
+                            .padding(horizontal = 14.dp)
+                            .testTag("filter_chip_solo"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Person,
+                                contentDescription = "Solo",
+                                tint = if (isSelected) Color.Black else Color(0xFFE4E4E7),
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text(
+                                text = "Solo (${uiState.soloPhotoCount})",
+                                fontSize = 12.5.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                color = if (isSelected) Color.Black else Color(0xFFE4E4E7)
+                            )
+                        }
+                    }
+                }
+
+                // Items 3..N: Co-Occurring People ("Together With" Avatars)
+                items(
+                    items = uiState.coOccurringPeople,
+                    key = { "co_${it.person.personId}" }
+                ) { coPerson ->
+                    val currentFilter = uiState.selectedFilter
+                    val isSelected = currentFilter is ProfilePhotoFilter.TogetherWith &&
+                        currentFilter.otherPerson.personId == coPerson.person.personId
+                    val cleanCoName = coPerson.person.name.removePrefix("@")
+
+                    Row(
+                        modifier = Modifier
+                            .height(36.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(if (isSelected) Color(0xFF0095F6) else Color(0xFF18181C))
+                            .border(
+                                width = 1.dp,
+                                color = if (isSelected) Color.White else Color(0xFF28282E),
+                                shape = RoundedCornerShape(50)
+                            )
+                            .bounceClick {
+                                viewModel.toggleFilter(ProfilePhotoFilter.TogetherWith(coPerson.person))
+                            }
+                            .padding(start = 4.dp, end = 12.dp)
+                            .testTag("filter_chip_together_${coPerson.person.personId}"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (isSelected) {
+                                        androidx.compose.ui.graphics.Brush.linearGradient(
+                                            listOf(Color.White, Color.White)
+                                        )
+                                    } else {
+                                        IgStoryGradient
+                                    }
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            val coAvatarPath = coPerson.person.avatarCropPath
+                            if (coAvatarPath.isNotBlank() && File(coAvatarPath).exists()) {
+                                AsyncImage(
+                                    model = File(coAvatarPath),
+                                    contentDescription = cleanCoName,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(25.dp)
+                                        .clip(CircleShape)
+                                )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(25.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF27272A)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Face,
+                                        contentDescription = cleanCoName,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        Text(
+                            text = if (isSelected) {
+                                "with @$cleanCoName • ${coPerson.sharedPhotoCount}"
+                            } else {
+                                "@$cleanCoName (${coPerson.sharedPhotoCount})"
+                            },
+                            fontSize = 12.5.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            color = if (isSelected) Color.White else Color(0xFFE4E4E7)
+                        )
+                    }
+                }
+            }
+
+            // Active Filter Banner when TogetherWith is active
+            val activeTogetherFilter = uiState.selectedFilter as? ProfilePhotoFilter.TogetherWith
+            if (activeTogetherFilter != null) {
+                val otherPerson = activeTogetherFilter.otherPerson
+                val cleanSelf = profileName.removePrefix("@")
+                val cleanOther = otherPerson.name.removePrefix("@")
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF10131A))
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Showing ${photos.size} photos of @$cleanSelf together with @$cleanOther",
+                        fontSize = 12.sp,
+                        color = Color(0xFFE4E4E7),
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .background(Color(0xFF1E293B))
+                                .border(0.5.dp, Color(0xFF0095F6).copy(alpha = 0.6f), RoundedCornerShape(50))
+                                .clickable { onPersonClick(otherPerson.personId) }
+                                .padding(horizontal = 8.dp, vertical = 3.dp)
+                        ) {
+                            Text(
+                                text = "View @$cleanOther",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF38BDF8)
+                            )
+                        }
+                        Text(
+                            text = "Clear",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = IgBlue,
+                            modifier = Modifier.clickable {
+                                viewModel.setFilter(ProfilePhotoFilter.All)
+                            }
+                        )
+                    }
+                }
+            }
         }
 
         // Single clean 1.dp divider (#1F1F1F) followed directly by the 3-column square photo grid

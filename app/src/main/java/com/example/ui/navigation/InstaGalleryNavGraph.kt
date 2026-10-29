@@ -68,6 +68,7 @@ import com.example.ui.screens.profile.ProfileScreen
 import com.example.ui.screens.profile.ProfileViewModel
 import com.example.ui.screens.reels.ReelsScreen
 import com.example.ui.screens.reels.ReelsViewModel
+import com.example.ui.screens.saved.SavedCollectionsScreen
 import com.example.ui.screens.story.StoryPlayerScreen
 import com.example.ui.screens.story.StoryPlayerViewModel
 import com.example.ui.theme.IgBlack
@@ -110,7 +111,8 @@ fun InstaGalleryNavGraph(
             if (showBottomBar) {
                 InstaBottomNavigationBar(
                     currentRoute = currentRoute,
-                    isSavedFilterActive = currentRoute == Screen.Home.route && homeUiState.isFilteringBookmarks,
+                    isSavedFilterActive = currentRoute == Screen.SavedCollections.route ||
+                        (currentRoute == Screen.Home.route && homeUiState.isFilteringBookmarks),
                     topPersonAvatar = topPersonAvatar,
                     onHomeClick = {
                         homeViewModel.setFilter(HomeFeedFilter.ALL)
@@ -125,17 +127,14 @@ fun InstaGalleryNavGraph(
                         }
                     },
                     onSavedClick = {
-                        if (currentRoute != Screen.Home.route) {
-                            homeViewModel.setFilter(HomeFeedFilter.BOOKMARKED)
-                            navController.navigate(Screen.Home.route) {
+                        if (currentRoute != Screen.SavedCollections.route) {
+                            navController.navigate(Screen.SavedCollections.route) {
                                 popUpTo(Screen.Home.route) {
                                     saveState = true
                                 }
                                 launchSingleTop = true
                                 restoreState = true
                             }
-                        } else {
-                            homeViewModel.toggleBookmarksFilter()
                         }
                     },
                     onNavigate = { targetRoute ->
@@ -272,6 +271,20 @@ fun InstaGalleryNavGraph(
                     onReviewNewPeopleClick = {
                         onboardingViewModel.prepareForPostOnboardingReview()
                         navController.navigate(Screen.ProfileSetup.route)
+                    },
+                    onOpenSavedCollections = {
+                        navController.navigate(Screen.SavedCollections.route) {
+                            launchSingleTop = true
+                        }
+                    }
+                )
+            }
+
+            composable(Screen.SavedCollections.route) {
+                SavedCollectionsScreen(
+                    onBackClick = { navController.popBackStack() },
+                    onPersonClick = { personId ->
+                        navController.navigate(Screen.Profile.createRoute(personId))
                     }
                 )
             }
@@ -327,6 +340,9 @@ fun InstaGalleryNavGraph(
                         navController.navigate(Screen.Profile.createRoute(mergedPersonId)) {
                             popUpTo(Screen.Profile.route) { inclusive = true }
                         }
+                    },
+                    onPersonClick = { targetPersonId ->
+                        navController.navigate(Screen.Profile.createRoute(targetPersonId))
                     }
                 )
             }

@@ -13,7 +13,11 @@ import androidx.work.WorkManager
 import com.example.InstaGalleryApp
 import com.example.data.local.AppDatabase
 import com.example.data.local.OnboardingPreferences
+import com.example.data.local.entity.CoOccurringPerson
+import com.example.data.local.entity.CollectionEntity
+import com.example.data.local.entity.CollectionMediaCrossRef
 import com.example.data.local.entity.FaceEntity
+import com.example.data.local.entity.MediaEntity
 import com.example.data.local.entity.MediaWithAuthors
 import com.example.data.local.entity.PersonEntity
 import com.example.data.media.MediaStoreScanner
@@ -44,6 +48,7 @@ class GalleryRepository(
         ?: AppDatabase.getInstance(appContext)
     private val mediaDao = database.mediaDao()
     private val personDao = database.personDao()
+    private val collectionDao = database.collectionDao()
     private val mediaStoreScanner = MediaStoreScanner(appContext, mediaDao, personDao)
     private val scanner: MediaStoreScanner
         get() = mediaStoreScanner
@@ -51,6 +56,12 @@ class GalleryRepository(
     private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var observerDebounceJob: Job? = null
     private var mediaStoreObserver: ContentObserver? = null
+
+    init {
+        repositoryScope.launch {
+            ensureDefaultCollectionsSeeded()
+        }
+    }
 
     /**
      * Primary people Flow observed by HomeFeedScreen and PeopleDirectoryScreen.
@@ -246,7 +257,19 @@ class GalleryRepository(
         return getMediaWithAuthorsForPersonFlow(personId)
     }
 
-    suspend fun getSamplePhotosForPersonSync(personId: Long, limit: Int = 3): List<com.example.data.local.entity.MediaEntity> {
+    fun getCoOccurringPeopleFlow(personId: Long): Flow<List<CoOccurringPerson>> {
+        return personDao.getCoOccurringPeopleFlow(personId)
+    }
+
+    fun getSharedMediaBetweenPeopleFlow(personId: Long, otherPersonId: Long): Flow<List<MediaWithAuthors>> {
+        return filterMediaAuthorsToVisible(mediaDao.getSharedMediaBetweenPeopleFlow(personId, otherPersonId))
+    }
+
+    fun getSoloMediaForPersonFlow(personId: Long): Flow<List<MediaWithAuthors>> {
+        return filterMediaAuthorsToVisible(mediaDao.getSoloMediaForPersonFlow(personId))
+    }
+
+    suspend fun getSamplePhotosForPersonSync(personId: Long, limit: Int = 3): List<MediaEntity> {
         return mediaDao.getSamplePhotosForPersonSync(personId, limit)
     }
 
@@ -291,6 +314,72 @@ class GalleryRepository(
 
     suspend fun toggleBookmarked(mediaId: Long, currentBookmarked: Boolean) {
         mediaDao.setBookmarked(mediaId, !currentBookmarked)
+    }
+
+    suspend fun setBookmarked(mediaId: Long, bookmarked: Boolean) {
+        mediaDao.setBookmarked(mediaId, bookmarked)
+    }
+
+    val allCollectionsFlow: Flow<List<CollectionEntity>> = collectionDao.getAllCollectionsFlow()
+
+    fun getCollectionIdsForMediaFlow(mediaId: Long): Flow<List<Long>> =
+        collectionDao.getCollectionIdsForMediaFlow(mediaId)
+
+    fun getAllCollectionCrossRefsFlow(): Flow<List<CollectionMediaCrossRef>> =
+        collectionDao.getAllCollectionCrossRefsFlow()
+
+    fun getMediaForCollectionFlow(collectionId: Long): Flow<List<MediaEntity>> =
+        collectionDao.getMediaForCollectionFlow(collectionId)
+
+    fun getMediaWithAuthorsForCollectionFlow(collectionId: Long): Flow<List<MediaWithAuthors>> =
+        filterMediaAuthorsToVisible(collectionDao.getMediaWithAuthorsForCollectionFlow(collectionId))
+
+    suspend fun ensureDefaultCollectionsSeeded() = withContext(Dispatchers.IO) {
+        if (collectionDao.getCollectionCount() == 0) {
+            val now = System.currentTimeMillis()
+            val defaults = listOf(
+                "Favorites & Highlights",
+                "Trips & Outings",
+                "Family & Friends",
+                "Wallpapers"
+            )
+            defaults.forEachIndexed { idx, title ->
+                collectionDao.insertCollection(
+                    CollectionEntity(
+                        name = title,
+                        createdAt = now + idx
+                    )
+                )
+            }
+        }
+    }
+
+    suspend fun createCollection(rawName: String): Long = withContext(Dispatchers.IO) {
+        val clean = rawName.trim()
+        if (clean.isEmpty()) return@withContext -1L
+        collectionDao.insertCollection(CollectionEntity(name = clean))
+    }
+
+    suspend fun deleteCollection(collectionId: Long) = withContext(Dispatchers.IO) {
+        collectionDao.deleteCollection(collectionId)
+    }
+
+    suspend fun toggleMediaInCollection(
+        collectionId: Long,
+        mediaId: Long,
+        isCurrentlyInCollection: Boolean
+    ) = withContext(Dispatchers.IO) {
+        if (isCurrentlyInCollection) {
+            collectionDao.removeMediaFromCollection(collectionId, mediaId)
+        } else {
+            collectionDao.addMediaToCollection(
+                CollectionMediaCrossRef(
+                    collectionId = collectionId,
+                    mediaId = mediaId
+                )
+            )
+            mediaDao.setBookmarked(mediaId, true)
+        }
     }
 
     suspend fun updateMediaCaption(mediaId: Long, caption: String?) = withContext(Dispatchers.IO) {

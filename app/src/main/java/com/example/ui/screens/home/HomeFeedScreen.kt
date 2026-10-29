@@ -97,6 +97,7 @@ fun HomeFeedScreen(
     onPersonClick: (Long) -> Unit,
     onOpenStory: (Long) -> Unit = onPersonClick,
     onReviewNewPeopleClick: () -> Unit = {},
+    onOpenSavedCollections: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -171,11 +172,17 @@ fun HomeFeedScreen(
                     }
                 }
 
-                // Bookmarks / Saved filter toggle (24.dp)
+                // Bookmarks / Saved Collections button (24.dp)
                 Box(
                     modifier = Modifier
                         .size(28.dp)
-                        .bounceClick { viewModel.toggleBookmarksFilter() }
+                        .bounceClick {
+                            if (onOpenSavedCollections != null) {
+                                onOpenSavedCollections()
+                            } else {
+                                viewModel.toggleBookmarksFilter()
+                            }
+                        }
                         .testTag("bookmarks_filter_button"),
                     contentAlignment = Alignment.Center
                 ) {
@@ -185,7 +192,7 @@ fun HomeFeedScreen(
                         } else {
                             OutlinedExtendedIcons.BookmarkBorder
                         },
-                        contentDescription = "Filter Saved Posts",
+                        contentDescription = "Saved Collections",
                         tint = Color.White,
                         modifier = Modifier.size(24.dp)
                     )

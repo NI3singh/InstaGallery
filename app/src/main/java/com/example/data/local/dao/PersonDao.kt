@@ -7,6 +7,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
+import com.example.data.local.entity.CoOccurringPerson
 import com.example.data.local.entity.FaceEntity
 import com.example.data.local.entity.PersonEntity
 import kotlinx.coroutines.flow.Flow
@@ -404,4 +405,22 @@ interface PersonDao {
         syncAllPeoplePhotoCountsSql()
         deleteEmptyUnnamedPeopleSql()
     }
+
+    @Query(
+        """
+        SELECT p.*, COUNT(DISTINCT ref1.mediaId) AS sharedPhotoCount
+        FROM media_person_cross_ref ref1
+        INNER JOIN media_person_cross_ref ref2 ON ref1.mediaId = ref2.mediaId
+        INNER JOIN people p ON p.personId = ref2.personId
+        INNER JOIN media_items m ON m.mediaId = ref1.mediaId
+        WHERE ref1.personId = :personId
+          AND ref2.personId != :personId
+          AND p.isHiddenToOther = 0
+          AND m.isVideo = 0
+        GROUP BY p.personId
+        HAVING sharedPhotoCount >= 1
+        ORDER BY sharedPhotoCount DESC, p.isNamedByUser DESC
+        """
+    )
+    fun getCoOccurringPeopleFlow(personId: Long): Flow<List<CoOccurringPerson>>
 }

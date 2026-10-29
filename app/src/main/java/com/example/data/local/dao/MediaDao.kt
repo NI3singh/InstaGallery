@@ -365,4 +365,43 @@ interface MediaDao {
 
     @Query("DELETE FROM media_items WHERE mediaId IN (:ids)")
     suspend fun deleteMediaByIds(ids: List<Long>)
+
+    @Transaction
+    @RewriteQueriesToDropUnusedColumns
+    @Query(
+        """
+        SELECT DISTINCT m.* FROM media_items m
+        INNER JOIN media_person_cross_ref ref1 ON m.mediaId = ref1.mediaId
+        INNER JOIN media_person_cross_ref ref2 ON m.mediaId = ref2.mediaId
+        WHERE ref1.personId = :personId
+          AND ref2.personId = :otherPersonId
+          AND m.isVideo = 0
+        ORDER BY m.dateAddedSeconds DESC
+        """
+    )
+    fun getSharedMediaBetweenPeopleFlow(personId: Long, otherPersonId: Long): Flow<List<MediaWithAuthors>>
+
+    @Transaction
+    @RewriteQueriesToDropUnusedColumns
+    @Query(
+        """
+        SELECT DISTINCT m.* FROM media_items m
+        INNER JOIN media_person_cross_ref ref1 ON m.mediaId = ref1.mediaId
+        WHERE ref1.personId = :personId
+          AND m.isVideo = 0
+          AND NOT EXISTS (
+              SELECT 1 FROM media_person_cross_ref ref2
+              INNER JOIN people p2 ON p2.personId = ref2.personId
+              WHERE ref2.mediaId = m.mediaId
+                AND ref2.personId != :personId
+                AND p2.isHiddenToOther = 0
+          )
+        ORDER BY m.dateAddedSeconds DESC
+        """
+    )
+    fun getSoloMediaForPersonFlow(personId: Long): Flow<List<MediaWithAuthors>>
+
+    @Transaction
+    @Query("SELECT * FROM media_items WHERE isBookmarked = 1 AND isVideo = 0 ORDER BY dateAddedSeconds DESC")
+    fun getAllBookmarkedPhotosWithAuthorsFlow(): Flow<List<MediaWithAuthors>>
 }

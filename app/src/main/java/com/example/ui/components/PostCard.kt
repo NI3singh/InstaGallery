@@ -13,6 +13,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -32,6 +34,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -40,6 +43,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FilledExtendedIcons
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.outlined.Face
 import androidx.compose.material.icons.outlined.OutlinedExtendedIcons
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -48,6 +52,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -83,10 +88,13 @@ import com.example.data.local.entity.MediaWithAuthors
 import com.example.data.local.entity.PersonEntity
 import com.example.ui.theme.IgBlack
 import com.example.ui.theme.IgBlue
+import com.example.ui.theme.IgStoryGradient
 import com.example.ui.theme.IgTextSecondary
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
@@ -118,7 +126,17 @@ fun PostCard(
     var showInstaCardStudio by remember { mutableStateOf(false) }
     var showTagOverlay by remember { mutableStateOf(false) }
     var showHeartThemeSheet by remember { mutableStateOf(false) }
+    var showSaveToCollectionSheet by remember { mutableStateOf(false) }
+    var showCollabAuthorsSheet by remember { mutableStateOf(false) }
+    var showSavedFloatingBanner by remember { mutableStateOf(false) }
     val activeBursts = remember { mutableStateListOf<HeartBurstInstance>() }
+
+    LaunchedEffect(showSavedFloatingBanner) {
+        if (showSavedFloatingBanner) {
+            delay(3500L)
+            showSavedFloatingBanner = false
+        }
+    }
 
     var decodedAspectRatio by remember(media.mediaId) {
         val dbRatio = if (media.width > 0 && media.height > 0 && !(media.width == 1080 && media.height == 1350)) {
@@ -143,36 +161,40 @@ fun PostCard(
         sdf.format(date)
     }
 
-    val primaryAuthorName = remember(authors) {
-        if (authors.isEmpty()) "Other" else authors[0].name.removePrefix("@")
+    val visibleAuthors = remember(authors) {
+        val visible = authors.filter { !it.isHiddenToOther }
+        visible.ifEmpty { authors }
     }
 
-    val primaryAuthorAvatarPath = remember(authors) {
-        authors.firstOrNull()?.avatarCropPath
+    val primaryAuthorName = remember(visibleAuthors) {
+        if (visibleAuthors.isEmpty()) "Other" else visibleAuthors[0].name.removePrefix("@")
     }
 
-    val authorHandles = remember(authors) {
-        if (authors.isEmpty()) {
+    val primaryAuthorAvatarPath = remember(visibleAuthors) {
+        visibleAuthors.firstOrNull()?.avatarCropPath
+    }
+
+    val authorHandles = remember(visibleAuthors) {
+        if (visibleAuthors.isEmpty()) {
             "@Other"
         } else {
-            when (authors.size) {
+            when (visibleAuthors.size) {
                 1 -> {
-                    val p = authors[0]
-                    if (p.isNamedByUser && !p.name.startsWith("Person ")) p.name.removePrefix("@") else "@${p.name.removePrefix("@")}"
+                    val p = visibleAuthors[0]
+                    "@${p.name.removePrefix("@")}"
                 }
-                2 -> "@${authors[0].name.removePrefix("@")} and @${authors[1].name.removePrefix("@")}"
+                2 -> "@${visibleAuthors[0].name.removePrefix("@")} & @${visibleAuthors[1].name.removePrefix("@")}"
                 else -> {
-                    val firstTwo = authors.take(2).joinToString(", ") { "@${it.name.removePrefix("@")}" }
-                    val remaining = authors.size - 2
-                    if (remaining == 1) "$firstTwo and @${authors[2].name.removePrefix("@")}"
-                    else "$firstTwo and $remaining others"
+                    val firstTwo = visibleAuthors.take(2).joinToString(", ") { "@${it.name.removePrefix("@")}" }
+                    val remaining = visibleAuthors.size - 2
+                    "$firstTwo +$remaining"
                 }
             }
         }
     }
 
     val currentIsFavorite by rememberUpdatedState(media.isFavorite)
-    val currentHasAuthors by rememberUpdatedState(authors.isNotEmpty())
+    val currentHasAuthors by rememberUpdatedState(visibleAuthors.isNotEmpty())
     val currentOnImageClick by rememberUpdatedState(onImageClick)
 
     val containerAspectRatio = if (forceCropMode) 4f / 5f else decodedAspectRatio
@@ -184,7 +206,7 @@ fun PostCard(
             .background(IgBlack)
             .testTag("post_card_${media.mediaId}")
     ) {
-        // 1. Refined Post Header
+        // 1. Refined Post Header (Supports Single Author & Multi-Person Collab Attribution)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -196,19 +218,55 @@ fun PostCard(
                 modifier = Modifier
                     .weight(1f)
                     .clickable {
-                        if (authors.isNotEmpty()) {
-                            onAuthorClick(authors[0].personId)
-                        } else {
-                            onAuthorClick(-1L)
+                        when {
+                            visibleAuthors.size >= 2 -> showCollabAuthorsSheet = true
+                            visibleAuthors.size == 1 -> onAuthorClick(visibleAuthors[0].personId)
+                            else -> onAuthorClick(-1L)
                         }
-                    },
+                    }
+                    .testTag("post_header_authors_${media.mediaId}"),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                OverlappingAvatars(
-                    authors = authors,
-                    avatarSize = 34.dp,
-                    overlap = (-10).dp
-                )
+                if (visibleAuthors.size >= 2) {
+                    // Collab Avatar Stack: 2 overlapping 30.dp circular face avatars
+                    Box(
+                        modifier = Modifier
+                            .width(42.dp)
+                            .height(38.dp)
+                    ) {
+                        val firstPerson = visibleAuthors[0]
+                        val secondPerson = visibleAuthors[1]
+
+                        // First Avatar at top-left (0.dp, 0.dp)
+                        CollabHeaderAvatar(
+                            person = firstPerson,
+                            modifier = Modifier
+                                .size(30.dp)
+                                .align(Alignment.TopStart)
+                        )
+
+                        // Second Avatar offset by (12.dp, 8.dp) with 2.dp #000000 cutout border and sunset ring
+                        Box(
+                            modifier = Modifier
+                                .offset(x = 12.dp, y = 8.dp)
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .background(IgBlack),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CollabHeaderAvatar(
+                                person = secondPerson,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                    }
+                } else {
+                    OverlappingAvatars(
+                        authors = visibleAuthors,
+                        avatarSize = 34.dp,
+                        overlap = (-10).dp
+                    )
+                }
 
                 Spacer(modifier = Modifier.width(10.dp))
 
@@ -380,6 +438,46 @@ fun PostCard(
                 heartTheme = heartTheme,
                 onBurstFinished = { id -> activeBursts.removeAll { it.id == id } }
             )
+
+            // Floating "Saved to bookmarks • Add to Collection ▸" Bottom Overlay Banner (3500ms)
+            androidx.compose.animation.AnimatedVisibility(
+                visible = showSavedFloatingBanner,
+                enter = slideInVertically { it } + fadeIn(),
+                exit = slideOutVertically { it } + fadeOut(),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 12.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF18181E).copy(alpha = 0.95f))
+                        .border(0.5.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(12.dp))
+                        .clickable {
+                            showSavedFloatingBanner = false
+                            showSaveToCollectionSheet = true
+                        }
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                        .testTag("saved_floating_banner_${media.mediaId}"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Saved to bookmarks",
+                        fontSize = 13.sp,
+                        color = Color.White,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "Add to Collection ▸",
+                        fontSize = 13.sp,
+                        color = Color(0xFF0095F6),
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
         }
 
         // 3. Polished Bottom Action Bar
@@ -490,11 +588,28 @@ fun PostCard(
                 }
             }
 
-            // Bookmark Button
+            // Bookmark Button (Single tap toggles bookmark + shows 3.5s Add to Collection banner; Long press opens SaveToCollectionSheet)
             Box(
                 modifier = Modifier
                     .size(26.dp)
-                    .bounceClick { onToggleBookmark(media.mediaId, media.isBookmarked) }
+                    .combinedClickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            val wasBookmarked = media.isBookmarked
+                            onToggleBookmark(media.mediaId, wasBookmarked)
+                            showSavedFloatingBanner = !wasBookmarked
+                        },
+                        onLongClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            if (!media.isBookmarked) {
+                                onToggleBookmark(media.mediaId, false)
+                            }
+                            showSavedFloatingBanner = false
+                            showSaveToCollectionSheet = true
+                        }
+                    )
                     .testTag("bookmark_button_${media.mediaId}"),
                 contentAlignment = Alignment.Center
             ) {
@@ -635,6 +750,56 @@ fun PostCard(
             onUntagPerson = onUntagPerson,
             onDismiss = { showInspectorSheet = false }
         )
+    }
+
+    if (showSaveToCollectionSheet) {
+        SaveToCollectionSheet(
+            media = media,
+            onDismiss = { showSaveToCollectionSheet = false }
+        )
+    }
+
+    if (showCollabAuthorsSheet) {
+        CollabAuthorsSheet(
+            authors = visibleAuthors,
+            onSelectPerson = onAuthorClick,
+            onDismiss = { showCollabAuthorsSheet = false }
+        )
+    }
+}
+
+@Composable
+private fun CollabHeaderAvatar(
+    person: PersonEntity,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .clip(CircleShape)
+            .background(IgStoryGradient)
+            .padding(1.5.dp)
+            .clip(CircleShape)
+            .background(IgBlack),
+        contentAlignment = Alignment.Center
+    ) {
+        val cropPath = person.avatarCropPath
+        if (cropPath.isNotBlank() && File(cropPath).exists()) {
+            AsyncImage(
+                model = File(cropPath),
+                contentDescription = person.name,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(CircleShape)
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Outlined.Face,
+                contentDescription = person.name,
+                tint = IgTextSecondary,
+                modifier = Modifier.size(15.dp)
+            )
+        }
     }
 }
 
