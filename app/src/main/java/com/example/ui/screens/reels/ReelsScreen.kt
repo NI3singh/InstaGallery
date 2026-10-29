@@ -248,10 +248,16 @@ fun ReelsScreen(
     }
 
     // Attach Player.Listener to track first-frame rendering (eliminates flicker) and recover from codec errors
-    DisposableEffect(exoPlayer, settledMediaId) {
+    DisposableEffect(exoPlayer, settledMediaId, settledMediaUri) {
         val listener = object : Player.Listener {
             override fun onRenderedFirstFrame() {
                 renderedFirstFrameMediaId = settledMediaId
+            }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (isPlaying && settledMediaId != -1L) {
+                    renderedFirstFrameMediaId = settledMediaId
+                }
             }
 
             override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -268,6 +274,9 @@ fun ReelsScreen(
                     exoPlayer.setMediaItem(MediaItem.fromUri(settledMediaUri))
                     exoPlayer.prepare()
                     exoPlayer.playWhenReady = !isPausedByTap
+                    if (!isPausedByTap) {
+                        exoPlayer.play()
+                    }
                 } else if (settledMediaId != -1L) {
                     viewModel.markVideoUnplayable(settledMediaId)
                 }
@@ -285,7 +294,7 @@ fun ReelsScreen(
     }
 
     // Load video ONLY when settledMediaId actually changes (never on Like/Bookmark updates!)
-    LaunchedEffect(settledMediaId) {
+    LaunchedEffect(settledMediaId, settledMediaUri) {
         if (settledMediaId != -1L && settledMediaUri.isNotBlank()) {
             errorRetryCount = 0
             isPausedByTap = false
@@ -301,8 +310,8 @@ fun ReelsScreen(
         }
     }
 
-    // Poll playback progress smoothly
-    LaunchedEffect(exoPlayer, isScrubbing) {
+    // Poll playback progress smoothly and ensure thumbnail shield clears once video advances
+    LaunchedEffect(exoPlayer, settledMediaId, isScrubbing) {
         while (isActive) {
             if (!isScrubbing) {
                 val dur = exoPlayer.duration
@@ -312,23 +321,43 @@ fun ReelsScreen(
                     currentPositionMs = pos.coerceAtLeast(0L)
                     playbackProgress = (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f)
                 }
+                if (exoPlayer.isPlaying && pos > 60L && settledMediaId != -1L) {
+                    renderedFirstFrameMediaId = settledMediaId
+                }
             }
             delay(80)
         }
     }
 
-    // Handle Android lifecycle pause/resume
-    DisposableEffect(lifecycleOwner, exoPlayer) {
+    // Handle Android lifecycle pause/resume without prematurely releasing ExoPlayer if lifecycleOwner changes
+    DisposableEffect(lifecycleOwner, exoPlayer, settledMediaUri) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_PAUSE -> exoPlayer.pause()
-                Lifecycle.Event.ON_RESUME -> if (!isPausedByTap) exoPlayer.play()
+                Lifecycle.Event.ON_RESUME -> {
+                    if (!isPausedByTap && settledMediaUri.isNotBlank()) {
+                        if (exoPlayer.playbackState == Player.STATE_IDLE) {
+                            exoPlayer.setMediaItem(MediaItem.fromUri(settledMediaUri))
+                            exoPlayer.prepare()
+                        } else if (exoPlayer.playbackState == Player.STATE_ENDED) {
+                            exoPlayer.seekTo(0L)
+                        }
+                        exoPlayer.playWhenReady = true
+                        exoPlayer.play()
+                    }
+                }
                 else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    // Release ExoPlayer strictly when ReelsScreen leaves composition
+    DisposableEffect(exoPlayer) {
+        onDispose {
             exoPlayer.release()
         }
     }
@@ -389,12 +418,20 @@ fun ReelsScreen(
                                 }
                             },
                             onTap = {
-                                if (exoPlayer.isPlaying) {
-                                    exoPlayer.pause()
+                                if (!isPausedByTap && (exoPlayer.isPlaying || exoPlayer.playWhenReady)) {
                                     isPausedByTap = true
+                                    exoPlayer.playWhenReady = false
+                                    exoPlayer.pause()
                                 } else {
-                                    exoPlayer.play()
                                     isPausedByTap = false
+                                    if (exoPlayer.playbackState == Player.STATE_IDLE && settledMediaUri.isNotBlank()) {
+                                        exoPlayer.setMediaItem(MediaItem.fromUri(settledMediaUri))
+                                        exoPlayer.prepare()
+                                    } else if (exoPlayer.playbackState == Player.STATE_ENDED) {
+                                        exoPlayer.seekTo(0L)
+                                    }
+                                    exoPlayer.playWhenReady = true
+                                    exoPlayer.play()
                                 }
                             }
                         )
@@ -701,6 +738,12 @@ fun ReelsScreen(
  * Unlike SurfaceView, TextureView participates directly in Compose's render node tree,
  * preventing black surface-punch flickering during Pager swipes or screen transitions.
  */
+private data class VideoScaleSpec(
+    val width: Int,
+    val height: Int,
+    val isFitMode: Boolean
+)
+
 @Composable
 private fun ZeroFlickerTextureVideoPlayer(
     exoPlayer: ExoPlayer,
@@ -717,16 +760,20 @@ private fun ZeroFlickerTextureVideoPlayer(
                     ViewGroup.LayoutParams.MATCH_PARENT
                 )
                 isOpaque = false
-                addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-                    applyVideoScaleMatrix(this, videoWidth, videoHeight, isFitMode)
+                tag = VideoScaleSpec(videoWidth, videoHeight, isFitMode)
+                addOnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
+                    val spec = (view.tag as? VideoScaleSpec)
+                        ?: VideoScaleSpec(videoWidth, videoHeight, isFitMode)
+                    applyVideoScaleMatrix(this, spec.width, spec.height, spec.isFitMode)
                 }
             }
         },
         update = { textureView ->
+            textureView.tag = VideoScaleSpec(videoWidth, videoHeight, isFitMode)
             exoPlayer.setVideoTextureView(textureView)
             applyVideoScaleMatrix(textureView, videoWidth, videoHeight, isFitMode)
         },
-        onReset = { textureView ->
+        onRelease = { textureView ->
             exoPlayer.clearVideoTextureView(textureView)
         },
         modifier = modifier

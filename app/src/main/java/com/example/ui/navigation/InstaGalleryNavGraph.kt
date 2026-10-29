@@ -95,6 +95,7 @@ fun InstaGalleryNavGraph(
 
     val onboardingViewModel: OnboardingViewModel = viewModel()
     val homeViewModel: HomeViewModel = viewModel()
+    val reelsViewModel: ReelsViewModel = viewModel()
     val homeUiState by homeViewModel.uiState.collectAsStateWithLifecycle()
 
     val showBottomBar = currentRoute != Screen.PermissionGate.route &&
@@ -123,33 +124,44 @@ fun InstaGalleryNavGraph(
                     onHomeClick = {
                         homeViewModel.setFilter(HomeFeedFilter.ALL)
                         if (currentRoute != Screen.Home.route) {
-                            navController.navigate(Screen.Home.route) {
-                                popUpTo(Screen.Home.route) {
-                                    saveState = true
+                            val popped = navController.popBackStack(Screen.Home.route, inclusive = false)
+                            if (!popped) {
+                                navController.navigate(Screen.Home.route) {
+                                    popUpTo(Screen.Home.route) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
                                 }
-                                launchSingleTop = true
-                                restoreState = true
                             }
                         }
                     },
                     onSavedClick = {
                         if (currentRoute != Screen.SavedCollections.route) {
-                            navController.navigate(Screen.SavedCollections.route) {
-                                popUpTo(Screen.Home.route) {
-                                    saveState = true
+                            val popped = navController.popBackStack(Screen.SavedCollections.route, inclusive = false)
+                            if (!popped) {
+                                navController.navigate(Screen.SavedCollections.route) {
+                                    popUpTo(Screen.Home.route) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
                                 }
-                                launchSingleTop = true
-                                restoreState = true
                             }
                         }
                     },
                     onNavigate = { targetRoute ->
-                        navController.navigate(targetRoute) {
-                            popUpTo(Screen.Home.route) {
-                                saveState = true
+                        if (currentRoute != targetRoute) {
+                            val popped = navController.popBackStack(targetRoute, inclusive = false)
+                            if (!popped) {
+                                navController.navigate(targetRoute) {
+                                    popUpTo(Screen.Home.route) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
                             }
-                            launchSingleTop = true
-                            restoreState = true
                         }
                     }
                 )
@@ -296,7 +308,6 @@ fun InstaGalleryNavGraph(
             }
 
             composable(Screen.Reels.route) {
-                val reelsViewModel: ReelsViewModel = viewModel()
                 ReelsScreen(
                     viewModel = reelsViewModel
                 )
