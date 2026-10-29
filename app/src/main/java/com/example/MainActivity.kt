@@ -27,9 +27,10 @@ class MainActivity : ComponentActivity() {
         if (event == Lifecycle.Event.ON_RESUME) {
             if (!hasAnyMediaPermission(this)) return@LifecycleEventObserver
             val now = System.currentTimeMillis()
-            if (now - lastResumeSyncTimestampMs >= 3_000L) {
+            if (now - lastResumeSyncTimestampMs >= 500L) {
                 lastResumeSyncTimestampMs = now
                 galleryRepository.startMediaStoreObserver()
+                galleryRepository.scheduleMediaUriTriggerWorker()
                 lifecycleScope.launch {
                     galleryRepository.syncOnAppResume()
                 }
@@ -41,6 +42,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         galleryRepository.startMediaStoreObserver()
+        if (hasAnyMediaPermission(this)) {
+            galleryRepository.scheduleMediaUriTriggerWorker()
+        }
         lifecycle.addObserver(resumeSyncObserver)
         setContent {
             InstaGalleryTheme {

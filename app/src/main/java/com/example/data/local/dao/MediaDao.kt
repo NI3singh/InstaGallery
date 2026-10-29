@@ -272,6 +272,9 @@ interface MediaDao {
     @Query("SELECT * FROM media_items WHERE isVideo = 0 AND isProcessedForFaces = 0 ORDER BY dateAddedSeconds DESC LIMIT :limit")
     suspend fun getUnindexedPhotos(limit: Int = 5000): List<MediaEntity>
 
+    @Query("SELECT * FROM media_items WHERE isVideo = 0 AND isProcessedForFaces = 0 ORDER BY dateAddedSeconds DESC LIMIT :limit")
+    suspend fun getNewestUnindexedPhotosSync(limit: Int): List<MediaEntity>
+
     @Query("UPDATE media_items SET isProcessedForFaces = 1, hasFaces = 0 WHERE isVideo = 1 AND isProcessedForFaces = 0")
     suspend fun markAllVideosProcessed()
 
@@ -287,6 +290,9 @@ interface MediaDao {
     @Query("SELECT COUNT(*) FROM media_items WHERE isVideo = 0 AND isProcessedForFaces = 0")
     suspend fun getUnindexedCountSync(): Int
 
+    @Query("SELECT COUNT(*) FROM media_items WHERE isVideo = 0 AND isProcessedForFaces = 0")
+    suspend fun getUnprocessedMediaCount(): Int
+
     @Query("SELECT COUNT(*) FROM media_items WHERE isVideo = 0 AND isProcessedForFaces = 1")
     fun getProcessedCount(): Flow<Int>
 
@@ -298,6 +304,9 @@ interface MediaDao {
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertMediaList(media: List<MediaEntity>): List<Long>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertMediaItems(media: List<MediaEntity>): List<Long>
 
     @Query("UPDATE media_items SET isFavorite = :isFavorite WHERE mediaId = :mediaId")
     suspend fun setFavorite(mediaId: Long, isFavorite: Boolean)
@@ -360,11 +369,20 @@ interface MediaDao {
     @Query("SELECT mediaId FROM media_items")
     suspend fun getAllMediaIds(): List<Long>
 
+    @Query("SELECT mediaId FROM media_items")
+    suspend fun getAllMediaIdsSync(): List<Long>
+
+    @Query("SELECT EXISTS(SELECT 1 FROM media_items WHERE mediaId = :mediaId)")
+    suspend fun existsMediaId(mediaId: Long): Boolean
+
     @Query("SELECT mediaId, uri FROM media_items")
     suspend fun getAllMediaIdsAndUris(): List<MediaIdAndUri>
 
-    @Query("DELETE FROM media_items WHERE mediaId IN (:ids)")
-    suspend fun deleteMediaByIds(ids: List<Long>)
+    @Query("DELETE FROM media_items WHERE mediaId = :mediaId")
+    suspend fun deleteMediaById(mediaId: Long): Int
+
+    @Query("DELETE FROM media_items WHERE mediaId IN (:mediaIds)")
+    suspend fun deleteMediaByIds(mediaIds: List<Long>): Int
 
     @Transaction
     @RewriteQueriesToDropUnusedColumns

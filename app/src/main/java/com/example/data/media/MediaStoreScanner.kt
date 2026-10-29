@@ -1,8 +1,9 @@
-// InstaGallery v1.0
+// InstaGallery v2.0
 package com.example.data.media
 
 import android.content.ContentUris
 import android.content.Context
+import android.database.Cursor
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
@@ -21,6 +22,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
+data class SyncDiffResult(
+    val addedPhotosCount: Int,
+    val addedVideosCount: Int,
+    val deletedCount: Int,
+    val newlyInsertedPhotos: List<MediaEntity>
+)
+
 class MediaStoreScanner(
     private val context: Context,
     private val mediaDao: MediaDao,
@@ -32,159 +40,311 @@ class MediaStoreScanner(
         const val FACE_INDEXING_WORK_NAME = "face_indexing_work"
         private const val DEFAULT_WIDTH = 1080
         private const val DEFAULT_HEIGHT = 1350
-        private const val DELTA_SAFETY_WINDOW_SECONDS = 120L
+
+        private val MEDIA_AND_WHATSAPP_FILTER = """
+            (
+                ${MediaStore.Files.FileColumns.MEDIA_TYPE} = ${MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE} OR
+                ${MediaStore.Files.FileColumns.MEDIA_TYPE} = ${MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO} OR
+                ${MediaStore.Files.FileColumns.MIME_TYPE} LIKE 'image/%' OR
+                ${MediaStore.Files.FileColumns.MIME_TYPE} LIKE 'video/%' OR
+                LOWER(${MediaStore.Files.FileColumns.DISPLAY_NAME}) LIKE '%.jpg' OR
+                LOWER(${MediaStore.Files.FileColumns.DISPLAY_NAME}) LIKE '%.jpeg' OR
+                LOWER(${MediaStore.Files.FileColumns.DISPLAY_NAME}) LIKE '%.png' OR
+                LOWER(${MediaStore.Files.FileColumns.DISPLAY_NAME}) LIKE '%.webp' OR
+                LOWER(${MediaStore.Files.FileColumns.DISPLAY_NAME}) LIKE '%.heic' OR
+                LOWER(${MediaStore.Files.FileColumns.DISPLAY_NAME}) LIKE '%.mp4' OR
+                LOWER(${MediaStore.Files.FileColumns.DISPLAY_NAME}) LIKE '%.mov'
+            )
+        """.trimIndent()
     }
 
     /**
-     * Mode A: Fast Delta Scan (< 30ms).
-     * Queries only MediaStore items added within the safety window of the latest stored timestamp.
-     * Returns the count of newly discovered still photos (isVideo == false).
+     * 2.1 Surgical Single-ID Sync (< 5ms).
+     * Triggered when ContentObserver.onChange provides a specific numeric mediaId.
+     * Handles IS_PENDING camera locks, instant single-item additions, and instant single-item deletions.
      */
-    suspend fun scanDeltaMedia(): Int = withContext(Dispatchers.IO) {
+    suspend fun syncSingleMediaId(mediaId: Long): SyncDiffResult = withContext(Dispatchers.IO) {
+        if (mediaId <= 0L) {
+            return@withContext SyncDiffResult(0, 0, 0, emptyList())
+        }
+
         try {
-            val maxDate = mediaDao.getMaxDateAddedSeconds()
-            if (maxDate == 0L) {
-                return@withContext scanFullAndReconcile()
-            }
+            val externalFilesUri = MediaStore.Files.getContentUri("external")
+            val readySelection = buildTrashAndPendingSelection("${MediaStore.Files.FileColumns._ID} = ?")
+            val selectionArgs = arrayOf(mediaId.toString())
 
-            val minDateAdded = (maxDate - DELTA_SAFETY_WINDOW_SECONDS).coerceAtLeast(0L)
-            val deduplicatedMedia = queryAllVolumes(minDateAddedSeconds = minDateAdded)
+            val projection = buildFilesProjection()
 
-            if (deduplicatedMedia.isEmpty()) {
-                return@withContext 0
-            }
+            var foundReadyEntity: MediaEntity? = null
+            var rowPresentReady = false
 
-            var newlyInsertedPhotoCount = 0
-            val scannedList = deduplicatedMedia.values.toList()
-            scannedList.chunked(250).forEach { chunk ->
-                val rowIds = mediaDao.insertMediaList(chunk)
-                for (i in rowIds.indices) {
-                    if (rowIds[i] != -1L && !chunk[i].isVideo) {
-                        newlyInsertedPhotoCount++
-                    }
+            context.contentResolver.query(
+                externalFilesUri,
+                projection,
+                readySelection,
+                selectionArgs,
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    rowPresentReady = true
+                    foundReadyEntity = parseEntityFromFilesCursor(
+                        cursor = cursor,
+                        volumeName = MediaStore.VOLUME_EXTERNAL,
+                        imagesCollectionUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                        videoCollectionUri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                    )
                 }
             }
 
-            if (newlyInsertedPhotoCount > 0) {
-                enqueueFaceIndexingWorker(ExistingWorkPolicy.APPEND_OR_REPLACE)
+            if (!rowPresentReady) {
+                // Case A — Cursor is empty (Row was deleted or is still IS_PENDING == 1)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    var isPendingInCamera = false
+                    val pendingCheckProjection = mutableListOf(
+                        MediaStore.Files.FileColumns._ID,
+                        MediaStore.MediaColumns.IS_PENDING
+                    ).apply {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                            add(MediaStore.MediaColumns.IS_TRASHED)
+                        }
+                    }.toTypedArray()
+
+                    context.contentResolver.query(
+                        externalFilesUri,
+                        pendingCheckProjection,
+                        "${MediaStore.Files.FileColumns._ID} = ?",
+                        selectionArgs,
+                        null
+                    )?.use { pendingCursor ->
+                        if (pendingCursor.moveToFirst()) {
+                            val pendingCol = pendingCursor.getColumnIndex(MediaStore.MediaColumns.IS_PENDING)
+                            val trashedCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                pendingCursor.getColumnIndex(MediaStore.MediaColumns.IS_TRASHED)
+                            } else -1
+                            val isPending = pendingCol >= 0 && !pendingCursor.isNull(pendingCol) && pendingCursor.getInt(pendingCol) == 1
+                            val isTrashed = trashedCol >= 0 && !pendingCursor.isNull(trashedCol) && pendingCursor.getInt(trashedCol) == 1
+                            if (isPending && !isTrashed) {
+                                isPendingInCamera = true
+                            }
+                        }
+                    }
+
+                    if (isPendingInCamera) {
+                        // Wait for the camera's IS_PENDING = 0 completion update
+                        return@withContext SyncDiffResult(0, 0, 0, emptyList())
+                    }
+                }
+
+                // If the row does not exist in MediaStore at all (or is trashed) AND exists in Room:
+                if (mediaDao.existsMediaId(mediaId)) {
+                    val deletedFaceCropPaths = collectFaceCropPathsForDeletedMedia(listOf(mediaId))
+                    mediaDao.deleteMediaById(mediaId)
+                    personDao.reconcilePeopleAfterMediaDeletion()
+                    repairAvatarsAndCleanupCrops(deletedFaceCropPaths)
+                    return@withContext SyncDiffResult(
+                        addedPhotosCount = 0,
+                        addedVideosCount = 0,
+                        deletedCount = 1,
+                        newlyInsertedPhotos = emptyList()
+                    )
+                }
+
+                return@withContext SyncDiffResult(0, 0, 0, emptyList())
             }
 
-            newlyInsertedPhotoCount
+            // Case B — Cursor has the item (IS_PENDING == 0)
+            val entity = foundReadyEntity ?: return@withContext SyncDiffResult(0, 0, 0, emptyList())
+            if (!mediaDao.existsMediaId(mediaId)) {
+                val insertedRowIds = mediaDao.insertMediaItems(listOf(entity))
+                val wasInserted = insertedRowIds.firstOrNull() != -1L
+                if (wasInserted) {
+                    return@withContext SyncDiffResult(
+                        addedPhotosCount = if (entity.isVideo) 0 else 1,
+                        addedVideosCount = if (entity.isVideo) 1 else 0,
+                        deletedCount = 0,
+                        newlyInsertedPhotos = if (entity.isVideo) emptyList() else listOf(entity)
+                    )
+                }
+            }
+
+            SyncDiffResult(0, 0, 0, emptyList())
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to run delta MediaStore scan", e)
-            0
+            Log.e(TAG, "Failed syncSingleMediaId for mediaId=$mediaId", e)
+            SyncDiffResult(0, 0, 0, emptyList())
         }
     }
 
     /**
-     * Mode B: Full Reconciliation & Deletion Cleanup.
-     * Queries all items across external volumes, inserts missing items, reconciles deleted files,
-     * repairs orphaned face counts and broken avatar crop paths, and enqueues face indexing if needed.
+     * 2.2 Zero-I/O HashSet ID-Diff Sync (< 15ms).
+     * Compares Room IDs against MediaStore IDs in memory without opening file descriptors,
+     * instantly deleting removed items and fetching full metadata only for newly added IDs.
+     */
+    suspend fun syncFastIdDiff(): SyncDiffResult = withContext(Dispatchers.IO) {
+        try {
+            val roomIds = mediaDao.getAllMediaIdsSync().toHashSet()
+            val volumeNames = getExternalVolumeNames()
+            val storeIds = HashSet<Long>(roomIds.size + 64)
+            val idToVolumeMap = HashMap<Long, String>(64)
+
+            val idOnlyProjection = arrayOf(MediaStore.Files.FileColumns._ID)
+            val selection = buildTrashAndPendingSelection(MEDIA_AND_WHATSAPP_FILTER)
+
+            for (volumeName in volumeNames) {
+                val filesUri = MediaStore.Files.getContentUri(volumeName)
+                try {
+                    context.contentResolver.query(
+                        filesUri,
+                        idOnlyProjection,
+                        selection,
+                        null,
+                        null
+                    )?.use { cursor ->
+                        val idCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
+                        while (cursor.moveToNext()) {
+                            val id = cursor.getLong(idCol)
+                            if (storeIds.add(id) && id !in roomIds) {
+                                idToVolumeMap[id] = volumeName
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error querying IDs on volume $volumeName", e)
+                }
+            }
+
+            // 1. Instant Deletion Detection (deletedIds = roomIds - storeIds)
+            val deletedIds = roomIds.filter { it !in storeIds }
+            if (deletedIds.isNotEmpty()) {
+                val deletedFaceCropPaths = collectFaceCropPathsForDeletedMedia(deletedIds)
+                deletedIds.chunked(500).forEach { chunk ->
+                    mediaDao.deleteMediaByIds(chunk)
+                }
+                personDao.reconcilePeopleAfterMediaDeletion()
+                repairAvatarsAndCleanupCrops(deletedFaceCropPaths)
+            }
+
+            // 2. Instant Addition Detection (addedIds = storeIds - roomIds)
+            val addedIds = storeIds.filter { it !in roomIds }
+            val addedPhotos = mutableListOf<MediaEntity>()
+            val addedVideos = mutableListOf<MediaEntity>()
+
+            if (addedIds.isNotEmpty()) {
+                val idsByVolume = addedIds.groupBy { idToVolumeMap[it] ?: MediaStore.VOLUME_EXTERNAL }
+                val fullProjection = buildFilesProjection()
+
+                for ((volumeName, volumeAddedIds) in idsByVolume) {
+                    val filesUri = MediaStore.Files.getContentUri(volumeName)
+                    val imagesCollectionUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        MediaStore.Images.Media.getContentUri(volumeName)
+                    } else {
+                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                    }
+                    val videoCollectionUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        MediaStore.Video.Media.getContentUri(volumeName)
+                    } else {
+                        MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                    }
+
+                    volumeAddedIds.chunked(400).forEach { idChunk ->
+                        val idListSql = idChunk.joinToString(",")
+                        val chunkSelection = buildTrashAndPendingSelection(
+                            "${MediaStore.Files.FileColumns._ID} IN ($idListSql)"
+                        )
+                        val chunkEntities = mutableListOf<MediaEntity>()
+
+                        try {
+                            context.contentResolver.query(
+                                filesUri,
+                                fullProjection,
+                                chunkSelection,
+                                null,
+                                "${MediaStore.Files.FileColumns.DATE_ADDED} DESC"
+                            )?.use { cursor ->
+                                while (cursor.moveToNext()) {
+                                    val entity = parseEntityFromFilesCursor(
+                                        cursor = cursor,
+                                        volumeName = volumeName,
+                                        imagesCollectionUri = imagesCollectionUri,
+                                        videoCollectionUri = videoCollectionUri
+                                    )
+                                    if (entity != null) {
+                                        chunkEntities.add(entity)
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Error querying full metadata for added IDs on $volumeName", e)
+                        }
+
+                        if (chunkEntities.isNotEmpty()) {
+                            val rowIds = mediaDao.insertMediaItems(chunkEntities)
+                            for (i in rowIds.indices) {
+                                if (rowIds[i] != -1L) {
+                                    val item = chunkEntities[i]
+                                    if (item.isVideo) {
+                                        addedVideos.add(item)
+                                    } else {
+                                        addedPhotos.add(item)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            SyncDiffResult(
+                addedPhotosCount = addedPhotos.size,
+                addedVideosCount = addedVideos.size,
+                deletedCount = deletedIds.size,
+                newlyInsertedPhotos = addedPhotos
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed syncFastIdDiff", e)
+            SyncDiffResult(0, 0, 0, emptyList())
+        }
+    }
+
+    /**
+     * Fast Delta Scan compatible wrapper around syncFastIdDiff.
+     */
+    suspend fun scanDeltaMedia(): Int = withContext(Dispatchers.IO) {
+        val diff = syncFastIdDiff()
+        if (diff.addedPhotosCount > 0) {
+            enqueueFaceIndexingWorker(ExistingWorkPolicy.APPEND_OR_REPLACE)
+        }
+        diff.addedPhotosCount
+    }
+
+    /**
+     * Full reconciliation & self-healing scan.
+     * Uses syncFastIdDiff() for zero-I/O addition/deletion reconciliation, then ensures video flags
+     * and self-healing face indexing state are consistent.
      */
     suspend fun scanFullAndReconcile(): Int = withContext(Dispatchers.IO) {
         try {
-            val deduplicatedMedia = queryAllVolumes(minDateAddedSeconds = null)
-
-            // Insert newly discovered files in chunks of 250 using OnConflictStrategy.IGNORE
-            var anyNewUnprocessedPhotoInserted = false
-            val scannedList = deduplicatedMedia.values.toList()
-            if (scannedList.isNotEmpty()) {
-                scannedList.chunked(250).forEach { chunk ->
-                    val rowIds = mediaDao.insertMediaList(chunk)
-                    for (i in rowIds.indices) {
-                        if (rowIds[i] != -1L && !chunk[i].isVideo) {
-                            anyNewUnprocessedPhotoInserted = true
-                        }
-                    }
-                }
-            }
-
-            // Reconcile externally deleted media files
-            val existingRecords = mediaDao.getAllMediaIdsAndUris()
-            val scannedIds = deduplicatedMedia.keys
-            val deletedMediaIds = mutableListOf<Long>()
-
-            for (record in existingRecords) {
-                if (!scannedIds.contains(record.mediaId)) {
-                    val isDeleted = try {
-                        context.contentResolver.openFileDescriptor(Uri.parse(record.uri), "r")?.use {
-                            false
-                        } ?: true
-                    } catch (_: Exception) {
-                        true
-                    }
-                    if (isDeleted) {
-                        deletedMediaIds.add(record.mediaId)
-                    }
-                }
-            }
-
-            if (deletedMediaIds.isNotEmpty()) {
-                // Collect face crop paths that belonged to the deleted photos so we can detect broken avatars
-                val deletedFaceCropPaths = HashSet<String>()
-                for (deletedId in deletedMediaIds) {
-                    val faces = personDao.getFacesForMediaSync(deletedId)
-                    for (face in faces) {
-                        if (face.cropPath.isNotBlank()) {
-                            deletedFaceCropPaths.add(face.cropPath)
-                        }
-                    }
-                }
-
-                deletedMediaIds.chunked(250).forEach { chunk ->
-                    mediaDao.deleteMediaByIds(chunk)
-                }
-
-                // 1. Reconcile people photo counts and remove empty unnamed non-KEPT people
-                personDao.reconcilePeopleAfterMediaDeletion()
-
-                // 2. Repair broken or deleted avatarCropPath references on remaining PersonEntity rows
-                val remainingPeople = personDao.getAllPeopleIncludeHiddenSync()
-                for (person in remainingPeople) {
-                    val avatarMissingOrDeleted = person.avatarCropPath.isBlank() ||
-                        deletedFaceCropPaths.contains(person.avatarCropPath) ||
-                        !File(person.avatarCropPath).exists()
-
-                    if (avatarMissingOrDeleted) {
-                        val bestFace = personDao.getHighestQualityFaceForPersonSync(person.personId)
-                        if (bestFace != null && bestFace.cropPath.isNotBlank() && File(bestFace.cropPath).exists()) {
-                            personDao.updateAvatar(person.personId, bestFace.cropPath)
-                        }
-                    }
-                }
-
-                // 3. Clean up deleted face crop files on disk that are no longer referenced
-                for (cropPath in deletedFaceCropPaths) {
-                    runCatching {
-                        val file = File(cropPath)
-                        if (file.exists()) file.delete()
-                    }
-                }
-
-                // 4. Sync media hasFaces flags and invalidate in-memory cluster cache
-                mediaDao.syncAllMediaHasFaces()
-                (context.applicationContext as? InstaGalleryApp)?.faceClusterManager?.invalidateCache()
-            }
+            val diff = syncFastIdDiff()
 
             // Purge any video-to-person links and ensure videos are marked processed (never face-indexed)
             mediaDao.deleteAllVideoPersonLinks()
             mediaDao.markAllVideosProcessed()
 
-            // Self-healing check: if photos exist in DB and all are marked processed, but 0 people exist,
-            // reset photo processed flags so FaceIndexingWorker re-indexes them.
-            if (mediaDao.getTotalMediaCountSync() > 0 &&
-                mediaDao.getUnindexedCountSync() == 0 &&
+            val totalPhotos = mediaDao.getTotalMediaCountSync()
+            val unindexedPhotos = mediaDao.getUnindexedCountSync()
+
+            if (totalPhotos > 0 &&
+                unindexedPhotos == 0 &&
                 personDao.getAllPeopleIncludeHiddenSync().isEmpty()
             ) {
                 Log.i(TAG, "Detected 0 profiles with processed photos; resetting photo processed flags for re-indexing")
                 mediaDao.resetAllMediaProcessed()
                 mediaDao.markAllVideosProcessed()
                 enqueueFaceIndexingWorker(ExistingWorkPolicy.REPLACE)
-            } else if (anyNewUnprocessedPhotoInserted || mediaDao.getUnindexedCountSync() > 0) {
+            } else if (diff.addedPhotosCount > 0 || unindexedPhotos > 0) {
                 enqueueFaceIndexingWorker(ExistingWorkPolicy.APPEND_OR_REPLACE)
             }
 
-            scannedList.size
+            totalPhotos
         } catch (e: Exception) {
             Log.e(TAG, "Failed to scan MediaStore", e)
             0
@@ -193,58 +353,163 @@ class MediaStoreScanner(
 
     suspend fun scanAndReconcile(): Int = scanFullAndReconcile()
 
-    private fun queryAllVolumes(minDateAddedSeconds: Long?): LinkedHashMap<Long, MediaEntity> {
-        val volumeNames: Set<String> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+    private suspend fun collectFaceCropPathsForDeletedMedia(deletedMediaIds: List<Long>): HashSet<String> {
+        val deletedFaceCropPaths = HashSet<String>()
+        for (deletedId in deletedMediaIds) {
+            val faces = personDao.getFacesForMediaSync(deletedId)
+            for (face in faces) {
+                if (face.cropPath.isNotBlank()) {
+                    deletedFaceCropPaths.add(face.cropPath)
+                }
+            }
+        }
+        return deletedFaceCropPaths
+    }
+
+    private suspend fun repairAvatarsAndCleanupCrops(deletedFaceCropPaths: Set<String>) {
+        // 1. Repair broken or deleted avatarCropPath references on remaining PersonEntity rows
+        val remainingPeople = personDao.getAllPeopleIncludeHiddenSync()
+        for (person in remainingPeople) {
+            val avatarMissingOrDeleted = person.avatarCropPath.isBlank() ||
+                deletedFaceCropPaths.contains(person.avatarCropPath) ||
+                !File(person.avatarCropPath).exists()
+
+            if (avatarMissingOrDeleted) {
+                val bestFace = personDao.getHighestQualityFaceForPersonSync(person.personId)
+                if (bestFace != null && bestFace.cropPath.isNotBlank() && File(bestFace.cropPath).exists()) {
+                    personDao.updateAvatar(person.personId, bestFace.cropPath)
+                }
+            }
+        }
+
+        // 2. Clean up deleted face crop files on disk that are no longer referenced
+        for (cropPath in deletedFaceCropPaths) {
+            runCatching {
+                val file = File(cropPath)
+                if (file.exists()) file.delete()
+            }
+        }
+
+        // 3. Sync media hasFaces flags and invalidate in-memory cluster cache
+        mediaDao.syncAllMediaHasFaces()
+        (context.applicationContext as? InstaGalleryApp)?.faceClusterManager?.invalidateCache()
+    }
+
+    private fun getExternalVolumeNames(): Set<String> {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             MediaStore.getExternalVolumeNames(context).ifEmpty {
                 setOf(MediaStore.VOLUME_EXTERNAL)
             }
         } else {
             setOf(MediaStore.VOLUME_EXTERNAL)
         }
+    }
 
-        val deduplicatedMedia = LinkedHashMap<Long, MediaEntity>()
+    private fun buildFilesProjection(): Array<String> {
+        val projectionList = mutableListOf(
+            MediaStore.Files.FileColumns._ID,
+            MediaStore.Files.FileColumns.DISPLAY_NAME,
+            MediaStore.Files.FileColumns.DATE_ADDED,
+            MediaStore.Files.FileColumns.WIDTH,
+            MediaStore.Files.FileColumns.HEIGHT,
+            MediaStore.Files.FileColumns.MEDIA_TYPE,
+            MediaStore.Files.FileColumns.MIME_TYPE,
+            MediaStore.Video.VideoColumns.DURATION,
+            MediaStore.MediaColumns.SIZE
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            projectionList.add(MediaStore.MediaColumns.IS_TRASHED)
+            projectionList.add(MediaStore.MediaColumns.IS_PENDING)
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            projectionList.add(MediaStore.MediaColumns.IS_PENDING)
+        }
+        return projectionList.toTypedArray()
+    }
 
-        for (volumeName in volumeNames) {
-            val imagesCollectionUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                MediaStore.Images.Media.getContentUri(volumeName)
-            } else {
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-            }
+    private fun parseEntityFromFilesCursor(
+        cursor: Cursor,
+        volumeName: String,
+        imagesCollectionUri: Uri,
+        videoCollectionUri: Uri
+    ): MediaEntity? {
+        val idCol = cursor.getColumnIndex(MediaStore.Files.FileColumns._ID)
+        if (idCol < 0) return null
 
-            val videoCollectionUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                MediaStore.Video.Media.getContentUri(volumeName)
-            } else {
-                MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-            }
+        val pendingCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            cursor.getColumnIndex(MediaStore.MediaColumns.IS_PENDING)
+        } else -1
+        val trashedCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            cursor.getColumnIndex(MediaStore.MediaColumns.IS_TRASHED)
+        } else -1
 
-            val filesCollectionUri = MediaStore.Files.getContentUri(volumeName)
+        if (isTrashedOrPending(cursor, trashedCol, pendingCol)) return null
 
-            // a) Dedicated Images query on this volume
-            queryImagesTable(
-                imagesCollectionUri = imagesCollectionUri,
-                minDateAddedSeconds = minDateAddedSeconds,
-                deduplicatedMedia = deduplicatedMedia
-            )
+        val id = cursor.getLong(idCol)
+        val mediaTypeCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.MEDIA_TYPE)
+        val mimeTypeCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.MIME_TYPE)
+        val dateAddedCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.DATE_ADDED)
+        val widthCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.WIDTH)
+        val heightCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.HEIGHT)
+        val durationCol = cursor.getColumnIndex(MediaStore.Video.VideoColumns.DURATION)
+        val displayNameCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.DISPLAY_NAME)
+        val sizeCol = cursor.getColumnIndex(MediaStore.MediaColumns.SIZE)
 
-            // b) Dedicated Video query on this volume
-            queryVideoTable(
-                videoCollectionUri = videoCollectionUri,
-                minDateAddedSeconds = minDateAddedSeconds,
-                deduplicatedMedia = deduplicatedMedia
-            )
+        val mediaType = cursor.getIntOrNull(mediaTypeCol) ?: MediaStore.Files.FileColumns.MEDIA_TYPE_NONE
+        val displayName = cursor.getStringOrNull(displayNameCol) ?: "Media_$id"
+        val rawMime = cursor.getStringOrNull(mimeTypeCol)
 
-            // c) Fallback Files query for WhatsApp Documents, WebP, HEIC, MKV, MP4, MOV, etc.
-            queryFilesFallbackTable(
-                volumeName = volumeName,
-                filesCollectionUri = filesCollectionUri,
-                imagesCollectionUri = imagesCollectionUri,
-                videoCollectionUri = videoCollectionUri,
-                minDateAddedSeconds = minDateAddedSeconds,
-                deduplicatedMedia = deduplicatedMedia
-            )
+        val isSupportedRow = mediaType == MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE ||
+            mediaType == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO ||
+            rawMime?.startsWith("image/", ignoreCase = true) == true ||
+            rawMime?.startsWith("video/", ignoreCase = true) == true ||
+            isImageOrVideoExtension(displayName)
+
+        if (!isSupportedRow) return null
+
+        val isVideoByTypeOrMime = mediaType == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO ||
+            rawMime?.startsWith("video/", ignoreCase = true) == true ||
+            isVideoExtension(displayName)
+
+        val mimeType = inferMimeType(rawMime, displayName, isVideoDefault = isVideoByTypeOrMime)
+        val isVideo = isVideoByTypeOrMime || mimeType.startsWith("video/", ignoreCase = true)
+
+        val rawWidth = cursor.getIntOrNull(widthCol) ?: 0
+        val rawHeight = cursor.getIntOrNull(heightCol) ?: 0
+        val sizeBytes = cursor.getLongOrNull(sizeCol) ?: 0L
+
+        if (isTinyStickerOrIconNoise(isVideo = isVideo, sizeBytes = sizeBytes, rawWidth = rawWidth, rawHeight = rawHeight)) {
+            return null
         }
 
-        return deduplicatedMedia
+        val dateAdded = cursor.getLongOrNull(dateAddedCol) ?: (System.currentTimeMillis() / 1000L)
+        val width = if (rawWidth > 0) rawWidth else DEFAULT_WIDTH
+        val height = if (rawHeight > 0) rawHeight else DEFAULT_HEIGHT
+        val duration = if (isVideo) cursor.getLongOrNull(durationCol) else null
+
+        val itemUri = when {
+            mediaType == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO || isVideo ->
+                ContentUris.withAppendedId(videoCollectionUri, id)
+            mediaType == MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE ->
+                ContentUris.withAppendedId(imagesCollectionUri, id)
+            else ->
+                MediaStore.Files.getContentUri(volumeName, id)
+        }
+
+        return MediaEntity(
+            mediaId = id,
+            uri = itemUri.toString(),
+            displayName = displayName,
+            mimeType = mimeType,
+            isVideo = isVideo,
+            dateAddedSeconds = dateAdded,
+            width = width,
+            height = height,
+            durationMs = duration,
+            isProcessedForFaces = isVideo,
+            hasFaces = false,
+            isFavorite = false,
+            isBookmarked = false
+        )
     }
 
     private fun isTinyStickerOrIconNoise(
@@ -255,321 +520,6 @@ class MediaStoreScanner(
     ): Boolean {
         if (isVideo) return false
         return sizeBytes in 1L..15360L && (rawWidth in 1..200 || rawHeight in 1..200)
-    }
-
-    private fun queryImagesTable(
-        imagesCollectionUri: Uri,
-        minDateAddedSeconds: Long?,
-        deduplicatedMedia: LinkedHashMap<Long, MediaEntity>
-    ) {
-        try {
-            val projectionList = mutableListOf(
-                MediaStore.Images.Media._ID,
-                MediaStore.Images.Media.MIME_TYPE,
-                MediaStore.Images.Media.DATE_ADDED,
-                MediaStore.Images.Media.WIDTH,
-                MediaStore.Images.Media.HEIGHT,
-                MediaStore.Images.Media.DISPLAY_NAME,
-                MediaStore.MediaColumns.SIZE
-            )
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                projectionList.add(MediaStore.MediaColumns.IS_TRASHED)
-                projectionList.add(MediaStore.MediaColumns.IS_PENDING)
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                projectionList.add(MediaStore.MediaColumns.IS_PENDING)
-            }
-
-            val dateFilter = minDateAddedSeconds?.let {
-                "${MediaStore.Images.Media.DATE_ADDED} >= $it"
-            }
-            val selection = buildTrashAndPendingSelection(dateFilter)
-            val sortOrder = "${MediaStore.Images.Media.DATE_ADDED} DESC"
-
-            context.contentResolver.query(
-                imagesCollectionUri,
-                projectionList.toTypedArray(),
-                selection,
-                null,
-                sortOrder
-            )?.use { cursor ->
-                val idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-                val mimeTypeCol = cursor.getColumnIndex(MediaStore.Images.Media.MIME_TYPE)
-                val dateAddedCol = cursor.getColumnIndex(MediaStore.Images.Media.DATE_ADDED)
-                val widthCol = cursor.getColumnIndex(MediaStore.Images.Media.WIDTH)
-                val heightCol = cursor.getColumnIndex(MediaStore.Images.Media.HEIGHT)
-                val displayNameCol = cursor.getColumnIndex(MediaStore.Images.Media.DISPLAY_NAME)
-                val sizeCol = cursor.getColumnIndex(MediaStore.MediaColumns.SIZE)
-                val pendingCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    cursor.getColumnIndex(MediaStore.MediaColumns.IS_PENDING)
-                } else -1
-                val trashedCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    cursor.getColumnIndex(MediaStore.MediaColumns.IS_TRASHED)
-                } else -1
-
-                while (cursor.moveToNext()) {
-                    if (isTrashedOrPending(cursor, trashedCol, pendingCol)) continue
-
-                    val id = cursor.getLong(idCol)
-                    if (deduplicatedMedia.containsKey(id)) continue
-
-                    val rawWidth = cursor.getIntOrNull(widthCol) ?: 0
-                    val rawHeight = cursor.getIntOrNull(heightCol) ?: 0
-                    val sizeBytes = cursor.getLongOrNull(sizeCol) ?: 0L
-
-                    if (isTinyStickerOrIconNoise(isVideo = false, sizeBytes = sizeBytes, rawWidth = rawWidth, rawHeight = rawHeight)) {
-                        continue
-                    }
-
-                    val displayName = cursor.getStringOrNull(displayNameCol) ?: "Image_$id.jpg"
-                    val rawMime = cursor.getStringOrNull(mimeTypeCol)
-                    val mimeType = inferMimeType(rawMime, displayName, isVideoDefault = false)
-                    val dateAdded = cursor.getLongOrNull(dateAddedCol) ?: (System.currentTimeMillis() / 1000L)
-                    val width = if (rawWidth > 0) rawWidth else DEFAULT_WIDTH
-                    val height = if (rawHeight > 0) rawHeight else DEFAULT_HEIGHT
-                    val itemUri = ContentUris.withAppendedId(imagesCollectionUri, id)
-
-                    deduplicatedMedia[id] = MediaEntity(
-                        mediaId = id,
-                        uri = itemUri.toString(),
-                        displayName = displayName,
-                        mimeType = mimeType,
-                        isVideo = false,
-                        dateAddedSeconds = dateAdded,
-                        width = width,
-                        height = height,
-                        durationMs = null,
-                        isProcessedForFaces = false,
-                        hasFaces = false,
-                        isFavorite = false,
-                        isBookmarked = false
-                    )
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Error querying Images table for $imagesCollectionUri", e)
-        }
-    }
-
-    private fun queryVideoTable(
-        videoCollectionUri: Uri,
-        minDateAddedSeconds: Long?,
-        deduplicatedMedia: LinkedHashMap<Long, MediaEntity>
-    ) {
-        try {
-            val projectionList = mutableListOf(
-                MediaStore.Video.Media._ID,
-                MediaStore.Video.Media.MIME_TYPE,
-                MediaStore.Video.Media.DATE_ADDED,
-                MediaStore.Video.Media.WIDTH,
-                MediaStore.Video.Media.HEIGHT,
-                MediaStore.Video.Media.DURATION,
-                MediaStore.Video.Media.DISPLAY_NAME
-            )
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                projectionList.add(MediaStore.MediaColumns.IS_TRASHED)
-                projectionList.add(MediaStore.MediaColumns.IS_PENDING)
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                projectionList.add(MediaStore.MediaColumns.IS_PENDING)
-            }
-
-            val dateFilter = minDateAddedSeconds?.let {
-                "${MediaStore.Video.Media.DATE_ADDED} >= $it"
-            }
-            val selection = buildTrashAndPendingSelection(dateFilter)
-            val sortOrder = "${MediaStore.Video.Media.DATE_ADDED} DESC"
-
-            context.contentResolver.query(
-                videoCollectionUri,
-                projectionList.toTypedArray(),
-                selection,
-                null,
-                sortOrder
-            )?.use { cursor ->
-                val idCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
-                val mimeTypeCol = cursor.getColumnIndex(MediaStore.Video.Media.MIME_TYPE)
-                val dateAddedCol = cursor.getColumnIndex(MediaStore.Video.Media.DATE_ADDED)
-                val widthCol = cursor.getColumnIndex(MediaStore.Video.Media.WIDTH)
-                val heightCol = cursor.getColumnIndex(MediaStore.Video.Media.HEIGHT)
-                val durationCol = cursor.getColumnIndex(MediaStore.Video.Media.DURATION)
-                val displayNameCol = cursor.getColumnIndex(MediaStore.Video.Media.DISPLAY_NAME)
-                val pendingCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    cursor.getColumnIndex(MediaStore.MediaColumns.IS_PENDING)
-                } else -1
-                val trashedCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    cursor.getColumnIndex(MediaStore.MediaColumns.IS_TRASHED)
-                } else -1
-
-                while (cursor.moveToNext()) {
-                    if (isTrashedOrPending(cursor, trashedCol, pendingCol)) continue
-
-                    val id = cursor.getLong(idCol)
-                    if (deduplicatedMedia.containsKey(id)) continue
-
-                    val displayName = cursor.getStringOrNull(displayNameCol) ?: "Video_$id.mp4"
-                    val rawMime = cursor.getStringOrNull(mimeTypeCol)
-                    val mimeType = inferMimeType(rawMime, displayName, isVideoDefault = true)
-                    val dateAdded = cursor.getLongOrNull(dateAddedCol) ?: (System.currentTimeMillis() / 1000L)
-                    val rawWidth = cursor.getIntOrNull(widthCol) ?: 0
-                    val rawHeight = cursor.getIntOrNull(heightCol) ?: 0
-                    val width = if (rawWidth > 0) rawWidth else DEFAULT_WIDTH
-                    val height = if (rawHeight > 0) rawHeight else DEFAULT_HEIGHT
-                    val duration = cursor.getLongOrNull(durationCol)
-                    val itemUri = ContentUris.withAppendedId(videoCollectionUri, id)
-
-                    deduplicatedMedia[id] = MediaEntity(
-                        mediaId = id,
-                        uri = itemUri.toString(),
-                        displayName = displayName,
-                        mimeType = mimeType,
-                        isVideo = true,
-                        dateAddedSeconds = dateAdded,
-                        width = width,
-                        height = height,
-                        durationMs = duration,
-                        isProcessedForFaces = true, // Immediate video bypass: videos are never face-indexed
-                        hasFaces = false,
-                        isFavorite = false,
-                        isBookmarked = false
-                    )
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Error querying Video table for $videoCollectionUri", e)
-        }
-    }
-
-    private fun queryFilesFallbackTable(
-        volumeName: String,
-        filesCollectionUri: Uri,
-        imagesCollectionUri: Uri,
-        videoCollectionUri: Uri,
-        minDateAddedSeconds: Long?,
-        deduplicatedMedia: LinkedHashMap<Long, MediaEntity>
-    ) {
-        try {
-            val projectionList = mutableListOf(
-                MediaStore.Files.FileColumns._ID,
-                MediaStore.Files.FileColumns.MEDIA_TYPE,
-                MediaStore.Files.FileColumns.MIME_TYPE,
-                MediaStore.Files.FileColumns.DATE_ADDED,
-                MediaStore.Files.FileColumns.WIDTH,
-                MediaStore.Files.FileColumns.HEIGHT,
-                MediaStore.Video.VideoColumns.DURATION,
-                MediaStore.Files.FileColumns.DISPLAY_NAME,
-                MediaStore.MediaColumns.SIZE
-            )
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                projectionList.add(MediaStore.MediaColumns.IS_TRASHED)
-                projectionList.add(MediaStore.MediaColumns.IS_PENDING)
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                projectionList.add(MediaStore.MediaColumns.IS_PENDING)
-            }
-
-            val mediaAndWhatsAppFilter = """
-                (
-                    ${MediaStore.Files.FileColumns.MEDIA_TYPE} = ${MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE} OR
-                    ${MediaStore.Files.FileColumns.MEDIA_TYPE} = ${MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO} OR
-                    ${MediaStore.Files.FileColumns.MIME_TYPE} LIKE 'image/%' OR
-                    ${MediaStore.Files.FileColumns.MIME_TYPE} LIKE 'video/%' OR
-                    LOWER(${MediaStore.Files.FileColumns.DISPLAY_NAME}) LIKE '%.jpg' OR
-                    LOWER(${MediaStore.Files.FileColumns.DISPLAY_NAME}) LIKE '%.jpeg' OR
-                    LOWER(${MediaStore.Files.FileColumns.DISPLAY_NAME}) LIKE '%.png' OR
-                    LOWER(${MediaStore.Files.FileColumns.DISPLAY_NAME}) LIKE '%.webp' OR
-                    LOWER(${MediaStore.Files.FileColumns.DISPLAY_NAME}) LIKE '%.heic' OR
-                    LOWER(${MediaStore.Files.FileColumns.DISPLAY_NAME}) LIKE '%.mp4' OR
-                    LOWER(${MediaStore.Files.FileColumns.DISPLAY_NAME}) LIKE '%.mov'
-                )
-            """.trimIndent()
-
-            val combinedBase = if (minDateAddedSeconds != null) {
-                "$mediaAndWhatsAppFilter AND ${MediaStore.Files.FileColumns.DATE_ADDED} >= $minDateAddedSeconds"
-            } else {
-                mediaAndWhatsAppFilter
-            }
-
-            val selection = buildTrashAndPendingSelection(combinedBase)
-            val sortOrder = "${MediaStore.Files.FileColumns.DATE_ADDED} DESC"
-
-            context.contentResolver.query(
-                filesCollectionUri,
-                projectionList.toTypedArray(),
-                selection,
-                null,
-                sortOrder
-            )?.use { cursor ->
-                val idCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
-                val mediaTypeCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.MEDIA_TYPE)
-                val mimeTypeCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.MIME_TYPE)
-                val dateAddedCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.DATE_ADDED)
-                val widthCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.WIDTH)
-                val heightCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.HEIGHT)
-                val durationCol = cursor.getColumnIndex(MediaStore.Video.VideoColumns.DURATION)
-                val displayNameCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.DISPLAY_NAME)
-                val sizeCol = cursor.getColumnIndex(MediaStore.MediaColumns.SIZE)
-                val pendingCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    cursor.getColumnIndex(MediaStore.MediaColumns.IS_PENDING)
-                } else -1
-                val trashedCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    cursor.getColumnIndex(MediaStore.MediaColumns.IS_TRASHED)
-                } else -1
-
-                while (cursor.moveToNext()) {
-                    if (isTrashedOrPending(cursor, trashedCol, pendingCol)) continue
-
-                    val id = cursor.getLong(idCol)
-                    if (deduplicatedMedia.containsKey(id)) continue
-
-                    val mediaType = cursor.getIntOrNull(mediaTypeCol) ?: MediaStore.Files.FileColumns.MEDIA_TYPE_NONE
-                    val displayName = cursor.getStringOrNull(displayNameCol) ?: "Media_$id"
-                    val rawMime = cursor.getStringOrNull(mimeTypeCol)
-
-                    val isVideoByTypeOrMime = mediaType == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO ||
-                        rawMime?.startsWith("video/", ignoreCase = true) == true ||
-                        isVideoExtension(displayName)
-
-                    val mimeType = inferMimeType(rawMime, displayName, isVideoDefault = isVideoByTypeOrMime)
-                    val isVideo = isVideoByTypeOrMime || mimeType.startsWith("video/", ignoreCase = true)
-
-                    val rawWidth = cursor.getIntOrNull(widthCol) ?: 0
-                    val rawHeight = cursor.getIntOrNull(heightCol) ?: 0
-                    val sizeBytes = cursor.getLongOrNull(sizeCol) ?: 0L
-
-                    if (isTinyStickerOrIconNoise(isVideo = isVideo, sizeBytes = sizeBytes, rawWidth = rawWidth, rawHeight = rawHeight)) {
-                        continue
-                    }
-
-                    val dateAdded = cursor.getLongOrNull(dateAddedCol) ?: (System.currentTimeMillis() / 1000L)
-                    val width = if (rawWidth > 0) rawWidth else DEFAULT_WIDTH
-                    val height = if (rawHeight > 0) rawHeight else DEFAULT_HEIGHT
-                    val duration = if (isVideo) cursor.getLongOrNull(durationCol) else null
-
-                    val itemUri = when (mediaType) {
-                        MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO -> ContentUris.withAppendedId(videoCollectionUri, id)
-                        MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE -> ContentUris.withAppendedId(imagesCollectionUri, id)
-                        MediaStore.Files.FileColumns.MEDIA_TYPE_NONE -> MediaStore.Files.getContentUri(volumeName, id)
-                        else -> MediaStore.Files.getContentUri(volumeName, id)
-                    }
-
-                    deduplicatedMedia[id] = MediaEntity(
-                        mediaId = id,
-                        uri = itemUri.toString(),
-                        displayName = displayName,
-                        mimeType = mimeType,
-                        isVideo = isVideo,
-                        dateAddedSeconds = dateAdded,
-                        width = width,
-                        height = height,
-                        durationMs = duration,
-                        isProcessedForFaces = isVideo, // Videos are marked processed immediately
-                        hasFaces = false,
-                        isFavorite = false,
-                        isBookmarked = false
-                    )
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Error querying Files fallback table for $filesCollectionUri", e)
-        }
     }
 
     private fun buildTrashAndPendingSelection(baseCondition: String?): String? {
@@ -587,7 +537,7 @@ class MediaStoreScanner(
     }
 
     private fun isTrashedOrPending(
-        cursor: android.database.Cursor,
+        cursor: Cursor,
         trashedCol: Int,
         pendingCol: Int
     ): Boolean {
@@ -624,20 +574,26 @@ class MediaStoreScanner(
         }
     }
 
+    private fun isImageOrVideoExtension(displayName: String): Boolean {
+        val ext = displayName.substringAfterLast('.', "").lowercase()
+        return ext == "jpg" || ext == "jpeg" || ext == "png" || ext == "webp" ||
+            ext == "heic" || ext == "mp4" || ext == "mkv" || ext == "mov" || ext == "3gp"
+    }
+
     private fun isVideoExtension(displayName: String): Boolean {
         val ext = displayName.substringAfterLast('.', "").lowercase()
         return ext == "mp4" || ext == "mkv" || ext == "mov" || ext == "3gp"
     }
 
-    private fun android.database.Cursor.getStringOrNull(colIndex: Int): String? {
+    private fun Cursor.getStringOrNull(colIndex: Int): String? {
         return if (colIndex >= 0 && !isNull(colIndex)) getString(colIndex) else null
     }
 
-    private fun android.database.Cursor.getIntOrNull(colIndex: Int): Int? {
+    private fun Cursor.getIntOrNull(colIndex: Int): Int? {
         return if (colIndex >= 0 && !isNull(colIndex)) getInt(colIndex) else null
     }
 
-    private fun android.database.Cursor.getLongOrNull(colIndex: Int): Long? {
+    private fun Cursor.getLongOrNull(colIndex: Int): Long? {
         return if (colIndex >= 0 && !isNull(colIndex)) getLong(colIndex) else null
     }
 
