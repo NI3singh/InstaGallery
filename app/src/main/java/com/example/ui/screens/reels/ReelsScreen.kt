@@ -11,6 +11,10 @@ import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -21,6 +25,7 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -41,6 +46,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.pager.PagerDefaults
+import androidx.compose.foundation.pager.PagerSnapDistance
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
@@ -68,15 +75,19 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -167,19 +178,24 @@ fun ReelsScreen(
     var avoidLeadMediaId by rememberSaveable { mutableLongStateOf(-1L) }
     var isRefreshing by remember { mutableStateOf(false) }
 
-    val shuffledVideos = remember(videos, refreshSeed, avoidLeadMediaId) {
-        if (videos.size <= 1) {
-            videos
+    val videoIdsKey = remember(videos.size, uiState.onlyFavorites) {
+        videos.map { it.media.mediaId }.sorted()
+    }
+    val shuffledOrderIds = remember(videoIdsKey, refreshSeed, avoidLeadMediaId) {
+        if (videoIdsKey.size <= 1) {
+            videoIdsKey
         } else {
-            val shuffled = videos
-                .sortedBy { it.media.mediaId }
-                .shuffled(java.util.Random(refreshSeed))
-            if (avoidLeadMediaId != -1L && shuffled.first().media.mediaId == avoidLeadMediaId) {
+            val shuffled = videoIdsKey.shuffled(java.util.Random(refreshSeed))
+            if (avoidLeadMediaId != -1L && shuffled.first() == avoidLeadMediaId) {
                 shuffled.drop(1) + shuffled.first()
             } else {
                 shuffled
             }
         }
+    }
+    val videoMap = remember(videos) { videos.associateBy { it.media.mediaId } }
+    val shuffledVideos = remember(shuffledOrderIds, videoMap) {
+        shuffledOrderIds.mapNotNull { videoMap[it] }
     }
 
     if (shuffledVideos.isEmpty()) {
@@ -482,6 +498,15 @@ fun ReelsScreen(
         }
     }
 
+    val flingBehavior = PagerDefaults.flingBehavior(
+        state = pagerState,
+        pagerSnapDistance = PagerSnapDistance.atMost(1),
+        snapAnimationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMedium
+        )
+    )
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -491,16 +516,22 @@ fun ReelsScreen(
         InstaPullToRefreshBox(
             isRefreshing = isRefreshing,
             enabled = pagerState.currentPage == 0,
+            canStartPull = {
+                pagerState.currentPage == 0 && pagerState.currentPageOffsetFraction == 0f
+            },
             onRefresh = triggerReelsRefresh,
             modifier = Modifier.fillMaxSize()
         ) {
             VerticalPager(
                 state = pagerState,
+                key = { page -> shuffledVideos[page].media.mediaId },
+                flingBehavior = flingBehavior,
                 beyondViewportPageCount = 1,
                 modifier = Modifier.fillMaxSize()
             ) { page ->
                 val video = shuffledVideos[page]
                 val media = video.media
+                val currentMedia by rememberUpdatedState(media)
                 val isSettledPage = (page == settledPage)
                 val isFirstFrameReady = isSettledPage && (renderedFirstFrameMediaId == media.mediaId)
 
@@ -514,8 +545,9 @@ fun ReelsScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
+                        .clipToBounds()
                         .background(IgBlack)
-                        .pointerInput(media.mediaId, media.isFavorite) {
+                        .pointerInput(media.mediaId) {
                             detectTapGestures(
                                 onDoubleTap = { tapOffset ->
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -527,9 +559,10 @@ fun ReelsScreen(
                                             rotationDeg = randomTilt
                                         )
                                     )
-                                    if (!media.isFavorite) {
+                                    val latestMedia = currentMedia
+                                    if (!latestMedia.isFavorite) {
                                         coroutineScope.launch {
-                                            galleryRepository.toggleFavorite(media)
+                                            galleryRepository.toggleFavorite(latestMedia)
                                         }
                                     }
                                 },
@@ -1164,6 +1197,99 @@ private fun ReelActionButton(
     }
 }
 
+@kotlin.OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun AnimatedReelHeartButton(
+    isFavorite: Boolean,
+    activeColor: Color,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val haptic = LocalHapticFeedback.current
+    val scale = remember { Animatable(1f) }
+    val ringProgress = remember { Animatable(0f) }
+    var prevFavorite by remember { mutableStateOf(isFavorite) }
+
+    LaunchedEffect(isFavorite) {
+        if (isFavorite != prevFavorite) {
+            prevFavorite = isFavorite
+            if (isFavorite) {
+                launch {
+                    ringProgress.snapTo(0f)
+                    ringProgress.animateTo(
+                        targetValue = 1f,
+                        animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing)
+                    )
+                }
+                scale.animateTo(0.72f, tween(65, easing = LinearEasing))
+                scale.animateTo(
+                    targetValue = 1.32f,
+                    animationSpec = spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessMedium)
+                )
+                scale.animateTo(
+                    targetValue = 1f,
+                    animationSpec = spring(dampingRatio = 0.65f, stiffness = Spring.StiffnessMediumLow)
+                )
+            } else {
+                scale.animateTo(0.82f, tween(80))
+                scale.animateTo(
+                    targetValue = 1f,
+                    animationSpec = spring(dampingRatio = 0.65f, stiffness = Spring.StiffnessMedium)
+                )
+            }
+        }
+    }
+
+    val tintColor by animateColorAsState(
+        targetValue = if (isFavorite) activeColor else Color.White,
+        animationSpec = tween(durationMillis = 200),
+        label = "reelHeartTint"
+    )
+
+    Box(
+        modifier = modifier
+            .size(42.dp)
+            .combinedClickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onClick()
+                },
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onLongClick()
+                }
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        // Subtle expanding pulse ring on like
+        if (ringProgress.value in 0.01f..0.99f) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val p = ringProgress.value
+                drawCircle(
+                    color = activeColor.copy(alpha = (1f - p) * 0.55f),
+                    radius = (size.minDimension * 0.28f) + (size.minDimension * 0.35f * p),
+                    style = Stroke(width = 2.dp.toPx() * (1f - p * 0.5f))
+                )
+            }
+        }
+
+        Icon(
+            imageVector = if (isFavorite) FilledExtendedIcons.Favorite else OutlinedExtendedIcons.FavoriteBorder,
+            contentDescription = "Like",
+            tint = tintColor,
+            modifier = Modifier
+                .size(28.dp)
+                .graphicsLayer {
+                    scaleX = scale.value
+                    scaleY = scale.value
+                }
+        )
+    }
+}
+
 @Composable
 fun ReelsActionRail(
     media: MediaEntity,
@@ -1183,12 +1309,10 @@ fun ReelsActionRail(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(22.dp)
     ) {
-        // 1. Heart (Like) Button
-        ReelActionButton(
-            icon = if (media.isFavorite) FilledExtendedIcons.Favorite else OutlinedExtendedIcons.FavoriteBorder,
-            label = if (media.isFavorite) "Liked" else null,
-            tint = if (media.isFavorite) heartColor else Color.White,
-            iconSize = 28.dp,
+        // 1. Heart (Like) Button — Elastic Spring Pop & Pulse Ring, Zero Text Label
+        AnimatedReelHeartButton(
+            isFavorite = media.isFavorite,
+            activeColor = heartColor,
             onClick = onToggleFavorite,
             onLongClick = onLongPressFavorite,
             modifier = Modifier.testTag("reel_like_button_${media.mediaId}")

@@ -22,6 +22,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -80,6 +81,7 @@ fun InstaPullToRefreshBox(
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    canStartPull: () -> Boolean = { true },
     content: @Composable BoxScope.() -> Unit
 ) {
     val density = LocalDensity.current
@@ -89,18 +91,22 @@ fun InstaPullToRefreshBox(
 
     var pullDistancePx by remember { mutableFloatStateOf(0f) }
 
+    val currentEnabled by rememberUpdatedState(enabled)
+    val currentCanStartPull by rememberUpdatedState(canStartPull)
+    val currentIsRefreshing by rememberUpdatedState(isRefreshing)
+    val currentOnRefresh by rememberUpdatedState(onRefresh)
+
     LaunchedEffect(isRefreshing) {
         if (!isRefreshing) {
             pullDistancePx = 0f
         }
     }
 
-    val nestedScrollConnection = remember(enabled, isRefreshing, thresholdPx) {
+    val nestedScrollConnection = remember(thresholdPx) {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                if (!enabled) return Offset.Zero
-                if (available.y < 0f && pullDistancePx > 0f) {
-                    val consumedY = available.y.coerceAtLeast(-pullDistancePx)
+                if (pullDistancePx > 0f && available.y < 0f) {
+                    val consumedY = maxOf(available.y, -pullDistancePx)
                     pullDistancePx = (pullDistancePx + consumedY).coerceAtLeast(0f)
                     return Offset(0f, consumedY)
                 }
@@ -112,22 +118,24 @@ fun InstaPullToRefreshBox(
                 available: Offset,
                 source: NestedScrollSource
             ): Offset {
-                if (!enabled || isRefreshing) return Offset.Zero
-                if (available.y > 0f && source == NestedScrollSource.Drag) {
-                    pullDistancePx = (pullDistancePx + available.y * 0.48f)
-                        .coerceAtMost(thresholdPx * 1.45f)
+                if (currentIsRefreshing || !currentEnabled || !currentCanStartPull()) return Offset.Zero
+                // Only start pulling down when the child did not consume any vertical scroll
+                // and the finger is dragging strictly downward (available.y > 0f)
+                if (source == NestedScrollSource.Drag && available.y > 0f && consumed.y == 0f) {
+                    pullDistancePx = (pullDistancePx + available.y * 0.45f).coerceAtMost(thresholdPx * 1.4f)
                     return Offset(0f, available.y)
                 }
                 return Offset.Zero
             }
 
             override suspend fun onPreFling(available: Velocity): Velocity {
-                if (!enabled) return Velocity.Zero
-                if (pullDistancePx >= thresholdPx && !isRefreshing) {
+                if (pullDistancePx > 0f) {
+                    val triggered = pullDistancePx >= thresholdPx && !currentIsRefreshing
                     pullDistancePx = 0f
-                    onRefresh()
-                } else {
-                    pullDistancePx = 0f
+                    if (triggered) {
+                        currentOnRefresh()
+                    }
+                    // Do NOT consume upward fling velocity so VerticalPager always snaps cleanly!
                 }
                 return Velocity.Zero
             }
@@ -155,9 +163,7 @@ fun InstaPullToRefreshBox(
     )
 
     Box(
-        modifier = modifier.then(
-            if (enabled) Modifier.nestedScroll(nestedScrollConnection) else Modifier
-        )
+        modifier = modifier.nestedScroll(nestedScrollConnection)
     ) {
         content()
 
