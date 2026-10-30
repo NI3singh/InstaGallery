@@ -68,6 +68,8 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -106,8 +108,12 @@ import coil.compose.AsyncImage
 import com.example.data.local.HeartTheme
 import com.example.data.local.OnboardingPreferences
 import com.example.data.local.entity.MediaWithAuthors
+import com.example.data.repository.GalleryRepository
 import com.example.ui.components.HeartBurstInstance
 import com.example.ui.components.HeartThemePickerSheet
+import com.example.ui.components.InstaPullToRefreshBox
+import com.example.ui.components.RefreshableTab
+import com.example.ui.components.TabRefreshManager
 import com.example.ui.components.TapHeartBurstOverlay
 import com.example.ui.theme.IgBlack
 import com.example.ui.theme.IgBlue
@@ -118,6 +124,7 @@ import com.example.ui.theme.IgTextPrimary
 import com.example.ui.theme.IgTextSecondary
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -133,6 +140,9 @@ fun ReelsScreen(
 ) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
+    val repository = remember(context) { GalleryRepository(context) }
+
     LaunchedEffect(context) {
         OnboardingPreferences.init(context)
     }
@@ -143,66 +153,112 @@ fun ReelsScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     val videos = uiState.videos
+    var refreshSeed by rememberSaveable { mutableLongStateOf(System.currentTimeMillis()) }
+    var avoidLeadMediaId by rememberSaveable { mutableLongStateOf(-1L) }
+    var isRefreshing by remember { mutableStateOf(false) }
 
-    if (videos.isEmpty()) {
-        Box(
+    val shuffledVideos = remember(videos, refreshSeed, avoidLeadMediaId) {
+        if (videos.size <= 1) {
+            videos
+        } else {
+            val shuffled = videos
+                .sortedBy { it.media.mediaId }
+                .shuffled(java.util.Random(refreshSeed))
+            if (avoidLeadMediaId != -1L && shuffled.first().media.mediaId == avoidLeadMediaId) {
+                shuffled.drop(1) + shuffled.first()
+            } else {
+                shuffled
+            }
+        }
+    }
+
+    if (shuffledVideos.isEmpty()) {
+        LaunchedEffect(Unit) {
+            TabRefreshManager.refreshEvents.collect { tab ->
+                if (tab == RefreshableTab.REELS && !isRefreshing) {
+                    isRefreshing = true
+                    runCatching { repository.performQuickRefreshSync() }
+                    refreshSeed = System.nanoTime()
+                    delay(250)
+                    isRefreshing = false
+                }
+            }
+        }
+        InstaPullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = {
+                if (!isRefreshing) {
+                    scope.launch {
+                        isRefreshing = true
+                        runCatching { repository.performQuickRefreshSync() }
+                        refreshSeed = System.nanoTime()
+                        delay(250)
+                        isRefreshing = false
+                    }
+                }
+            },
             modifier = modifier
                 .fillMaxSize()
                 .background(IgBlack)
-                .padding(24.dp),
-            contentAlignment = Alignment.Center
         ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(72.dp)
-                        .clip(CircleShape)
-                        .background(IgSurfacePill),
-                    contentAlignment = Alignment.Center
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
                 ) {
-                    Icon(
-                        imageVector = if (uiState.onlyFavorites) Icons.Outlined.FavoriteBorder else Icons.Outlined.Movie,
-                        contentDescription = "No reels",
-                        tint = IgTextSecondary,
-                        modifier = Modifier.size(36.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = if (uiState.onlyFavorites) "No Favorite Reels Yet" else "No Videos Found",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = IgTextPrimary
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = if (uiState.onlyFavorites) {
-                        "Double-tap any Reel or tap the heart icon to save your favorite videos."
-                    } else {
-                        "Videos in your device storage will appear here as auto-looping Reels."
-                    },
-                    fontSize = 13.sp,
-                    color = IgTextSecondary,
-                    textAlign = TextAlign.Center
-                )
-                if (uiState.onlyFavorites) {
-                    Spacer(modifier = Modifier.height(16.dp))
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(IgBlue)
-                            .clickable { viewModel.toggleFavoritesFilter() }
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                            .size(72.dp)
+                            .clip(CircleShape)
+                            .background(IgSurfacePill),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = "Show All Reels",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.White
+                        Icon(
+                            imageVector = if (uiState.onlyFavorites) Icons.Outlined.FavoriteBorder else Icons.Outlined.Movie,
+                            contentDescription = "No reels",
+                            tint = IgTextSecondary,
+                            modifier = Modifier.size(36.dp)
                         )
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = if (uiState.onlyFavorites) "No Favorite Reels Yet" else "No Videos Found",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = IgTextPrimary
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = if (uiState.onlyFavorites) {
+                            "Double-tap any Reel or tap the heart icon to save your favorite videos."
+                        } else {
+                            "Videos in your device storage will appear here as auto-looping Reels."
+                        },
+                        fontSize = 13.sp,
+                        color = IgTextSecondary,
+                        textAlign = TextAlign.Center
+                    )
+                    if (uiState.onlyFavorites) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .background(IgBlue)
+                                .clickable { viewModel.toggleFavoritesFilter() }
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                        ) {
+                            Text(
+                                text = "Show All Reels",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White
+                            )
+                        }
                     }
                 }
             }
@@ -210,9 +266,9 @@ fun ReelsScreen(
         return
     }
 
-    val pagerState = rememberPagerState(pageCount = { videos.size })
-    val settledPage = pagerState.settledPage.coerceIn(0, (videos.size - 1).coerceAtLeast(0))
-    val settledVideo = videos.getOrNull(settledPage)
+    val pagerState = rememberPagerState(pageCount = { shuffledVideos.size })
+    val settledPage = pagerState.settledPage.coerceIn(0, (shuffledVideos.size - 1).coerceAtLeast(0))
+    val settledVideo = shuffledVideos.getOrNull(settledPage)
     val settledMediaId = settledVideo?.media?.mediaId ?: -1L
     val settledMediaUri = settledVideo?.media?.uri ?: ""
 
@@ -364,208 +420,246 @@ fun ReelsScreen(
 
     val contentScaleMode = if (uiState.isFitMode) ContentScale.Fit else ContentScale.Crop
 
+    val triggerReelsRefresh: () -> Unit = {
+        if (!isRefreshing) {
+            scope.launch {
+                isRefreshing = true
+                val previousLeadId = settledMediaId
+                runCatching { repository.performQuickRefreshSync() }
+                avoidLeadMediaId = previousLeadId
+                refreshSeed = System.nanoTime()
+                if (shuffledVideos.isNotEmpty()) {
+                    runCatching { pagerState.scrollToPage(0) }
+                }
+                if (shuffledVideos.size == 1 && settledMediaUri.isNotBlank()) {
+                    isPausedByTap = false
+                    exoPlayer.seekTo(0L)
+                    exoPlayer.playWhenReady = true
+                    exoPlayer.play()
+                }
+                delay(250)
+                isRefreshing = false
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        TabRefreshManager.refreshEvents.collect { tab ->
+            if (tab == RefreshableTab.REELS) {
+                triggerReelsRefresh()
+            }
+        }
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(IgBlack)
             .testTag("reels_screen")
     ) {
-        VerticalPager(
-            state = pagerState,
-            beyondViewportPageCount = 1,
+        InstaPullToRefreshBox(
+            isRefreshing = isRefreshing,
+            enabled = pagerState.currentPage == 0,
+            onRefresh = triggerReelsRefresh,
             modifier = Modifier.fillMaxSize()
-        ) { page ->
-            val video = videos[page]
-            val isSettledPage = (page == settledPage)
-            val isFirstFrameReady = isSettledPage && (renderedFirstFrameMediaId == video.media.mediaId)
+        ) {
+            VerticalPager(
+                state = pagerState,
+                beyondViewportPageCount = 1,
+                modifier = Modifier.fillMaxSize()
+            ) { page ->
+                val video = shuffledVideos[page]
+                val isSettledPage = (page == settledPage)
+                val isFirstFrameReady = isSettledPage && (renderedFirstFrameMediaId == video.media.mediaId)
 
-            // Smooth crossfade of thumbnail shield ONLY after ExoPlayer has rendered the first frame
-            val thumbnailAlpha by animateFloatAsState(
-                targetValue = if (isFirstFrameReady) 0f else 1f,
-                animationSpec = tween(durationMillis = 160),
-                label = "thumbnail_shield_alpha"
-            )
+                // Smooth crossfade of thumbnail shield ONLY after ExoPlayer has rendered the first frame
+                val thumbnailAlpha by animateFloatAsState(
+                    targetValue = if (isFirstFrameReady) 0f else 1f,
+                    animationSpec = tween(durationMillis = 160),
+                    label = "thumbnail_shield_alpha"
+                )
 
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(IgBlack)
-                    .pointerInput(video.media.mediaId, video.media.isFavorite) {
-                        detectTapGestures(
-                            onDoubleTap = { tapOffset ->
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                val randomTilt = Random.nextInt(-15, 16).toFloat()
-                                activeBursts.add(
-                                    HeartBurstInstance(
-                                        id = System.nanoTime(),
-                                        tapOffset = tapOffset,
-                                        rotationDeg = randomTilt
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(IgBlack)
+                        .pointerInput(video.media.mediaId, video.media.isFavorite) {
+                            detectTapGestures(
+                                onDoubleTap = { tapOffset ->
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    val randomTilt = Random.nextInt(-15, 16).toFloat()
+                                    activeBursts.add(
+                                        HeartBurstInstance(
+                                            id = System.nanoTime(),
+                                            tapOffset = tapOffset,
+                                            rotationDeg = randomTilt
+                                        )
                                     )
-                                )
-                                if (!video.media.isFavorite) {
-                                    viewModel.toggleFavorite(video.media.mediaId, false)
-                                }
-                            },
-                            onLongPress = {
-                                isFastForward2x = true
-                                exoPlayer.setPlaybackParameters(PlaybackParameters(2.0f))
-                            },
-                            onPress = {
-                                tryAwaitRelease()
-                                if (isFastForward2x) {
-                                    isFastForward2x = false
-                                    exoPlayer.setPlaybackParameters(PlaybackParameters.DEFAULT)
-                                }
-                            },
-                            onTap = {
-                                if (!isPausedByTap && (exoPlayer.isPlaying || exoPlayer.playWhenReady)) {
-                                    isPausedByTap = true
-                                    exoPlayer.playWhenReady = false
-                                    exoPlayer.pause()
-                                } else {
-                                    isPausedByTap = false
-                                    if (exoPlayer.playbackState == Player.STATE_IDLE && settledMediaUri.isNotBlank()) {
-                                        exoPlayer.setMediaItem(MediaItem.fromUri(settledMediaUri))
-                                        exoPlayer.prepare()
-                                    } else if (exoPlayer.playbackState == Player.STATE_ENDED) {
-                                        exoPlayer.seekTo(0L)
+                                    if (!video.media.isFavorite) {
+                                        viewModel.toggleFavorite(video.media.mediaId, false)
                                     }
-                                    exoPlayer.playWhenReady = true
-                                    exoPlayer.play()
+                                },
+                                onLongPress = {
+                                    isFastForward2x = true
+                                    exoPlayer.setPlaybackParameters(PlaybackParameters(2.0f))
+                                },
+                                onPress = {
+                                    tryAwaitRelease()
+                                    if (isFastForward2x) {
+                                        isFastForward2x = false
+                                        exoPlayer.setPlaybackParameters(PlaybackParameters.DEFAULT)
+                                    }
+                                },
+                                onTap = {
+                                    if (!isPausedByTap && (exoPlayer.isPlaying || exoPlayer.playWhenReady)) {
+                                        isPausedByTap = true
+                                        exoPlayer.playWhenReady = false
+                                        exoPlayer.pause()
+                                    } else {
+                                        isPausedByTap = false
+                                        if (exoPlayer.playbackState == Player.STATE_IDLE && settledMediaUri.isNotBlank()) {
+                                            exoPlayer.setMediaItem(MediaItem.fromUri(settledMediaUri))
+                                            exoPlayer.prepare()
+                                        } else if (exoPlayer.playbackState == Player.STATE_ENDED) {
+                                            exoPlayer.seekTo(0L)
+                                        }
+                                        exoPlayer.playWhenReady = true
+                                        exoPlayer.play()
+                                    }
                                 }
-                            }
+                            )
+                        }
+                ) {
+                    // Zero-Flicker TextureView Renderer (bound when settled on this page)
+                    if (isSettledPage) {
+                        ZeroFlickerTextureVideoPlayer(
+                            exoPlayer = exoPlayer,
+                            videoWidth = activeVideoWidth.takeIf { it > 0 } ?: video.media.width,
+                            videoHeight = activeVideoHeight.takeIf { it > 0 } ?: video.media.height,
+                            isFitMode = uiState.isFitMode,
+                            modifier = Modifier.fillMaxSize()
                         )
                     }
-            ) {
-                // Zero-Flicker TextureView Renderer (bound when settled on this page)
-                if (isSettledPage) {
-                    ZeroFlickerTextureVideoPlayer(
-                        exoPlayer = exoPlayer,
-                        videoWidth = activeVideoWidth.takeIf { it > 0 } ?: video.media.width,
-                        videoHeight = activeVideoHeight.takeIf { it > 0 } ?: video.media.height,
-                        isFitMode = uiState.isFitMode,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
 
-                // Thumbnail Shield: stays visible until ExoPlayer renders first frame -> 0% flicker!
-                if (thumbnailAlpha > 0.01f) {
-                    AsyncImage(
-                        model = video.media.uri,
-                        contentDescription = video.media.displayName,
-                        contentScale = contentScaleMode,
+                    // Thumbnail Shield: stays visible until ExoPlayer renders first frame -> 0% flicker!
+                    if (thumbnailAlpha > 0.01f) {
+                        AsyncImage(
+                            model = video.media.uri,
+                            contentDescription = video.media.displayName,
+                            contentScale = contentScaleMode,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .alpha(thumbnailAlpha)
+                                .background(IgBlack)
+                        )
+                    }
+
+                    // Paused Indicator Overlay
+                    AnimatedVisibility(
+                        visible = isSettledPage && isPausedByTap,
+                        enter = fadeIn() + scaleIn(initialScale = 0.8f),
+                        exit = fadeOut() + scaleOut(targetScale = 0.8f),
+                        modifier = Modifier.align(Alignment.Center)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(68.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.55f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = "Paused",
+                                tint = Color.White,
+                                modifier = Modifier.size(40.dp)
+                            )
+                        }
+                    }
+
+                    // 2x Speed Indicator Pill (when long-pressing)
+                    AnimatedVisibility(
+                        visible = isSettledPage && isFastForward2x,
+                        enter = fadeIn() + scaleIn(initialScale = 0.9f),
+                        exit = fadeOut(),
                         modifier = Modifier
-                            .fillMaxSize()
-                            .alpha(thumbnailAlpha)
-                            .background(IgBlack)
-                    )
-                }
+                            .align(Alignment.TopCenter)
+                            .padding(top = 72.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .background(Color.Black.copy(alpha = 0.72f))
+                                .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(50))
+                                .padding(horizontal = 14.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = "2x Speed ⏩",
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                    }
 
-                // Paused Indicator Overlay
-                AnimatedVisibility(
-                    visible = isSettledPage && isPausedByTap,
-                    enter = fadeIn() + scaleIn(initialScale = 0.8f),
-                    exit = fadeOut() + scaleOut(targetScale = 0.8f),
-                    modifier = Modifier.align(Alignment.Center)
-                ) {
+                    // Double-Tap Heart Burst Overlay (Exact Tap-Coordinate Canvas Physics, Zero Bounding Box)
+                    if (isSettledPage) {
+                        TapHeartBurstOverlay(
+                            bursts = activeBursts,
+                            heartTheme = heartTheme,
+                            onBurstFinished = { burstId -> activeBursts.removeAll { it.id == burstId } },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+
+                    // Top scrim gradient
                     Box(
                         modifier = Modifier
-                            .size(68.dp)
-                            .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.55f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = "Paused",
-                            tint = Color.White,
-                            modifier = Modifier.size(40.dp)
-                        )
-                    }
-                }
+                            .fillMaxWidth()
+                            .height(108.dp)
+                            .align(Alignment.TopCenter)
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(Color.Black.copy(alpha = 0.72f), Color.Transparent)
+                                )
+                            )
+                    )
 
-                // 2x Speed Indicator Pill (when long-pressing)
-                AnimatedVisibility(
-                    visible = isSettledPage && isFastForward2x,
-                    enter = fadeIn() + scaleIn(initialScale = 0.9f),
-                    exit = fadeOut(),
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = 72.dp)
-                ) {
+                    // Bottom scrim gradient
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(Color.Black.copy(alpha = 0.72f))
-                            .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(50))
-                            .padding(horizontal = 14.dp, vertical = 6.dp)
-                    ) {
-                        Text(
-                            text = "2x Speed ⏩",
-                            fontSize = 12.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                    }
-                }
+                            .fillMaxWidth()
+                            .height(240.dp)
+                            .align(Alignment.BottomCenter)
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(Color.Transparent, Color.Black.copy(alpha = 0.88f))
+                                )
+                            )
+                    )
 
-                // Double-Tap Heart Burst Overlay (Exact Tap-Coordinate Canvas Physics, Zero Bounding Box)
-                if (isSettledPage) {
-                    TapHeartBurstOverlay(
-                        bursts = activeBursts,
-                        heartTheme = heartTheme,
-                        onBurstFinished = { burstId -> activeBursts.removeAll { it.id == burstId } },
-                        modifier = Modifier.fillMaxSize()
+                    // Bottom-Left Overlay Details (Pure Standalone @Reels Identity)
+                    ReelsBottomOverlay(
+                        video = video,
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(start = 16.dp, bottom = 36.dp)
+                    )
+
+                    // Right-Side Vertical Action Rail (Pure Video Controls)
+                    ReelsActionRail(
+                        video = video,
+                        isMuted = uiState.isMuted,
+                        heartColor = heartTheme.primaryColor,
+                        onToggleFavorite = { viewModel.toggleFavorite(video.media.mediaId, video.media.isFavorite) },
+                        onLongPressFavorite = { showHeartThemeSheet = true },
+                        onToggleBookmark = { viewModel.toggleBookmark(video.media.mediaId, video.media.isBookmarked) },
+                        onToggleMute = { viewModel.toggleMute() },
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 14.dp, bottom = 36.dp)
                     )
                 }
-
-                // Top scrim gradient
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(108.dp)
-                        .align(Alignment.TopCenter)
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(Color.Black.copy(alpha = 0.72f), Color.Transparent)
-                            )
-                        )
-                )
-
-                // Bottom scrim gradient
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(240.dp)
-                        .align(Alignment.BottomCenter)
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(Color.Transparent, Color.Black.copy(alpha = 0.88f))
-                            )
-                        )
-                )
-
-                // Bottom-Left Overlay Details (Pure Standalone @Reels Identity)
-                ReelsBottomOverlay(
-                    video = video,
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(start = 16.dp, bottom = 36.dp)
-                )
-
-                // Right-Side Vertical Action Rail (Pure Video Controls)
-                ReelsActionRail(
-                    video = video,
-                    isMuted = uiState.isMuted,
-                    heartColor = heartTheme.primaryColor,
-                    onToggleFavorite = { viewModel.toggleFavorite(video.media.mediaId, video.media.isFavorite) },
-                    onLongPressFavorite = { showHeartThemeSheet = true },
-                    onToggleBookmark = { viewModel.toggleBookmark(video.media.mediaId, video.media.isBookmarked) },
-                    onToggleMute = { viewModel.toggleMute() },
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(end = 14.dp, bottom = 36.dp)
-                )
             }
         }
 
@@ -581,7 +675,7 @@ fun ReelsScreen(
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.clickable { viewModel.reshuffle() }
+                modifier = Modifier.clickable { triggerReelsRefresh() }
             ) {
                 Text(
                     text = if (uiState.onlyFavorites) "Favorite Reels" else "Reels",

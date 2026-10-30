@@ -52,6 +52,8 @@ import androidx.navigation.navArgument
 import coil.compose.AsyncImage
 import com.example.data.local.OnboardingPreferences
 import com.example.data.repository.GalleryRepository
+import com.example.ui.components.RefreshableTab
+import com.example.ui.components.TabRefreshManager
 import com.example.ui.components.bounceClick
 import com.example.ui.screens.detail.PostDetailScreen
 import com.example.ui.screens.home.HomeFeedFilter
@@ -123,7 +125,9 @@ fun InstaGalleryNavGraph(
                     topPersonAvatar = topPersonAvatar,
                     onHomeClick = {
                         homeViewModel.setFilter(HomeFeedFilter.ALL)
-                        if (currentRoute != Screen.Home.route) {
+                        if (currentRoute == Screen.Home.route) {
+                            TabRefreshManager.triggerRefresh(RefreshableTab.HOME)
+                        } else {
                             val popped = navController.popBackStack(Screen.Home.route, inclusive = false)
                             if (!popped) {
                                 navController.navigate(Screen.Home.route) {
@@ -137,7 +141,9 @@ fun InstaGalleryNavGraph(
                         }
                     },
                     onSavedClick = {
-                        if (currentRoute != Screen.SavedCollections.route) {
+                        if (currentRoute == Screen.SavedCollections.route) {
+                            TabRefreshManager.triggerRefresh(RefreshableTab.SAVED)
+                        } else {
                             val popped = navController.popBackStack(Screen.SavedCollections.route, inclusive = false)
                             if (!popped) {
                                 navController.navigate(Screen.SavedCollections.route) {
@@ -151,15 +157,24 @@ fun InstaGalleryNavGraph(
                         }
                     },
                     onNavigate = { targetRoute ->
-                        if (currentRoute != targetRoute) {
-                            val popped = navController.popBackStack(targetRoute, inclusive = false)
-                            if (!popped) {
-                                navController.navigate(targetRoute) {
-                                    popUpTo(Screen.Home.route) {
-                                        saveState = true
+                        when {
+                            targetRoute == Screen.Reels.route && currentRoute == Screen.Reels.route -> {
+                                TabRefreshManager.triggerRefresh(RefreshableTab.REELS)
+                            }
+                            targetRoute == Screen.MyProfile.route &&
+                                (currentRoute == Screen.MyProfile.route || currentRoute?.startsWith("profile/") == true) -> {
+                                TabRefreshManager.triggerRefresh(RefreshableTab.PROFILE)
+                            }
+                            currentRoute != targetRoute -> {
+                                val popped = navController.popBackStack(targetRoute, inclusive = false)
+                                if (!popped) {
+                                    navController.navigate(targetRoute) {
+                                        popUpTo(Screen.Home.route) {
+                                            saveState = true
+                                        }
+                                        launchSingleTop = true
+                                        restoreState = true
                                     }
-                                    launchSingleTop = true
-                                    restoreState = true
                                 }
                             }
                         }

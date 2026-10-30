@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -40,6 +41,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,14 +69,18 @@ import com.example.data.local.OnboardingPreferences
 import com.example.data.local.entity.PersonEntity
 import com.example.ui.components.HeartThemePickerSheet
 import com.example.ui.components.IndexingStatusBanner
+import com.example.ui.components.InstaPullToRefreshBox
 import com.example.ui.components.NewPeopleDetectedBanner
 import com.example.ui.components.PostCard
+import com.example.ui.components.RefreshableTab
+import com.example.ui.components.TabRefreshManager
 import com.example.ui.components.bounceClick
 import com.example.ui.theme.GrandHotelFont
 import com.example.ui.theme.IgBlack
 import com.example.ui.theme.IgSurfacePill
 import com.example.ui.theme.IgTextPrimary
 import com.example.ui.theme.IgTextSecondary
+import kotlinx.coroutines.launch
 import java.io.File
 
 private val StorySunsetGradient = Brush.linearGradient(
@@ -112,6 +118,17 @@ fun HomeFeedScreen(
     var showHeartThemeSheet by remember { mutableStateOf(false) }
 
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val feedListState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
+
+    LaunchedEffect(Unit) {
+        TabRefreshManager.refreshEvents.collect { tab ->
+            if (tab == RefreshableTab.HOME) {
+                viewModel.refreshFeed()
+                runCatching { feedListState.animateScrollToItem(0) }
+            }
+        }
+    }
 
     // Prevent app exit when pressing system Back from Liked Posts view
     BackHandler(enabled = uiState.isFilteringFavorites) {
@@ -166,7 +183,12 @@ fun HomeFeedScreen(
                     fontFamily = GrandHotelFont,
                     color = Color.White,
                     modifier = Modifier
-                        .bounceClick { viewModel.reshuffle() }
+                        .bounceClick {
+                            viewModel.refreshFeed()
+                            coroutineScope.launch {
+                                runCatching { feedListState.animateScrollToItem(0) }
+                            }
+                        }
                         .testTag("app_title")
                 )
             }
@@ -283,103 +305,110 @@ fun HomeFeedScreen(
             )
         }
 
-        // Main Feed (LazyColumn)
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .testTag("home_feed_list")
+        // Main Feed (LazyColumn inside InstaPullToRefreshBox)
+        InstaPullToRefreshBox(
+            isRefreshing = uiState.isRefreshing,
+            onRefresh = { viewModel.refreshFeed() },
+            modifier = Modifier.fillMaxSize()
         ) {
-            // Item 1: Stories-Style People Tray
-            item(key = "stories_tray") {
-                StoriesPeopleTray(
-                    people = uiState.people,
-                    unassociatedCount = uiState.unassociatedCount,
-                    viewedStoryIds = viewedStoryIds,
-                    onOpenStory = onOpenStory,
-                    onPersonClick = onPersonClick
-                )
-            }
-
-            // Item 2: "New People Detected" Banner when >= 3 photos of a new undecided person exist
-            if (uiState.newUndecidedPeople.isNotEmpty()) {
-                item(key = "new_people_detected_banner") {
-                    NewPeopleDetectedBanner(
-                        newUndecidedPeople = uiState.newUndecidedPeople,
-                        onReviewClick = onReviewNewPeopleClick,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+            LazyColumn(
+                state = feedListState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag("home_feed_list")
+            ) {
+                // Item 1: Stories-Style People Tray
+                item(key = "stories_tray") {
+                    StoriesPeopleTray(
+                        people = uiState.people,
+                        unassociatedCount = uiState.unassociatedCount,
+                        viewedStoryIds = viewedStoryIds,
+                        onOpenStory = onOpenStory,
+                        onPersonClick = onPersonClick
                     )
                 }
-            }
 
-            // Empty state when no media matches filter or device storage is empty
-            if (uiState.photos.isEmpty()) {
-                item(key = "empty_feed") {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 32.dp, vertical = 64.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(72.dp)
-                                .clip(CircleShape)
-                                .background(IgSurfacePill),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = when (uiState.activeFilter) {
-                                    HomeFeedFilter.FAVORITES -> OutlinedExtendedIcons.FavoriteBorder
-                                    HomeFeedFilter.BOOKMARKED -> OutlinedExtendedIcons.BookmarkBorder
-                                    HomeFeedFilter.ALL -> Icons.Outlined.PhotoCamera
-                                },
-                                contentDescription = "No photos",
-                                tint = IgTextSecondary,
-                                modifier = Modifier.size(36.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = when (uiState.activeFilter) {
-                                HomeFeedFilter.FAVORITES -> "No favorite photos yet"
-                                HomeFeedFilter.BOOKMARKED -> "No saved posts yet"
-                                HomeFeedFilter.ALL -> "No photos found on device"
-                            },
-                            fontSize = 17.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = IgTextPrimary,
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = when (uiState.activeFilter) {
-                                HomeFeedFilter.FAVORITES -> "Double-tap any photo or tap the heart icon to add it to your favorites."
-                                HomeFeedFilter.BOOKMARKED -> "Tap the bookmark icon on any post to save it to your private collection."
-                                HomeFeedFilter.ALL -> "Take some photos or download images to your phone storage to see your feed come alive."
-                            },
-                            fontSize = 13.sp,
-                            color = IgTextSecondary,
-                            textAlign = TextAlign.Center,
-                            lineHeight = 18.sp
+                // Item 2: "New People Detected" Banner when >= 3 photos of a new undecided person exist
+                if (uiState.newUndecidedPeople.isNotEmpty()) {
+                    item(key = "new_people_detected_banner") {
+                        NewPeopleDetectedBanner(
+                            newUndecidedPeople = uiState.newUndecidedPeople,
+                            onReviewClick = onReviewNewPeopleClick,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
                         )
                     }
                 }
-            } else {
-                items(
-                    items = uiState.photos,
-                    key = { it.media.mediaId }
-                ) { item ->
-                    PostCard(
-                        item = item,
-                        onAuthorClick = onPersonClick,
-                        onToggleFavorite = { id, current -> viewModel.toggleFavorite(id, current) },
-                        onToggleBookmark = { id, current -> viewModel.toggleBookmark(id, current) },
-                        onUpdateCaption = { newCaption -> viewModel.updateCaption(item.media.mediaId, newCaption) },
-                        allPeople = uiState.people,
-                        onTagPerson = { mediaId, personId -> viewModel.tagPersonInMedia(mediaId, personId) },
-                        onUntagPerson = { mediaId, personId -> viewModel.removePersonFromMedia(mediaId, personId) }
-                    )
+
+                // Empty state when no media matches filter or device storage is empty
+                if (uiState.photos.isEmpty()) {
+                    item(key = "empty_feed") {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 32.dp, vertical = 64.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(72.dp)
+                                    .clip(CircleShape)
+                                    .background(IgSurfacePill),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = when (uiState.activeFilter) {
+                                        HomeFeedFilter.FAVORITES -> OutlinedExtendedIcons.FavoriteBorder
+                                        HomeFeedFilter.BOOKMARKED -> OutlinedExtendedIcons.BookmarkBorder
+                                        HomeFeedFilter.ALL -> Icons.Outlined.PhotoCamera
+                                    },
+                                    contentDescription = "No photos",
+                                    tint = IgTextSecondary,
+                                    modifier = Modifier.size(36.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                text = when (uiState.activeFilter) {
+                                    HomeFeedFilter.FAVORITES -> "No favorite photos yet"
+                                    HomeFeedFilter.BOOKMARKED -> "No saved posts yet"
+                                    HomeFeedFilter.ALL -> "No photos found on device"
+                                },
+                                fontSize = 17.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = IgTextPrimary,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = when (uiState.activeFilter) {
+                                    HomeFeedFilter.FAVORITES -> "Double-tap any photo or tap the heart icon to add it to your favorites."
+                                    HomeFeedFilter.BOOKMARKED -> "Tap the bookmark icon on any post to save it to your private collection."
+                                    HomeFeedFilter.ALL -> "Take some photos or download images to your phone storage to see your feed come alive."
+                                },
+                                fontSize = 13.sp,
+                                color = IgTextSecondary,
+                                textAlign = TextAlign.Center,
+                                lineHeight = 18.sp
+                            )
+                        }
+                    }
+                } else {
+                    items(
+                        items = uiState.photos,
+                        key = { it.media.mediaId }
+                    ) { item ->
+                        PostCard(
+                            item = item,
+                            onAuthorClick = onPersonClick,
+                            onToggleFavorite = { id, current -> viewModel.toggleFavorite(id, current) },
+                            onToggleBookmark = { id, current -> viewModel.toggleBookmark(id, current) },
+                            onUpdateCaption = { newCaption -> viewModel.updateCaption(item.media.mediaId, newCaption) },
+                            allPeople = uiState.people,
+                            onTagPerson = { mediaId, personId -> viewModel.tagPersonInMedia(mediaId, personId) },
+                            onUntagPerson = { mediaId, personId -> viewModel.removePersonFromMedia(mediaId, personId) }
+                        )
+                    }
                 }
             }
         }

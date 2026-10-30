@@ -1,20 +1,23 @@
-// InstaGallery v1.0
+// InstaGallery v2.0
 package com.example.ui.screens.home
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
+import com.example.data.local.OnboardingPreferences
 import com.example.data.local.entity.MediaWithAuthors
 import com.example.data.local.entity.PersonEntity
 import com.example.data.repository.GalleryRepository
 import com.example.ml.FaceIndexingWorker
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.util.Random
 
 enum class HomeFeedFilter {
     ALL,
@@ -40,22 +43,23 @@ data class HomeUiState(
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = GalleryRepository(application)
-    private var sessionSeed = System.currentTimeMillis()
+    private val galleryRepository: GalleryRepository
+        get() = repository
 
     init {
-        com.example.data.local.OnboardingPreferences.init(application)
+        OnboardingPreferences.init(application)
     }
 
     private val _activeFilter = MutableStateFlow(HomeFeedFilter.ALL)
     private val _isRefreshing = MutableStateFlow(false)
-    private val _seedTrigger = MutableStateFlow(sessionSeed)
+    private val _refreshSeed = MutableStateFlow(System.currentTimeMillis())
 
     private val rawPhotos = combine(
         repository.photosWithAuthors,
         repository.favoritePhotosWithAuthors,
         repository.bookmarkedPhotosWithAuthors,
         _activeFilter,
-        com.example.data.local.OnboardingPreferences.hideOtherFromHomeFeedFlow
+        OnboardingPreferences.hideOtherFromHomeFeedFlow
     ) { allPhotos, favPhotos, savedPhotos, filter, hideOther ->
         val base = when (filter) {
             HomeFeedFilter.ALL -> allPhotos
@@ -100,21 +104,83 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    private data class RefreshAndStoriesMeta(
+        val seed: Long,
+        val isRefreshing: Boolean,
+        val myProfilePersonId: Long,
+        val viewedStoryIds: Set<Long>
+    )
+
+    private val refreshAndStoriesMeta = combine(
+        _refreshSeed,
+        _isRefreshing,
+        OnboardingPreferences.myProfilePersonIdFlow,
+        OnboardingPreferences.viewedStoryPersonIdsFlow
+    ) { seed, refreshing, myProfileId, viewedIds ->
+        RefreshAndStoriesMeta(
+            seed = seed,
+            isRefreshing = refreshing,
+            myProfilePersonId = myProfileId,
+            viewedStoryIds = viewedIds
+        )
+    }
+
     val uiState: StateFlow<HomeUiState> = combine(
         rawPhotos,
         repository.allPeople,
         repository.unassociatedCount,
-        _seedTrigger,
+        refreshAndStoriesMeta,
         scanState
-    ) { photos, people, unassociatedCount, seed, scanInfo ->
+    ) { photos, people, unassociatedCount, meta, scanInfo ->
         val filter = _activeFilter.value
-        // Deterministic per-mediaId shuffle order so liking/tagging never jumps the scroll position
-        val stableShuffled = photos.sortedBy { item ->
-            mixHash(item.media.mediaId, seed)
+        val seed = meta.seed
+
+        val arrangedPhotos = if (filter == HomeFeedFilter.FAVORITES) {
+            photos.sortedByDescending { it.media.dateAddedSeconds }
+        } else {
+            val nowSeconds = System.currentTimeMillis() / 1000L
+            val justTaken = ArrayList<MediaWithAuthors>()
+            val catalogPosts = ArrayList<MediaWithAuthors>(photos.size)
+            for (post in photos) {
+                if (nowSeconds - post.media.dateAddedSeconds <= 1800L) {
+                    justTaken.add(post)
+                } else {
+                    catalogPosts.add(post)
+                }
+            }
+            justTaken.sortByDescending { it.media.dateAddedSeconds }
+            // Deterministic sort pre-pass before seeded Random shuffle so Room emissions don't alter order
+            catalogPosts.sortByDescending { it.media.mediaId }
+            val shuffledCatalog = catalogPosts.shuffled(Random(seed))
+            justTaken + shuffledCatalog
         }
+
+        // Lightly shuffle unviewed stories while pinning My Profile first and viewed stories after
+        val myPerson = if (meta.myProfilePersonId > 0L) {
+            people.firstOrNull { it.personId == meta.myProfilePersonId }
+        } else {
+            null
+        }
+        val remainingPeople = if (myPerson != null) {
+            people.filter { it.personId != myPerson.personId }
+        } else {
+            people
+        }
+        val (viewedPeople, unviewedPeople) = remainingPeople.partition {
+            it.personId in meta.viewedStoryIds
+        }
+        val shuffledUnviewed = unviewedPeople
+            .sortedBy { it.personId }
+            .shuffled(Random(seed xor 0x5DEECE66DL))
+        val arrangedPeople = buildList(people.size) {
+            if (myPerson != null) add(myPerson)
+            addAll(shuffledUnviewed)
+            addAll(viewedPeople)
+        }
+
         HomeUiState(
-            photos = stableShuffled,
-            people = people,
+            photos = arrangedPhotos,
+            people = arrangedPeople,
             newUndecidedPeople = scanInfo.newUndecidedPeople,
             unassociatedCount = unassociatedCount,
             unindexedPhotoCount = scanInfo.unindexedCount,
@@ -124,7 +190,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             isScanning = scanInfo.isRunning && scanInfo.total > 0,
             scannedCount = scanInfo.current,
             totalToScan = scanInfo.total,
-            isRefreshing = _isRefreshing.value
+            isRefreshing = meta.isRefreshing
         )
     }.stateIn(
         scope = viewModelScope,
@@ -132,29 +198,29 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         initialValue = HomeUiState()
     )
 
-    private fun mixHash(id: Long, seed: Long): Long {
-        var z = (id xor seed) + -0x61c8864680b583ebL
-        z = (z xor (z ushr 30)) * -0x40a7b892e31b1a47L
-        z = (z xor (z ushr 27)) * -0x6b2fb644ecceee15L
-        return z xor (z ushr 31)
-    }
-
     init {
         scanMedia()
     }
 
     fun scanMedia() {
         viewModelScope.launch {
-            _isRefreshing.value = true
             repository.scanDeviceMedia()
+        }
+    }
+
+    fun refreshFeed() {
+        if (_isRefreshing.value) return
+        viewModelScope.launch {
+            _isRefreshing.value = true
+            runCatching { galleryRepository.performQuickRefreshSync() }
+            _refreshSeed.value = System.nanoTime()
+            delay(280)
             _isRefreshing.value = false
         }
     }
 
     fun reshuffle() {
-        sessionSeed = System.currentTimeMillis()
-        _seedTrigger.value = sessionSeed
-        scanMedia()
+        refreshFeed()
     }
 
     fun setFilter(filter: HomeFeedFilter) {

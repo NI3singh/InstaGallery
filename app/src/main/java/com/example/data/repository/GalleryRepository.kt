@@ -25,6 +25,7 @@ import com.example.data.local.entity.MediaEntity
 import com.example.data.local.entity.MediaWithAuthors
 import com.example.data.local.entity.PersonEntity
 import com.example.data.media.MediaStoreScanner
+import com.example.data.media.SyncDiffResult
 import com.example.ml.FaceClusterManager
 import com.example.ml.FaceDetectorProcessor
 import com.example.ml.FaceEmbeddingExtractor
@@ -267,6 +268,24 @@ class GalleryRepository(
                 enqueueFaceIndexingWorker(ExistingWorkPolicy.APPEND_OR_REPLACE)
             }
         }
+    }
+
+    suspend fun performQuickRefreshSync(): SyncDiffResult = withContext(Dispatchers.IO) {
+        if (!hasAnyMediaPermission(appContext)) {
+            return@withContext SyncDiffResult(0, 0, 0, emptyList())
+        }
+        val diff = mediaStoreScanner.syncFastIdDiff()
+        if (diff.newlyInsertedPhotos.isNotEmpty()) {
+            if (diff.newlyInsertedPhotos.size <= 5) {
+                indexPhotosFastLane(diff.newlyInsertedPhotos)
+            } else {
+                enqueueFaceIndexingWorker(ExistingWorkPolicy.APPEND_OR_REPLACE)
+            }
+        } else if (mediaDao.getUnprocessedMediaCount() > 0) {
+            enqueueFaceIndexingWorker(ExistingWorkPolicy.APPEND_OR_REPLACE)
+        }
+        personDao.reconcilePeopleAfterMediaDeletion()
+        diff
     }
 
     /**

@@ -31,6 +31,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -61,6 +62,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -84,7 +86,10 @@ import coil.compose.AsyncImage
 import com.example.data.local.entity.FaceEntity
 import com.example.data.local.entity.MediaWithAuthors
 import com.example.data.local.entity.PersonEntity
+import com.example.ui.components.InstaPullToRefreshBox
+import com.example.ui.components.RefreshableTab
 import com.example.ui.components.RotatingStoryRingAvatar
+import com.example.ui.components.TabRefreshManager
 import com.example.ui.components.bounceClick
 import com.example.ui.theme.IgBlack
 import com.example.ui.theme.IgBlue
@@ -137,6 +142,16 @@ fun ProfileScreen(
     var showAvatarPickerSheet by remember { mutableStateOf(false) }
     var selectedMediaForAction by remember { mutableStateOf<MediaWithAuthors?>(null) }
     var showActionSheet by remember { mutableStateOf(false) }
+    val gridState = rememberLazyGridState()
+
+    LaunchedEffect(Unit) {
+        TabRefreshManager.refreshEvents.collect { tab ->
+            if (tab == RefreshableTab.PROFILE) {
+                viewModel.refreshProfile()
+                runCatching { gridState.animateScrollToItem(0) }
+            }
+        }
+    }
 
     Column(
         modifier = modifier
@@ -252,15 +267,21 @@ fun ProfileScreen(
             }
         }
 
-        // Scrollable Profile Body + 3-Column Photo Grid
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(3),
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-            modifier = Modifier
-                .fillMaxSize()
-                .testTag("profile_media_grid")
+        // Scrollable Profile Body + 3-Column Photo Grid wrapped in Pull-to-Refresh
+        InstaPullToRefreshBox(
+            isRefreshing = uiState.isRefreshing,
+            onRefresh = { viewModel.refreshProfile() },
+            modifier = Modifier.fillMaxSize()
         ) {
+            LazyVerticalGrid(
+                state = gridState,
+                columns = GridCells.Fixed(3),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag("profile_media_grid")
+            ) {
             // Header Item (Full Span)
             item(
                 key = "profile_header_section",
@@ -573,8 +594,17 @@ fun ProfileScreen(
                                 )
                             }
 
-                            val trayPeople = remember(uiState.allVisiblePeople, resolvedPersonId) {
-                                uiState.allVisiblePeople.filter { it.personId != resolvedPersonId }
+                            val trayPeople = remember(
+                                uiState.allVisiblePeople,
+                                resolvedPersonId,
+                                uiState.discoverShuffleSeed
+                            ) {
+                                val filtered = uiState.allVisiblePeople.filter { it.personId != resolvedPersonId }
+                                if (uiState.discoverShuffleSeed == 0L) {
+                                    filtered
+                                } else {
+                                    filtered.shuffled(java.util.Random(uiState.discoverShuffleSeed))
+                                }
                             }
 
                             LazyRow(
@@ -1008,6 +1038,7 @@ fun ProfileScreen(
                     }
                 }
             }
+        }
         }
     }
 

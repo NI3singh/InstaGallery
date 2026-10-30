@@ -43,7 +43,9 @@ data class ProfileUiState(
     val customBio: String = OnboardingPreferences.DEFAULT_PROFILE_BIO,
     val selectedFilter: ProfilePhotoFilter = ProfilePhotoFilter.All,
     val coOccurringPeople: List<CoOccurringPerson> = emptyList(),
-    val faces: List<FaceEntity> = emptyList()
+    val faces: List<FaceEntity> = emptyList(),
+    val isRefreshing: Boolean = false,
+    val discoverShuffleSeed: Long = 0L
 ) {
     val person: PersonEntity?
         get() = activePerson
@@ -72,6 +74,9 @@ class ProfileViewModel(
 
     private val _selectedFilter = MutableStateFlow<ProfilePhotoFilter>(ProfilePhotoFilter.All)
     val selectedFilter: StateFlow<ProfilePhotoFilter> = _selectedFilter.asStateFlow()
+
+    private val _isRefreshing = MutableStateFlow(false)
+    private val _discoverShuffleSeed = MutableStateFlow(0L)
 
     private data class ResolvedTarget(
         val resolvedPersonId: Long,
@@ -237,15 +242,21 @@ class ProfileViewModel(
         )
     }
 
-    private data class BioBundle(
+    private data class BioAndRefreshBundle(
         val defaultBio: String,
-        val personBios: Map<Long, String>
+        val personBios: Map<Long, String>,
+        val isRefreshing: Boolean,
+        val discoverShuffleSeed: Long
     )
 
     private val bioBundleFlow = combine(
         OnboardingPreferences.customProfileBioFlow,
-        OnboardingPreferences.personBiosFlow
-    ) { defaultBio, map -> BioBundle(defaultBio, map) }
+        OnboardingPreferences.personBiosFlow,
+        _isRefreshing,
+        _discoverShuffleSeed
+    ) { defaultBio, map, refreshing, seed ->
+        BioAndRefreshBundle(defaultBio, map, refreshing, seed)
+    }
 
     val uiState: StateFlow<ProfileUiState> = combine(
         resolvedTargetFlow,
@@ -280,13 +291,26 @@ class ProfileViewModel(
             customBio = customBio,
             selectedFilter = bundle.filter,
             coOccurringPeople = bundle.coOccurring,
-            faces = faces
+            faces = faces,
+            isRefreshing = bioBundle.isRefreshing,
+            discoverShuffleSeed = bioBundle.discoverShuffleSeed
         )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = ProfileUiState(personId = initialPersonId)
     )
+
+    fun refreshProfile() {
+        if (_isRefreshing.value) return
+        viewModelScope.launch {
+            _isRefreshing.value = true
+            runCatching { repository.performQuickRefreshSync() }
+            _discoverShuffleSeed.value = System.nanoTime()
+            kotlinx.coroutines.delay(280)
+            _isRefreshing.value = false
+        }
+    }
 
     fun setFilter(filter: ProfilePhotoFilter) {
         _selectedFilter.value = filter

@@ -1,0 +1,15 @@
+[Bottom Navbar Icon Tap] ──(Already on active tab?)──► [TabRefreshManager.emit(Tab)]
+[Top Logo Tap / Pull-Down Gesture at Scroll Top] ───────────────────┘
+                                                                    │
+       ┌───────────────────────┬────────────────────────┬───────────┴───────────┐
+       ▼                       ▼                        ▼                       ▼
+┌─────────────────────┐ ┌─────────────────────┐ ┌─────────────────────┐ ┌─────────────────────┐
+│ 1. HOME FEED        │ │ 2. REELS            │ │ 3. SAVED BOARDS     │ │ 4. MY PROFILE       │
+│ • Smooth scroll ->0 │ │ • Snap pager -> 0   │ │ • Smooth scroll ->0 │ │ • Smooth scroll ->0 │
+│ • Fast MediaStore   │ │ • Fast MediaStore   │ │ • Reconcile saved   │ │ • Fast MediaStore   │
+│   Delta Sync        │ │   Video Delta Sync  │ │   items & counts    │ │   Delta + Face Sync │
+│ • New refreshSeed:  │ │ • New refreshSeed:  │ │ • Refresh 2x2 board │ │ • Recompute Solo /  │
+│   Pins <1hr snaps + │ │   Re-shuffles full  │ │   mosaic covers     │ │   Together counts & │
+│   shuffles feed &   │ │   video queue with  │ │                     │ │   shuffle Discover  │
+│   unviewed stories  │ │   new lead video    │ │                     │ │   people strip      │
+└─────────────────────┘ └─────────────────────┘ └─────────────────────┘ └─────────────────────┘

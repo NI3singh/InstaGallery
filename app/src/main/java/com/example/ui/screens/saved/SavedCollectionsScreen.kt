@@ -19,10 +19,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -69,7 +73,10 @@ import com.example.data.local.entity.CollectionEntity
 import com.example.data.local.entity.MediaEntity
 import com.example.data.local.entity.MediaWithAuthors
 import com.example.data.repository.GalleryRepository
+import com.example.ui.components.InstaPullToRefreshBox
 import com.example.ui.components.PostCard
+import com.example.ui.components.RefreshableTab
+import com.example.ui.components.TabRefreshManager
 import com.example.ui.components.bounceClick
 import com.example.ui.theme.IgBlack
 import com.example.ui.theme.IgBlue
@@ -77,6 +84,7 @@ import com.example.ui.theme.IgSurfacePill
 import com.example.ui.theme.IgTextPrimary
 import com.example.ui.theme.IgTextSecondary
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
@@ -106,6 +114,39 @@ fun SavedCollectionsScreen(
     var isFeedViewMode by rememberSaveable { mutableStateOf(false) }
     var showCreateBoardDialog by remember { mutableStateOf(false) }
     var newBoardTitle by remember { mutableStateOf("") }
+    var isRefreshing by remember { mutableStateOf(false) }
+
+    val collectionsGridState = rememberLazyGridState()
+    val allSavedGridState = rememberLazyGridState()
+    val feedListState = rememberLazyListState()
+
+    val triggerSavedRefresh: () -> Unit = {
+        scope.launch {
+            runCatching {
+                when {
+                    activeCollectionId != null && isFeedViewMode -> feedListState.animateScrollToItem(0)
+                    activeCollectionId != null -> allSavedGridState.animateScrollToItem(0)
+                    selectedTabIndex == 0 -> collectionsGridState.animateScrollToItem(0)
+                    isFeedViewMode -> feedListState.animateScrollToItem(0)
+                    else -> allSavedGridState.animateScrollToItem(0)
+                }
+            }
+            if (!isRefreshing) {
+                isRefreshing = true
+                runCatching { repository.performQuickRefreshSync() }
+                delay(250)
+                isRefreshing = false
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        TabRefreshManager.refreshEvents.collect { tab ->
+            if (tab == RefreshableTab.SAVED) {
+                triggerSavedRefresh()
+            }
+        }
+    }
 
     val activeCollection = remember(collections, activeCollectionId) {
         collections.find { it.collectionId == activeCollectionId }
@@ -237,14 +278,22 @@ fun SavedCollectionsScreen(
 
             HorizontalDivider(color = Color(0xFF1A1A1E), thickness = 1.dp)
 
-            SavedMediaGridOrFeed(
-                photos = boardPhotos,
-                isFeedViewMode = isFeedViewMode,
-                allPeople = allPeople,
-                onPersonClick = onPersonClick,
-                onOpenFeedAtPhoto = { isFeedViewMode = true },
-                repository = repository
-            )
+            InstaPullToRefreshBox(
+                isRefreshing = isRefreshing,
+                onRefresh = triggerSavedRefresh,
+                modifier = Modifier.fillMaxSize()
+            ) {
+                SavedMediaGridOrFeed(
+                    photos = boardPhotos,
+                    isFeedViewMode = isFeedViewMode,
+                    allPeople = allPeople,
+                    onPersonClick = onPersonClick,
+                    onOpenFeedAtPhoto = { isFeedViewMode = true },
+                    repository = repository,
+                    gridState = allSavedGridState,
+                    listState = feedListState
+                )
+            }
         } else {
             // Main Saved Screen Top Bar (52.dp height, #000000 background)
             Row(
@@ -339,99 +388,110 @@ fun SavedCollectionsScreen(
                 }
             }
 
-            if (selectedTabIndex == 0) {
-                // Tab 1: Collections (2-Column Mosaic Cover Grid)
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(2),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .testTag("collections_mosaic_grid")
-                ) {
-                    // Card 0: "All Saved" showing up to 4 recent bookmarked photos in a 2x2 mini-mosaic
-                    item(key = "board_all_saved") {
-                        val recentBookmarkedMedia = allBookmarkedPhotos.take(4).map { it.media }
-                        CollectionMosaicBoardCard(
-                            title = "All Saved",
-                            photoCount = allBookmarkedPhotos.size,
-                            coverPhotos = recentBookmarkedMedia,
-                            onClick = {
-                                activeCollectionId = -1L
-                                isFeedViewMode = false
-                            },
-                            modifier = Modifier.testTag("collection_card_all_saved")
-                        )
-                    }
-
-                    // Cards 1..N: Each CollectionEntity observed directly from Room Flow
-                    items(
-                        items = collections,
-                        key = { "board_${it.collectionId}" }
-                    ) { collection ->
-                        val boardMedia by remember(repository, collection.collectionId) {
-                            repository.getMediaForCollectionFlow(collection.collectionId)
-                        }.collectAsStateWithLifecycle(initialValue = emptyList())
-
-                        CollectionMosaicBoardCard(
-                            title = collection.name,
-                            photoCount = boardMedia.size,
-                            coverPhotos = boardMedia.take(4),
-                            onClick = {
-                                activeCollectionId = collection.collectionId
-                                isFeedViewMode = false
-                            },
-                            modifier = Modifier.testTag("collection_card_${collection.collectionId}")
-                        )
-                    }
-                }
-            } else {
-                // Tab 2: All Saved (with Grid / Feed toggle bar)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = "${allBookmarkedPhotos.size} Bookmarked Memories",
-                        fontSize = 12.5.sp,
-                        color = Color(0xFF8E8E93)
-                    )
-                    Row(
+            InstaPullToRefreshBox(
+                isRefreshing = isRefreshing,
+                onRefresh = triggerSavedRefresh,
+                modifier = Modifier.fillMaxSize()
+            ) {
+                if (selectedTabIndex == 0) {
+                    // Tab 1: Collections (2-Column Mosaic Cover Grid)
+                    LazyVerticalGrid(
+                        state = collectionsGridState,
+                        columns = GridCells.Fixed(2),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
                         modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFF1A1A20))
-                            .clickable { isFeedViewMode = !isFeedViewMode }
-                            .padding(horizontal = 10.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            .fillMaxSize()
+                            .testTag("collections_mosaic_grid")
                     ) {
-                        Icon(
-                            imageVector = if (isFeedViewMode) OutlinedExtendedIcons.Home else FilledExtendedIcons.Home,
-                            contentDescription = "Switch View",
-                            tint = IgBlue,
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Text(
-                            text = if (isFeedViewMode) "3-Column Grid" else "Vertical Feed",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = IgBlue
+                        // Card 0: "All Saved" showing up to 4 recent bookmarked photos in a 2x2 mini-mosaic
+                        item(key = "board_all_saved") {
+                            val recentBookmarkedMedia = allBookmarkedPhotos.take(4).map { it.media }
+                            CollectionMosaicBoardCard(
+                                title = "All Saved",
+                                photoCount = allBookmarkedPhotos.size,
+                                coverPhotos = recentBookmarkedMedia,
+                                onClick = {
+                                    activeCollectionId = -1L
+                                    isFeedViewMode = false
+                                },
+                                modifier = Modifier.testTag("collection_card_all_saved")
+                            )
+                        }
+
+                        // Cards 1..N: Each CollectionEntity observed directly from Room Flow
+                        items(
+                            items = collections,
+                            key = { "board_${it.collectionId}" }
+                        ) { collection ->
+                            val boardMedia by remember(repository, collection.collectionId) {
+                                repository.getMediaForCollectionFlow(collection.collectionId)
+                            }.collectAsStateWithLifecycle(initialValue = emptyList())
+
+                            CollectionMosaicBoardCard(
+                                title = collection.name,
+                                photoCount = boardMedia.size,
+                                coverPhotos = boardMedia.take(4),
+                                onClick = {
+                                    activeCollectionId = collection.collectionId
+                                    isFeedViewMode = false
+                                },
+                                modifier = Modifier.testTag("collection_card_${collection.collectionId}")
+                            )
+                        }
+                    }
+                } else {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        // Tab 2: All Saved (with Grid / Feed toggle bar)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "${allBookmarkedPhotos.size} Bookmarked Memories",
+                                fontSize = 12.5.sp,
+                                color = Color(0xFF8E8E93)
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFF1A1A20))
+                                    .clickable { isFeedViewMode = !isFeedViewMode }
+                                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isFeedViewMode) OutlinedExtendedIcons.Home else FilledExtendedIcons.Home,
+                                    contentDescription = "Switch View",
+                                    tint = IgBlue,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Text(
+                                    text = if (isFeedViewMode) "3-Column Grid" else "Vertical Feed",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = IgBlue
+                                )
+                            }
+                        }
+
+                        SavedMediaGridOrFeed(
+                            photos = allBookmarkedPhotos,
+                            isFeedViewMode = isFeedViewMode,
+                            allPeople = allPeople,
+                            onPersonClick = onPersonClick,
+                            onOpenFeedAtPhoto = { isFeedViewMode = true },
+                            repository = repository,
+                            gridState = allSavedGridState,
+                            listState = feedListState
                         )
                     }
                 }
-
-                SavedMediaGridOrFeed(
-                    photos = allBookmarkedPhotos,
-                    isFeedViewMode = isFeedViewMode,
-                    allPeople = allPeople,
-                    onPersonClick = onPersonClick,
-                    onOpenFeedAtPhoto = { isFeedViewMode = true },
-                    repository = repository
-                )
             }
         }
     }
@@ -642,7 +702,9 @@ private fun SavedMediaGridOrFeed(
     allPeople: List<com.example.data.local.entity.PersonEntity>,
     onPersonClick: (Long) -> Unit,
     onOpenFeedAtPhoto: (Long) -> Unit,
-    repository: GalleryRepository
+    repository: GalleryRepository,
+    gridState: LazyGridState,
+    listState: LazyListState
 ) {
     val scope = rememberCoroutineScope()
 
@@ -687,6 +749,7 @@ private fun SavedMediaGridOrFeed(
     } else if (!isFeedViewMode) {
         // 3-Column Square Photo Grid
         LazyVerticalGrid(
+            state = gridState,
             columns = GridCells.Fixed(3),
             horizontalArrangement = Arrangement.spacedBy(2.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -714,6 +777,7 @@ private fun SavedMediaGridOrFeed(
     } else {
         // Vertical Scrollable PostCard Feed
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize()
         ) {
             items(
