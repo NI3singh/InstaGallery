@@ -64,11 +64,14 @@ class FaceDetectorProcessor(private val context: Context) {
 
     /**
      * Photos-Only Rule (Zero Video Scanning).
-     * Immediately returns emptyList() if media.isVideo is true.
+     * Immediately returns emptyList() if media.isVideo is true or if it is an exported InstaCard template.
      */
     suspend fun processMedia(media: MediaEntity): List<DetectedAlignedFace> {
         if (media.isVideo) return emptyList()
-        return detectAndAlignFacesInPhoto(media.uri)
+        if (media.displayName.startsWith("InstaCard_", ignoreCase = true)) return emptyList()
+        val isScreenshot = media.displayName.contains("screenshot", ignoreCase = true) ||
+            media.uri.contains("screenshot", ignoreCase = true)
+        return detectAndAlignFacesInPhoto(media.uri, isScreenshot = isScreenshot)
     }
 
     suspend fun processMediaItem(
@@ -77,13 +80,17 @@ class FaceDetectorProcessor(private val context: Context) {
         durationMs: Long? = null
     ): List<DetectedAlignedFace> {
         if (isVideo) return emptyList()
-        return detectAndAlignFacesInPhoto(uriString)
+        val isScreenshot = uriString.contains("screenshot", ignoreCase = true)
+        return detectAndAlignFacesInPhoto(uriString, isScreenshot = isScreenshot)
     }
 
-    suspend fun detectAndAlignFacesInPhoto(uriString: String): List<DetectedAlignedFace> {
+    suspend fun detectAndAlignFacesInPhoto(
+        uriString: String,
+        isScreenshot: Boolean = uriString.contains("screenshot", ignoreCase = true)
+    ): List<DetectedAlignedFace> {
         val bitmap = decodePhotoBitmap(uriString) ?: return emptyList()
         return try {
-            detectAndAlignFacesFromBitmap(bitmap)
+            detectAndAlignFacesFromBitmap(bitmap, isScreenshot = isScreenshot)
         } finally {
             if (!bitmap.isRecycled) {
                 bitmap.recycle()
@@ -91,12 +98,32 @@ class FaceDetectorProcessor(private val context: Context) {
         }
     }
 
-    suspend fun detectAndAlignFacesFromBitmap(bitmap: Bitmap): List<DetectedAlignedFace> {
+    suspend fun detectAndAlignFacesFromBitmap(
+        bitmap: Bitmap,
+        isScreenshot: Boolean = false
+    ): List<DetectedAlignedFace> {
         val rawFaces = runMlKitDetection(bitmap)
         if (rawFaces.isEmpty()) return emptyList()
 
+        // If this is a screenshot and ML Kit detects >= 4 small grid-aligned faces
+        // (such as a screenshot of the People directory grid), return emptyList() immediately
+        // so a screenshot of the People grid never creates 12 clone profiles!
+        if (isScreenshot && rawFaces.size >= 4) {
+            val smallGridFaces = rawFaces.count { face ->
+                face.boundingBox.width().toFloat() / bitmap.width.toFloat() < 0.32f
+            }
+            if (smallGridFaces >= 4 || rawFaces.size >= 4) {
+                return emptyList()
+            }
+        }
+
+        val minWidthRatio = if (isScreenshot) 0.22f else 0.065f
         val results = mutableListOf<DetectedAlignedFace>()
         for (face in rawFaces) {
+            val faceBox = face.boundingBox
+            if (faceBox.width().toFloat() / bitmap.width.toFloat() < minWidthRatio) {
+                continue // Skip tiny UI profile icons / grid thumbnails inside screenshots!
+            }
             if (!passesHumanFaceGate(face)) continue
 
             val (aligned112, avatar200) = cropFaultTolerantFacePair(bitmap, face) ?: continue

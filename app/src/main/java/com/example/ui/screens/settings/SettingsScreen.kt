@@ -122,6 +122,7 @@ import com.example.data.local.OnboardingPreferences
 import com.example.data.local.entity.MediaEntity
 import com.example.data.local.entity.PersonEntity
 import com.example.data.repository.GalleryRepository
+import com.example.ml.FaceEmbeddingExtractor
 import com.example.ui.components.HeartThemePickerSheet
 import com.example.ui.components.InstaCardTemplate
 import com.example.ui.components.RotatingStoryRingAvatar
@@ -1683,22 +1684,33 @@ private fun MergeProfilesStudioSubScreen(
 
     var searchQuery by remember { mutableStateOf("") }
     val selectedIds = remember { mutableStateListOf<Long>() }
-    val dismissedPairKeys = remember { mutableStateListOf<String>() }
+    val dismissedPairKeys = remember {
+        mutableStateListOf<String>().apply {
+            addAll(OnboardingPreferences.getDismissedDuplicatePairs(context))
+        }
+    }
 
-    // Section A: Compute pairwise cosine similarity between visible PersonEntity centroids where similarity >= 0.50f
+    LaunchedEffect(Unit) {
+        repository.runAutoDeduplication()
+    }
+
+    // Section A: Compute pairwise cosine similarity between visible PersonEntity centroids where similarity in 0.52f..0.679f
     var lookalikePairs by remember { mutableStateOf<List<LookalikeSuggestion>>(emptyList()) }
 
     LaunchedEffect(visiblePeople, dismissedPairKeys.size) {
         lookalikePairs = withContext(Dispatchers.Default) {
-            val suggestions = mutableListOf<LookalikeSuggestion>()
-            val decoded = visiblePeople.mapNotNull { p ->
-                val vec = decodeEmbeddingBlob(p.centroidEmbeddingBlob)
-                if (vec != null) p to vec else null
-            }
+            val rawCandidates = mutableListOf<LookalikeSuggestion>()
+            val decoded = visiblePeople
+                .filter { it.faceCount >= 1 }
+                .mapNotNull { p ->
+                    val vec = decodeEmbeddingBlob(p.centroidEmbeddingBlob)
+                    if (vec != null && vec.isNotEmpty()) p to vec else null
+                }
             for (i in 0 until decoded.size) {
                 for (j in i + 1 until decoded.size) {
                     val (personA, vecA) = decoded[i]
                     val (personB, vecB) = decoded[j]
+                    if (personA.personId == personB.personId) continue
                     val key = if (personA.personId < personB.personId) {
                         "${personA.personId}_${personB.personId}"
                     } else {
@@ -1706,7 +1718,7 @@ private fun MergeProfilesStudioSubScreen(
                     }
                     if (dismissedPairKeys.contains(key)) continue
                     val sim = cosineSimilarity(vecA, vecB)
-                    if (sim >= 0.50f) {
+                    if (sim in 0.52f..0.679f) {
                         val (primary, secondary) = if (personA.isNamedByUser && !personB.isNamedByUser) {
                             personA to personB
                         } else if (!personA.isNamedByUser && personB.isNamedByUser) {
@@ -1716,7 +1728,7 @@ private fun MergeProfilesStudioSubScreen(
                         } else {
                             personB to personA
                         }
-                        suggestions.add(
+                        rawCandidates.add(
                             LookalikeSuggestion(
                                 personA = primary,
                                 personB = secondary,
@@ -1727,7 +1739,21 @@ private fun MergeProfilesStudioSubScreen(
                     }
                 }
             }
-            suggestions.sortedByDescending { it.similarity }.take(10)
+            val sortedCandidates = rawCandidates.sortedByDescending { it.similarity }
+            val usedPersonIds = HashSet<Long>()
+            val nonOverlapping = mutableListOf<LookalikeSuggestion>()
+            for (candidate in sortedCandidates) {
+                if (candidate.personA.personId in usedPersonIds ||
+                    candidate.personB.personId in usedPersonIds
+                ) {
+                    continue
+                }
+                usedPersonIds.add(candidate.personA.personId)
+                usedPersonIds.add(candidate.personB.personId)
+                nonOverlapping.add(candidate)
+                if (nonOverlapping.size >= 8) break
+            }
+            nonOverlapping
         }
     }
 
@@ -1773,122 +1799,159 @@ private fun MergeProfilesStudioSubScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
-                // Section A — AI Lookalike Suggestions
-                if (lookalikePairs.isNotEmpty() && searchQuery.isBlank()) {
-                    item(span = { GridItemSpan(3) }) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = 8.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Text(
-                                text = "AI Lookalike Suggestions (${lookalikePairs.size})",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFF8E8E93)
-                            )
+                // Section A — AI Lookalike Suggestions (or clean auto-merged status banner)
+                if (searchQuery.isBlank()) {
+                    if (lookalikePairs.isNotEmpty()) {
+                        item(span = { GridItemSpan(3) }) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Text(
+                                    text = "AI Lookalike Suggestions (${lookalikePairs.size})",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFF8E8E93)
+                                )
 
-                            lookalikePairs.forEach { pair ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(Color(0xFF16161C))
-                                        .border(0.5.dp, Color(0xFF26262E), RoundedCornerShape(12.dp))
-                                        .padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
+                                lookalikePairs.forEach { pair ->
                                     Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(Color(0xFF16161C))
+                                            .border(0.5.dp, Color(0xFF26262E), RoundedCornerShape(12.dp))
+                                            .padding(12.dp),
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                        modifier = Modifier.weight(1f)
+                                        horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
-                                        Row(horizontalArrangement = Arrangement.spacedBy((-10).dp)) {
-                                            PersonCircleAvatar(
-                                                person = pair.personA,
-                                                size = 44.dp
-                                            )
-                                            PersonCircleAvatar(
-                                                person = pair.personB,
-                                                size = 44.dp
-                                            )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Row(horizontalArrangement = Arrangement.spacedBy((-10).dp)) {
+                                                PersonCircleAvatar(
+                                                    person = pair.personA,
+                                                    size = 44.dp
+                                                )
+                                                PersonCircleAvatar(
+                                                    person = pair.personB,
+                                                    size = 44.dp
+                                                )
+                                            }
+
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = "@${pair.personA.name.removePrefix("@")} & @${pair.personB.name.removePrefix("@")}",
+                                                    fontSize = 14.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Text(
+                                                    text = "${pair.personA.faceCount + pair.personB.faceCount} total photos • ${(pair.similarity * 100).toInt()}% match",
+                                                    fontSize = 12.sp,
+                                                    color = Color(0xFF0095F6),
+                                                    fontWeight = FontWeight.Medium,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
                                         }
 
-                                        Column {
-                                            Text(
-                                                text = "@${pair.personA.name.removePrefix("@")} & @${pair.personB.name.removePrefix("@")}",
-                                                fontSize = 13.5.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = Color.White,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                            Text(
-                                                text = "${pair.personA.faceCount + pair.personB.faceCount} photos • ${(pair.similarity * 100).toInt()}% match",
-                                                fontSize = 12.sp,
-                                                color = Color(0xFF0095F6),
-                                                fontWeight = FontWeight.Medium
-                                            )
-                                        }
-                                    }
-
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .height(32.dp)
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(Color(0xFF0095F6))
-                                                .bounceClick {
-                                                    scope.launch {
-                                                        val targetName = pair.personA.name.removePrefix("@")
-                                                        repository.mergeProfiles(
-                                                            targetId = pair.personA.personId,
-                                                            sourceIds = listOf(pair.personB.personId),
-                                                            finalName = targetName
-                                                        )
-                                                        selectedIds.remove(pair.personB.personId)
-                                                        Toast.makeText(
-                                                            context,
-                                                            "Merged into @$targetName",
-                                                            Toast.LENGTH_SHORT
-                                                        ).show()
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .height(32.dp)
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(Color(0xFF0095F6))
+                                                    .bounceClick {
+                                                        scope.launch {
+                                                            val targetName = pair.personA.name.removePrefix("@")
+                                                            repository.mergeProfiles(
+                                                                targetId = pair.personA.personId,
+                                                                sourceIds = listOf(pair.personB.personId),
+                                                                finalName = targetName
+                                                            )
+                                                            selectedIds.remove(pair.personB.personId)
+                                                            Toast.makeText(
+                                                                context,
+                                                                "Merged into @$targetName",
+                                                                Toast.LENGTH_SHORT
+                                                            ).show()
+                                                        }
                                                     }
-                                                }
-                                                .padding(horizontal = 12.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                text = "Merge",
-                                                fontSize = 12.5.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = Color.White
-                                            )
-                                        }
+                                                    .padding(horizontal = 12.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = "Merge",
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White
+                                                )
+                                            }
 
-                                        Box(
-                                            modifier = Modifier
-                                                .size(28.dp)
-                                                .clip(RoundedCornerShape(7.dp))
-                                                .background(Color(0xFF26262A))
-                                                .bounceClick {
-                                                    dismissedPairKeys.add(pair.pairKey)
-                                                },
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Close,
-                                                contentDescription = "Dismiss suggestion",
-                                                tint = Color(0xFF8E8E93),
-                                                modifier = Modifier.size(14.dp)
-                                            )
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(32.dp)
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(Color(0xFF26262A))
+                                                    .bounceClick {
+                                                        if (!dismissedPairKeys.contains(pair.pairKey)) {
+                                                            dismissedPairKeys.add(pair.pairKey)
+                                                        }
+                                                        OnboardingPreferences.addDismissedDuplicatePair(
+                                                            context,
+                                                            pair.pairKey
+                                                        )
+                                                    },
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Close,
+                                                    contentDescription = "Dismiss suggestion",
+                                                    tint = Color(0xFF8E8E93),
+                                                    modifier = Modifier.size(15.dp)
+                                                )
+                                            }
                                         }
                                     }
                                 }
+                            }
+                        }
+                    } else {
+                        item(span = { GridItemSpan(3) }) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 8.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFF16161C))
+                                    .border(0.5.dp, Color(0xFF26262E), RoundedCornerShape(10.dp))
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = Color(0xFF0095F6),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "All duplicate profiles have been automatically merged • Select any 2 profiles below to merge manually",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color(0xFF8E8E93)
+                                )
                             }
                         }
                     }
@@ -2936,11 +2999,8 @@ private fun DiagnosticStatRow(
 }
 
 private fun decodeEmbeddingBlob(blob: ByteArray): FloatArray? {
-    if (blob.isEmpty() || blob.size % 4 != 0) return null
-    val count = blob.size / 4
-    val floats = FloatArray(count)
-    ByteBuffer.wrap(blob).order(ByteOrder.nativeOrder()).asFloatBuffer().get(floats)
-    return floats
+    val floats = FaceEmbeddingExtractor.bytesToFloatArray(blob)
+    return if (floats.isNotEmpty()) floats else null
 }
 
 private fun cosineSimilarity(a: FloatArray, b: FloatArray): Float {

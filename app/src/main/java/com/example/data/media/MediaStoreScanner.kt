@@ -158,11 +158,12 @@ class MediaStoreScanner(
                 val insertedRowIds = mediaDao.insertMediaItems(listOf(entity))
                 val wasInserted = insertedRowIds.firstOrNull() != -1L
                 if (wasInserted) {
+                    val needsFaceIndexing = !entity.isVideo && !entity.isProcessedForFaces
                     return@withContext SyncDiffResult(
                         addedPhotosCount = if (entity.isVideo) 0 else 1,
                         addedVideosCount = if (entity.isVideo) 1 else 0,
                         deletedCount = 0,
-                        newlyInsertedPhotos = if (entity.isVideo) emptyList() else listOf(entity)
+                        newlyInsertedPhotos = if (needsFaceIndexing) listOf(entity) else emptyList()
                     )
                 }
             }
@@ -226,6 +227,7 @@ class MediaStoreScanner(
             // 2. Instant Addition Detection (addedIds = storeIds - roomIds)
             val addedIds = storeIds.filter { it !in roomIds }
             val addedPhotos = mutableListOf<MediaEntity>()
+            val addedUnindexedPhotos = mutableListOf<MediaEntity>()
             val addedVideos = mutableListOf<MediaEntity>()
 
             if (addedIds.isNotEmpty()) {
@@ -285,6 +287,9 @@ class MediaStoreScanner(
                                         addedVideos.add(item)
                                     } else {
                                         addedPhotos.add(item)
+                                        if (!item.isProcessedForFaces) {
+                                            addedUnindexedPhotos.add(item)
+                                        }
                                     }
                                 }
                             }
@@ -297,7 +302,7 @@ class MediaStoreScanner(
                 addedPhotosCount = addedPhotos.size,
                 addedVideosCount = addedVideos.size,
                 deletedCount = deletedIds.size,
-                newlyInsertedPhotos = addedPhotos
+                newlyInsertedPhotos = addedUnindexedPhotos
             )
         } catch (e: Exception) {
             Log.e(TAG, "Failed syncFastIdDiff", e)
@@ -310,7 +315,7 @@ class MediaStoreScanner(
      */
     suspend fun scanDeltaMedia(): Int = withContext(Dispatchers.IO) {
         val diff = syncFastIdDiff()
-        if (diff.addedPhotosCount > 0) {
+        if (diff.newlyInsertedPhotos.isNotEmpty()) {
             enqueueFaceIndexingWorker(ExistingWorkPolicy.APPEND_OR_REPLACE)
         }
         diff.addedPhotosCount
@@ -340,7 +345,7 @@ class MediaStoreScanner(
                 mediaDao.resetAllMediaProcessed()
                 mediaDao.markAllVideosProcessed()
                 enqueueFaceIndexingWorker(ExistingWorkPolicy.REPLACE)
-            } else if (diff.addedPhotosCount > 0 || unindexedPhotos > 0) {
+            } else if (diff.newlyInsertedPhotos.isNotEmpty() || unindexedPhotos > 0) {
                 enqueueFaceIndexingWorker(ExistingWorkPolicy.APPEND_OR_REPLACE)
             }
 
@@ -495,6 +500,10 @@ class MediaStoreScanner(
                 MediaStore.Files.getContentUri(volumeName, id)
         }
 
+        // Exclude InstaGallery Cards Exports (InstaCard_*) from face indexing so exported template cards
+        // never spawn duplicate profiles.
+        val isInstaCardExport = displayName.startsWith("InstaCard_", ignoreCase = true)
+
         return MediaEntity(
             mediaId = id,
             uri = itemUri.toString(),
@@ -505,7 +514,7 @@ class MediaStoreScanner(
             width = width,
             height = height,
             durationMs = duration,
-            isProcessedForFaces = isVideo,
+            isProcessedForFaces = isVideo || isInstaCardExport,
             hasFaces = false,
             isFavorite = false,
             isBookmarked = false

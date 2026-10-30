@@ -40,6 +40,7 @@ object OnboardingPreferences {
     private const val KEY_DEFAULT_CROP_MODE = "default_crop_mode_4x5"
     private const val KEY_STORY_DURATION_SECONDS = "story_duration_seconds"
     private const val KEY_DEFAULT_INSTACARD_TEMPLATE = "default_instacard_template"
+    private const val KEY_DISMISSED_DUPLICATE_PAIRS = "dismissed_duplicate_pair_keys"
 
     const val DEFAULT_PROFILE_BIO = "Capturing moments on device"
 
@@ -75,6 +76,9 @@ object OnboardingPreferences {
 
     private val _defaultInstaCardTemplateFlow = MutableStateFlow("OLED_DARK")
     val defaultInstaCardTemplateFlow: StateFlow<String> = _defaultInstaCardTemplateFlow.asStateFlow()
+
+    private val _dismissedDuplicatePairsFlow = MutableStateFlow<Set<String>>(emptySet())
+    val dismissedDuplicatePairsFlow: StateFlow<Set<String>> = _dismissedDuplicatePairsFlow.asStateFlow()
 
     private var appContext: Context? = null
     private var initialized = false
@@ -116,6 +120,9 @@ object OnboardingPreferences {
         _storyDurationSecondsFlow.value = prefs.getInt(KEY_STORY_DURATION_SECONDS, 5).coerceIn(3, 8)
         _defaultInstaCardTemplateFlow.value = prefs.getString(KEY_DEFAULT_INSTACARD_TEMPLATE, "OLED_DARK")
             ?: "OLED_DARK"
+        _dismissedDuplicatePairsFlow.value = prefs.getStringSet(KEY_DISMISSED_DUPLICATE_PAIRS, emptySet())
+            ?.toSet()
+            ?: emptySet()
 
         initialized = true
     }
@@ -310,6 +317,28 @@ object OnboardingPreferences {
             .putBoolean(KEY_SETUP_COMPLETED, completed)
             .apply()
         _isSetupCompleted.value = completed
+    }
+
+    fun getDismissedDuplicatePairs(context: Context): Set<String> {
+        init(context)
+        return _dismissedDuplicatePairsFlow.value
+    }
+
+    fun addDismissedDuplicatePair(pairKey: String) {
+        if (pairKey.isBlank()) return
+        val updated = _dismissedDuplicatePairsFlow.value + pairKey
+        _dismissedDuplicatePairsFlow.value = updated
+        appContext?.let { ctx ->
+            ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putStringSet(KEY_DISMISSED_DUPLICATE_PAIRS, updated)
+                .apply()
+        }
+    }
+
+    fun addDismissedDuplicatePair(context: Context, pairKey: String) {
+        init(context)
+        addDismissedDuplicatePair(pairKey)
     }
 
     fun resetOnboardingForRescan(context: Context) {

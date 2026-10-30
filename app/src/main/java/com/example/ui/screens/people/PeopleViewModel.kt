@@ -50,6 +50,15 @@ class PeopleViewModel(application: Application) : AndroidViewModel(application) 
 
     init {
         OnboardingPreferences.init(application)
+        viewModelScope.launch {
+            repository.runAutoDeduplication()
+        }
+    }
+
+    fun runAutoDeduplication() {
+        viewModelScope.launch {
+            repository.runAutoDeduplication()
+        }
     }
 
     private val _searchQuery = MutableStateFlow("")
@@ -57,7 +66,9 @@ class PeopleViewModel(application: Application) : AndroidViewModel(application) 
     private val _sortOrder = MutableStateFlow(PeopleSortOrder.MOST_POSTS)
     private val _isSelectionMode = MutableStateFlow(false)
     private val _selectedPersonIds = MutableStateFlow<Set<Long>>(emptySet())
-    private val _ignoredDuplicateKeys = MutableStateFlow<Set<String>>(emptySet())
+    private val _ignoredDuplicateKeys = MutableStateFlow(
+        OnboardingPreferences.getDismissedDuplicatePairs(application)
+    )
     private val _toastMessage = MutableStateFlow<String?>(null)
 
     private data class FilterSelectionTuple(
@@ -71,7 +82,11 @@ class PeopleViewModel(application: Application) : AndroidViewModel(application) 
 
     private val filterAndSelectionState = combine(
         combine(_searchQuery, _filterTab, _sortOrder) { q, tab, s -> Triple(q, tab, s) },
-        combine(_isSelectionMode, _selectedPersonIds, _ignoredDuplicateKeys) { selMode, selIds, ignored ->
+        combine(
+            _isSelectionMode,
+            _selectedPersonIds,
+            combine(_ignoredDuplicateKeys, OnboardingPreferences.dismissedDuplicatePairsFlow) { a, b -> a + b }
+        ) { selMode, selIds, ignored ->
             Triple(selMode, selIds, ignored)
         }
     ) { (query, tab, sort), (isSelecting, selected, ignored) ->
@@ -226,6 +241,7 @@ class PeopleViewModel(application: Application) : AndroidViewModel(application) 
     fun ignoreDuplicatePair(pair: Pair<PersonEntity, PersonEntity>) {
         val key = repository.pairKey(pair.first.personId, pair.second.personId)
         _ignoredDuplicateKeys.value = _ignoredDuplicateKeys.value + key
+        OnboardingPreferences.addDismissedDuplicatePair(getApplication(), key)
     }
 
     fun mergeSelectedPeople(targetName: String) {

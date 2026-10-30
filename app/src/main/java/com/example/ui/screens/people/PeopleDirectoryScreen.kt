@@ -99,6 +99,7 @@ import com.example.ui.theme.IgSurfaceHigh
 import com.example.ui.theme.IgSurfaceModal
 import com.example.ui.theme.IgTextPrimary
 import com.example.ui.theme.IgTextSecondary
+import com.example.ml.FaceEmbeddingExtractor
 import kotlinx.coroutines.delay
 import java.io.File
 
@@ -118,6 +119,10 @@ fun PeopleDirectoryScreen(
     var preselectedMergePersonId by remember { mutableStateOf<Long?>(null) }
     var longPressedPerson by remember { mutableStateOf<PersonEntity?>(null) }
     var personToRename by remember { mutableStateOf<PersonEntity?>(null) }
+
+    LaunchedEffect(Unit) {
+        viewModel.runAutoDeduplication()
+    }
 
     LaunchedEffect(uiState.toastMessage) {
         if (uiState.toastMessage != null) {
@@ -704,6 +709,16 @@ fun VisualDuplicateMergeCard(
     val personB = pair.second
     val nameA = personA.name.removePrefix("@")
     val nameB = personB.name.removePrefix("@")
+    val similarityPct = remember(personA.personId, personB.personId) {
+        val vecA = FaceEmbeddingExtractor.bytesToFloatArray(personA.centroidEmbeddingBlob)
+        val vecB = FaceEmbeddingExtractor.bytesToFloatArray(personB.centroidEmbeddingBlob)
+        val sim = if (vecA.isNotEmpty() && vecA.size == vecB.size) {
+            FaceEmbeddingExtractor.cosineSimilarity(vecA, vecB)
+        } else {
+            0.60f
+        }
+        (sim * 100f).toInt().coerceIn(52, 99)
+    }
 
     Row(
         modifier = Modifier
@@ -778,35 +793,38 @@ fun VisualDuplicateMergeCard(
             }
         }
 
-        // Center: "Same person?" + "@PersonA & @PersonB"
+        // Center: Two-line text with full weight so names never truncate prematurely
         Column(
             modifier = Modifier
                 .weight(1f)
                 .padding(horizontal = 10.dp)
         ) {
             Text(
-                text = "Same person?",
-                fontSize = 13.5.sp,
+                text = "@$nameA & @$nameB",
+                fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color.White
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
             Text(
-                text = "@$nameA & @$nameB",
+                text = "${personA.faceCount + personB.faceCount} total photos • $similarityPct% match",
                 fontSize = 12.sp,
-                color = Color(0xFF8E8E93),
+                color = Color(0xFF0095F6),
+                fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
         }
 
-        // Right: Solid #0095F6 "Merge" button + subtle ✕ dismiss icon
+        // Right: Solid #0095F6 "Merge" squircle button + 32x32 matte #26262A ✕ dismiss button
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .height(30.dp)
+                    .height(32.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .background(Color(0xFF0095F6))
                     .bounceClick { onMerge() }
@@ -815,20 +833,27 @@ fun VisualDuplicateMergeCard(
             ) {
                 Text(
                     text = "Merge",
-                    fontSize = 12.5.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
                     color = Color.White
                 )
             }
 
-            Icon(
-                imageVector = Icons.Default.Close,
-                contentDescription = "Dismiss duplicate suggestion",
-                tint = Color(0xFF8E8E93),
+            Box(
                 modifier = Modifier
-                    .size(18.dp)
-                    .clickable(onClick = onDismiss)
-            )
+                    .size(32.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF26262A))
+                    .bounceClick { onDismiss() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Dismiss duplicate suggestion",
+                    tint = Color(0xFF8E8E93),
+                    modifier = Modifier.size(15.dp)
+                )
+            }
         }
     }
 }

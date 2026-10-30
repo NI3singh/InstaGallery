@@ -35,6 +35,48 @@ class FaceEmbeddingExtractor(private val context: Context) {
         private const val TAG = "InstaGalleryML"
         private const val MODEL_ASSET_NAME = "mobilefacenet.tflite"
         const val FALLBACK_EMBEDDING_DIM = 192
+
+        fun floatArrayToBytes(floats: FloatArray): ByteArray {
+            val buffer = ByteBuffer.allocate(floats.size * 4).order(ByteOrder.LITTLE_ENDIAN)
+            for (f in floats) {
+                buffer.putFloat(f)
+            }
+            return buffer.array()
+        }
+
+        fun bytesToFloatArray(blob: ByteArray): FloatArray {
+            if (blob.isEmpty() || blob.size % 4 != 0) return FloatArray(0)
+            val buffer = ByteBuffer.wrap(blob).order(ByteOrder.LITTLE_ENDIAN)
+            val floats = FloatArray(blob.size / 4)
+            var sumSq = 0.0
+            for (i in floats.indices) {
+                val v = buffer.float
+                floats[i] = v
+                sumSq += (v * v).toDouble()
+            }
+            val norm = sqrt(sumSq).toFloat()
+            if (norm > 1e-6f) {
+                for (i in floats.indices) {
+                    floats[i] = floats[i] / norm
+                }
+            }
+            return floats
+        }
+
+        fun cosineSimilarity(a: FloatArray, b: FloatArray): Float {
+            val len = min(a.size, b.size)
+            if (len == 0) return 0f
+            var dot = 0f
+            var normA = 0f
+            var normB = 0f
+            for (i in 0 until len) {
+                dot += a[i] * b[i]
+                normA += a[i] * a[i]
+                normB += b[i] * b[i]
+            }
+            val denom = sqrt(normA) * sqrt(normB)
+            return if (denom > 1e-6f) (dot / denom).coerceIn(-1f, 1f) else 0f
+        }
     }
 
     private val lock = Any()

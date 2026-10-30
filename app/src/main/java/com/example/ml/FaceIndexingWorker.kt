@@ -116,12 +116,18 @@ class FaceIndexingWorker(
                 for (media in unindexedBatch) {
                     if (isStopped) break
 
-                    if (media.isVideo) {
+                    if (media.isVideo || media.displayName.startsWith("InstaCard_", ignoreCase = true)) {
                         mediaDao.updateMediaProcessed(
                             mediaId = media.mediaId,
                             isProcessed = true,
                             hasFaces = false
                         )
+                        continue
+                    }
+
+                    // Atomic compare-and-set single-flight claim so fast-lane and worker never race
+                    val claimed = mediaDao.atomicallyClaimMediaForIndexing(media.mediaId)
+                    if (claimed == 0) {
                         continue
                     }
 
@@ -150,17 +156,15 @@ class FaceIndexingWorker(
                             }
                         }
 
-                        mediaDao.updateMediaProcessed(
+                        mediaDao.updateMediaHasFaces(
                             mediaId = media.mediaId,
-                            isProcessed = true,
                             hasFaces = facesAssigned
                         )
                         processedAnyNewInThisRun = true
                     } catch (t: Throwable) {
                         Log.e(TAG, "Error processing photo ${media.mediaId}", t)
-                        mediaDao.updateMediaProcessed(
+                        mediaDao.updateMediaHasFaces(
                             mediaId = media.mediaId,
-                            isProcessed = true,
                             hasFaces = false
                         )
                     }
@@ -182,13 +186,12 @@ class FaceIndexingWorker(
                 }
             }
 
-            // Run Pass-2 Consolidation & Anchor Sweep after the photo loop finishes
+            // Run Pass-2 Consolidation, Anchor Sweep & Auto-Deduplication after the photo loop finishes
             if (!isStopped) {
                 if (processedAnyNewInThisRun) {
                     faceClusterManager.runPass2ConsolidationAndAnchorSweep()
                 }
-                personDao.syncAllPeoplePhotoCountsSql()
-                faceClusterManager.reloadClustersFromDb()
+                faceClusterManager.autoDeduplicateClonesAndHighMatches()
             }
 
             val finalTotal = mediaDao.getTotalMediaCount().firstOrNull() ?: processedCount

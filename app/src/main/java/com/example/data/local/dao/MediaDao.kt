@@ -323,6 +323,24 @@ interface MediaDao {
     @Query("UPDATE media_items SET isProcessedForFaces = 1, hasFaces = :hasFaces WHERE mediaId = :mediaId")
     suspend fun markMediaAsProcessed(mediaId: Long, hasFaces: Boolean)
 
+    @Query("UPDATE media_items SET isProcessedForFaces = 1 WHERE mediaId = :mediaId AND isProcessedForFaces = 0")
+    suspend fun atomicallyClaimMediaForIndexing(mediaId: Long): Int
+
+    @Query("UPDATE media_items SET hasFaces = :hasFaces WHERE mediaId = :mediaId")
+    suspend fun updateMediaHasFaces(mediaId: Long, hasFaces: Boolean)
+
+    @Query(
+        """
+        SELECT m.mediaId FROM media_items m
+        WHERE LOWER(m.displayName) LIKE '%screenshot%'
+          AND (SELECT COUNT(*) FROM media_person_cross_ref ref WHERE ref.mediaId = m.mediaId) >= 3
+        """
+    )
+    suspend fun getScreenshotGridCloneMediaIdsSync(): List<Long>
+
+    @Query("DELETE FROM media_person_cross_ref WHERE mediaId = :mediaId")
+    suspend fun deleteCrossRefsForMediaId(mediaId: Long)
+
     @Query(
         """
         UPDATE media_items 

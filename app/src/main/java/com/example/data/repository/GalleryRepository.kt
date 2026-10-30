@@ -73,13 +73,22 @@ class GalleryRepository(
     private var observerDebounceJob: Job? = null
     private var mediaStoreObserver: ContentObserver? = null
 
-    private val fastLaneIndexingMutex = Mutex()
+    private val faceClusterManager: FaceClusterManager
+        get() = clusterManager
+
+    private val fastLaneMutex = Mutex()
+    private val fastLaneIndexingMutex: Mutex
+        get() = fastLaneMutex
     private var fastLaneDetector: FaceDetectorProcessor? = null
     private var fastLaneEmbeddingExtractor: FaceEmbeddingExtractor? = null
 
     init {
         syncScope.launch {
             ensureDefaultCollectionsSeeded()
+            // Automatically merge and clean up any existing clone profiles or screenshot grid clones on launch
+            runCatching {
+                faceClusterManager.autoDeduplicateClonesAndHighMatches()
+            }
             if (hasAnyMediaPermission(appContext)) {
                 scheduleMediaUriTriggerWorker()
             }
@@ -285,19 +294,22 @@ class GalleryRepository(
             enqueueFaceIndexingWorker(ExistingWorkPolicy.APPEND_OR_REPLACE)
         }
         personDao.reconcilePeopleAfterMediaDeletion()
+        faceClusterManager.autoDeduplicateClonesAndHighMatches()
         diff
     }
 
     /**
      * 3.2 Fast-Lane In-Process Face Indexing.
-     * Immediately runs ML Kit + MobileFaceNet 192-D clustering in-memory for 1..5 newly arrived photos
-     * without waiting for WorkManager startup overhead.
+     * Guarded by fastLaneMutex and atomic compare-and-set SQLite claim so two coroutines can NEVER
+     * process the same mediaId concurrently.
      */
     suspend fun indexPhotosFastLane(photos: List<MediaEntity>) = withContext(Dispatchers.Default) {
-        val candidatePhotos = photos.filter { !it.isVideo }.take(5)
+        val candidatePhotos = photos.filter {
+            !it.isVideo && !it.displayName.startsWith("InstaCard_", ignoreCase = true)
+        }.take(5)
         if (candidatePhotos.isEmpty()) return@withContext
 
-        fastLaneIndexingMutex.withLock {
+        fastLaneMutex.withLock {
             val detector = fastLaneDetector ?: FaceDetectorProcessor(appContext).also {
                 fastLaneDetector = it
             }
@@ -307,15 +319,19 @@ class GalleryRepository(
 
             var anyPhotoProcessed = false
             for (photo in candidatePhotos) {
-                // Skip if already processed by a concurrent pass
-                val currentInDb = mediaDao.getMediaByIdSync(photo.mediaId) ?: continue
-                if (currentInDb.isProcessedForFaces) continue
+                // Atomic single-flight compare-and-set claim in SQLite
+                val claimed = mediaDao.atomicallyClaimMediaForIndexing(photo.mediaId)
+                if (claimed == 0) {
+                    continue
+                }
+
+                val currentInDb = mediaDao.getMediaByIdSync(photo.mediaId) ?: photo
 
                 try {
                     val detectedFaces = detector.processMedia(currentInDb)
                     val hasAssignedFaces = try {
                         if (detectedFaces.isNotEmpty()) {
-                            clusterManager.processDetectedFacesForMedia(
+                            faceClusterManager.processDetectedFacesForMedia(
                                 mediaId = currentInDb.mediaId,
                                 detectedFaces = detectedFaces,
                                 embeddingExtractor = extractor,
@@ -335,16 +351,17 @@ class GalleryRepository(
                         }
                     }
 
-                    mediaDao.markMediaAsProcessed(currentInDb.mediaId, hasFaces = hasAssignedFaces)
+                    mediaDao.updateMediaHasFaces(currentInDb.mediaId, hasFaces = hasAssignedFaces)
                     anyPhotoProcessed = true
                 } catch (t: Throwable) {
                     Log.e("GalleryRepository", "Fast-lane indexing error for photo ${photo.mediaId}", t)
-                    mediaDao.markMediaAsProcessed(currentInDb.mediaId, hasFaces = false)
+                    mediaDao.updateMediaHasFaces(currentInDb.mediaId, hasFaces = false)
                 }
             }
 
             if (anyPhotoProcessed) {
                 personDao.syncAllPeoplePhotoCountsSql()
+                faceClusterManager.autoDeduplicateClonesAndHighMatches()
             }
         }
 
@@ -644,10 +661,9 @@ class GalleryRepository(
 
     suspend fun mergePeople(sourceIds: List<Long>, targetId: Long, newName: String) = withContext(Dispatchers.IO) {
         val cleanName = newName.trim().removePrefix("@").trim()
-        personDao.mergePeople(sourceIds, targetId, cleanName)
-        clusterManager.invalidateCache()
+        faceClusterManager.mergePeople(sourceIds, targetId, cleanName)
         withContext(Dispatchers.Default) {
-            clusterManager.runPass2ConsolidationAndAnchorSweep()
+            faceClusterManager.runPass2ConsolidationAndAnchorSweep()
         }
     }
 
@@ -657,12 +673,15 @@ class GalleryRepository(
         finalName: String
     ) = withContext(Dispatchers.IO) {
         val cleanName = finalName.trim().removePrefix("@").trim()
-        personDao.mergePeople(
+        faceClusterManager.mergePeople(
             sourcePersonIds = sourceIds.filter { it != targetId },
             targetPersonId = targetId,
             newName = cleanName
         )
-        clusterManager.invalidateCache()
+    }
+
+    suspend fun runAutoDeduplication(): Int = withContext(Dispatchers.IO) {
+        faceClusterManager.autoDeduplicateClonesAndHighMatches()
     }
 
     suspend fun renamePerson(personId: Long, rawName: String) = withContext(Dispatchers.IO) {
