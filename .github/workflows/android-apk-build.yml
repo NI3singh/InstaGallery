@@ -9,8 +9,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_TAG: v2.0.0
-  APK_FILENAME: InstaGallery-v2.0.0.apk
+  RELEASE_TAG: v2.0.5
+  APK_FILENAME: InstaGallery-v2.0.5.apk
 
 jobs:
   build:
@@ -122,7 +122,7 @@ jobs:
       - name: Upload InstaGallery APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: InstaGallery-v2.0.0-APK
+          name: InstaGallery-v2.0.5-APK
           path: dist/${{ env.APK_FILENAME }}
           if-no-files-found: error
 
@@ -132,8 +132,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           APK_SIZE=$(du -h "dist/${APK_FILENAME}" | cut -f1)
+          APK_SHA256=$(sha256sum "dist/${APK_FILENAME}" | awk '{print $1}')
           cat << EOF > RELEASE_NOTES.md
-          ## 🚀 InstaGallery ${RELEASE_TAG} — Interactive Story Player, 1080p InstaCard Studio, Saved Collections & Relational Co-Occurrence Graph
+          ## 🚀 InstaGallery ${RELEASE_TAG} — Sub-Second Media Sync, My Profile Hub, Saved Reels & Interactive Settings Studio
 
           ### ⚡ Fast APK Download (\`${APK_SIZE}\` — Slim Optimized Build)
           - **Option 1 — Direct GitHub Release Asset**: Tap **\`${APK_FILENAME}\`** under **Assets** below.
@@ -142,38 +143,46 @@ jobs:
           - **Option 3 — High-Speed Global Proxy Mirror 2**:
             👉 **[⚡ Download via Fast Mirror 2 (\`${APK_FILENAME}\`)](https://gh-proxy.com/https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${APK_FILENAME})**
 
+          ### 🔒 APK Integrity (SHA-256)
+          \`\`\`text
+          ${APK_SHA256}
+          \`\`\`
+
           ### 📲 Installation Steps
           1. Download **\`${APK_FILENAME}\`** on your Android 8.0+ (API 26+) phone.
           2. Open the \`.apk\` file and allow *Install unknown apps* if prompted.
           3. Launch **InstaGallery** — all existing faces, profiles, captions, and bookmarks upgrade automatically via non-destructive SQLite migrations.
 
           ### ✨ What's New in ${RELEASE_TAG}
-          - **Full-Screen Interactive Story Player (\`StoryPlayerScreen\`)**:
-            - Smart 12-slide curation per person (*On This Day* flashbacks, *Favorite Memories*, and *Recent Captures*) with segmented 4.5s auto-advancing progress bars, subtle Ken Burns motion, tap left/right navigation, stationary press-and-hold pause with HUD fade-out, and swipe-down dismiss.
-          - **InstaCard 1080p Snapshot Studio (\`InstaCardStudio\`)**:
-            - Export and share razor-sharp \`1080p\` social cards in 3 templates (*OLED Dark*, *Ambient Glass*, and *Polaroid EXIF*) directly to \`Pictures/InstaGallery_Cards\` or the Android share sheet.
-          - **"Together With" Co-Occurrence & Solo Portrait Filters**:
-            - Filter any person's profile grid by *All Photos*, *Solo* portraits, or co-occurring duo photos (*Together With @PersonB*) powered by SQLite self-joins on \`media_person_cross_ref\`.
-          - **Interactive Collab Post Headers**:
-            - Overlapping dual avatars and \`@PersonA & @PersonB\` collab attribution on group photos with a 1-tap \`CollabAuthorsSheet\` to jump to any co-star's profile.
-          - **Instagram-Style Saved Collections Boards (\`SavedCollectionsScreen\`)**:
-            - Organize bookmarked memories into custom local boards (*Favorites & Highlights*, *Trips & Outings*, *Family & Friends*, *Wallpapers*, plus custom boards) with \`2x2\` mosaic covers, 3-column grid / vertical feed toggle, and instant real-time SQLite synchronization.
-          - **Native Instagram Dark Mode Captions, EXIF Inspector & Custom Heart Themes**:
-            - Add personal captions that replace raw camera filenames, inspect camera/lens/ISO metadata and tag people in 1 tap from the \`⋮\` sheet, and customize double-tap heart burst physics with 6 color themes.
+          - **Sub-Second Real-Time Media Sync & Fast-Lane Face Indexing**:
+            - Surgical URI \`ContentObserver\` and zero-I/O \`HashSet\` ID diffing detect new camera captures and deletions in under 50ms, triggering immediate priority face indexing for newly taken photos.
+          - **Primary "My Profile" Experience & Clean People Directory**:
+            - Set your own detected profile as **My Profile** (with your live face avatar in the bottom navigation bar), switch profiles via the \`@handle ⌄\` sheet, expand the *People in Your Gallery* discovery tray, or browse the searchable People Directory.
+          - **Navbar Re-Tap & Pull-to-Refresh with Smart Shuffle Engine**:
+            - Re-tap the active bottom navigation tab or pull down on *Home*, *Reels*, *Saved*, or *Profile* to run a fast delta sync and reshuffle your feed/Reels while keeping photos captured in the last 30 minutes pinned at the top.
+          - **Reels UI/UX Overhaul & Video Bookmarks**:
+            - Bookmark Reel videos into SQLite and custom Saved Collections, add personal video captions, enjoy clean 1-line attribution without raw camera filenames, and manage Reel tags/details from the native \`⋮\` options sheet.
+          - **Redesigned Saved Boards & Built-In Saved Reels Player**:
+            - Edge-to-edge \`2x2\` mosaic collection covers, dynamic *"X posts • Y reels"* counters, *All / Photos / Reels* filter pills, \`3x3\` Grid vs. Vertical Post Feed toggle, and a dedicated full-screen ExoPlayer modal for bookmarked Reels.
+          - **Settings & Activity Hub + 7 Dedicated Interactive Sub-Screens**:
+            - Flagship Instagram Dark Mode matte squircle controls (\`#26262A\`) and full-screen interactive sub-pages: *Edit Profile*, *Switch 'Me' Face*, *Gallery Sync & Face Scanner Console*, *Hidden & @Other Profiles Manager*, *Merge Duplicate Profiles Studio* (with live 192-D cosine similarity lookalike detection), *Feed, Aspect Ratio & Story Studio* (with live interactive mini-post preview), and *Database & Storage Inspector*.
           EOF
 
-          git tag -f "${RELEASE_TAG}"
-          git push origin "${RELEASE_TAG}" --force
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f "${RELEASE_TAG}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${RELEASE_TAG}" --force
 
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
             gh release upload "${RELEASE_TAG}" "dist/${APK_FILENAME}" --clobber
             gh release edit "${RELEASE_TAG}" \
-              --title "InstaGallery ${RELEASE_TAG} — Stories, 1080p InstaCard Studio, Saved Collections & Co-Occurrence Graph (${APK_SIZE})" \
+              --title "InstaGallery ${RELEASE_TAG} — Sub-Second Sync, My Profile, Saved Reels & Settings Studio (${APK_SIZE})" \
               --notes-file RELEASE_NOTES.md \
               --latest
           else
             gh release create "${RELEASE_TAG}" "dist/${APK_FILENAME}" \
-              --title "InstaGallery ${RELEASE_TAG} — Stories, 1080p InstaCard Studio, Saved Collections & Co-Occurrence Graph (${APK_SIZE})" \
+              --target "${GITHUB_SHA}" \
+              --title "InstaGallery ${RELEASE_TAG} — Sub-Second Sync, My Profile, Saved Reels & Settings Studio (${APK_SIZE})" \
               --notes-file RELEASE_NOTES.md \
               --latest
           fi

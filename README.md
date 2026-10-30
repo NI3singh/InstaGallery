@@ -12,11 +12,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/NI3singh/InstaGallery/releases/latest/download/InstaGallery-v2.0.0.apk">
+  <a href="https://github.com/NI3singh/InstaGallery/releases/latest/download/InstaGallery-v2.0.5.apk">
     <img src="https://img.shields.io/badge/Download-APK-0095F6?style=for-the-badge&logo=android&logoColor=white" alt="Download APK" />
   </a>
   <a href="https://github.com/NI3singh/InstaGallery/releases">
-    <img src="https://img.shields.io/badge/Releases-v2.0.0-833AB4?style=for-the-badge&logo=github&logoColor=white" alt="View releases" />
+    <img src="https://img.shields.io/badge/Releases-v2.0.5-833AB4?style=for-the-badge&logo=github&logoColor=white" alt="View releases" />
   </a>
   <img src="https://img.shields.io/badge/Android-8.0%2B%20(API%2026)-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Android 8.0 or newer" />
   <img src="https://img.shields.io/badge/Network-No%20INTERNET%20permission-222222?style=for-the-badge" alt="No INTERNET permission declared in the app manifest" />
@@ -35,7 +35,7 @@
 
 **InstaGallery** turns your device's local photos and videos into a personal, dark-mode social feed for the people and moments that matter to you. It indexes media with Android's `MediaStore`, detects faces on-device, and groups recurring faces into editable profiles such as `@Papa`, `@Maa`, `@Nitin`, and `@Rishi`.
 
-The result is a familiar social-style experience — posts, Stories, Reels, profile grids, likes, bookmarks, and multi-person tags — without requiring an account or remote gallery service for its core experience.
+The result is a familiar social-style experience — posts, Stories, Reels, Saved Collection boards, primary "My Profile" hub, likes, bookmarks, and multi-person tags — without requiring an account or remote gallery service for its core experience.
 
 > **Built for personal memories:** InstaGallery organizes local media and its own metadata. Tagging or merging profiles is not intended to move or delete the original camera-roll files.
 
@@ -43,41 +43,32 @@ The result is a familiar social-style experience — posts, Stories, Reels, prof
 
 ### 🏠 Home feed, Stories, and posts
 
-- **Local media feed:** browse photos and videos discovered through Android media storage while indexing continues in the background.
-- **People Stories tray:** face-crop avatars with gradient rings, plus an `@Other` group for media without a person assignment.
-- **Interactive posts:** double-tap to like, with an animated heart response.
-- **On-image person tags:** reveal linked `@Person` profiles from a post or its person badge.
-- **Multiple people per memory:** overlapping avatars represent photos associated with more than one person.
-- **Liked and bookmarked filters:** return to favorite memories quickly.
-- **Live indexing progress:** see processed-versus-total media counts while background face indexing runs.
-- **Stable feed ordering:** the randomized order is seeded for the current session, so ordinary state updates do not intentionally reshuffle the feed; the app-title action can trigger a reshuffle and media rescan.
-- **Manual tagging and media details:** add or remove person associations and inspect available file details such as dimensions, MIME type, and capture date.
+- **Sub-second local media sync:** surgical URI `ContentObserver` and zero-I/O `HashSet` ID diffing reflect new photos and deletions in under 50ms while fast-lane face indexing processes newly captured photos first.
+- **People Stories tray & interactive Story Player:** face-crop avatars with gradient rings open a curated 12-slide Story Player (*On This Day*, *Favorites*, *Recent*) with auto-advancing segmented bars, tap navigation, press-and-hold pause, and 1080p InstaCard export.
+- **Interactive posts:** double-tap to like with customizable 6-theme heart burst physics, add personal captions, and inspect EXIF metadata.
+- **On-image person tags & Collab headers:** reveal linked `@Person` profiles or tap overlapping Collab avatars (`@PersonA & @PersonB`) to jump to any co-star's profile.
+- **Navbar re-tap & pull-to-refresh shuffle:** re-tap the active bottom navigation icon or pull down to sync and reshuffle your feed while keeping photos taken in the last 30 minutes pinned at the top.
 
-### 🎬 Full-screen vertical Reels
+### 🎬 Full-screen vertical Reels & video bookmarks
 
-- Swipe vertically through local videos in a Reels-style player.
-- Tap to pause or resume; double-tap to like.
-- Use the action rail for likes, tagged people, bookmarks, Android's native share sheet, and mute controls.
-- Open Reel details to manage tags and inspect available metadata.
-- A managed Media3 `ExoPlayer` is bound to the settled page to reduce unnecessary player instances and prevent adjacent videos from playing together.
+- Swipe vertically through local videos in a Reels-style player with pull-to-refresh shuffle at the top page.
+- Bookmark Reel videos into SQLite and organize them into custom Saved Collection boards.
+- Add personal captions to Reel videos (replacing raw camera filenames) and manage person tags from the `⋮` options sheet.
+- A managed Media3 `ExoPlayer` is bound to the settled page to prevent background audio bleed.
 
-### 👥 People directory and face grouping
+### 🔖 Saved / Bookmarks boards & built-in Reel player
 
-- Detect faces locally using Google ML Kit.
-- Deskew detected face crops using the estimated head-roll angle before feature extraction.
-- Generate on-device facial descriptors using the TensorFlow Lite model when it is available, with a built-in 128-dimensional facial-geometry, HOG, and color-feature fallback.
-- Group detections into person profiles and maintain local links between people and media.
-- Review possible duplicate profiles, then merge profiles or dismiss the suggestion.
-- Sort the people directory by post count, name, or recency.
+- Organize bookmarked photos and Reels into custom local boards with edge-to-edge `2x2` mosaic covers and dynamic *"X posts • Y reels"* counters.
+- Filter any board by *All*, *Photos*, or *Reels*, and toggle between a `3x3` Grid and a scrollable vertical Post Feed.
+- Tap any saved video to launch the built-in full-screen Saved Reel ExoPlayer modal.
+
+### 👤 Primary "My Profile", People directory & Settings Studio
+
+- Set your own detected profile as **My Profile** (displaying your face avatar in the bottom navigation bar), quick-switch via `@handle ⌄`, or expand the *People in Your Gallery* discovery tray.
+- Filter any profile grid by *All*, *Solo* portraits, or *Together With @Friend* co-occurrence filters.
+- Full **Settings & Activity Hub** with 7 dedicated interactive sub-screens: *Edit Profile*, *Switch 'Me' Face*, *Gallery Sync & Face Scanner Console*, *Hidden & @Other Profiles Manager*, *Merge Duplicate Profiles Studio* (with live 192-D cosine similarity lookalike detection), *Feed, Aspect Ratio & Story Studio* (with interactive live preview), and *Database & Storage Inspector*.
 
 > Automatic face grouping is approximate and can make mistakes. Review suggested matches, correct tags, and merge profiles only when appropriate.
-
-### 👤 Editable person profiles
-
-- Rename automatically generated profiles, such as changing `Person 1` to `Papa`.
-- Choose a detected face crop as a profile avatar.
-- Browse separate photo and Reel grids with post, Reel, and total counts.
-- Remove a memory from a person's profile without deleting the original media file from the device.
 
 ## Privacy & data handling
 
@@ -92,11 +83,11 @@ InstaGallery is designed for local use. The current app manifest **does not decl
 
 ## Download and install
 
-The latest published release is **v2.0.0**.
+The latest published release is **v2.0.5**.
 
 <p align="center">
-  <a href="https://github.com/NI3singh/InstaGallery/releases/latest/download/InstaGallery-v2.0.0.apk">
-    <img src="https://img.shields.io/badge/Download-InstaGallery--v2.0.0.apk-0095F6?style=for-the-badge&logo=android&logoColor=white" alt="Download InstaGallery APK" />
+  <a href="https://github.com/NI3singh/InstaGallery/releases/latest/download/InstaGallery-v2.0.5.apk">
+    <img src="https://img.shields.io/badge/Download-InstaGallery--v2.0.5.apk-0095F6?style=for-the-badge&logo=android&logoColor=white" alt="Download InstaGallery APK" />
   </a>
   <br />
   <a href="https://github.com/NI3singh/InstaGallery/releases">View release notes and assets</a>
@@ -105,7 +96,7 @@ The latest published release is **v2.0.0**.
 ### Install on Android
 
 1. Open the APK link above on your Android phone.
-2. Open the downloaded `InstaGallery-v2.0.0.apk`. If Android prompts you, allow your browser or file manager to install unknown apps for this installation.
+2. Open the downloaded `InstaGallery-v2.0.5.apk`. If Android prompts you, allow your browser or file manager to install unknown apps for this installation.
 3. Launch InstaGallery and grant media access when prompted.
 4. Browse your local media. Face indexing may continue in the background after the initial scan begins.
 
@@ -113,13 +104,7 @@ The latest published release is **v2.0.0**.
 
 ### Verify the APK
 
-The published release asset reports this SHA-256 digest:
-
-```text
-1f52f1a2d3e4d7df1f0944028031db83e3ef5fdb69644339c6ec50f26686889b
-```
-
-After downloading, calculate the file's SHA-256 hash and compare it with the value above before installing. Verify the hash even when downloading through a mirror.
+Each GitHub Release publishes the exact SHA-256 digest of `InstaGallery-v2.0.5.apk` in the release notes. After downloading, calculate the file's SHA-256 hash and compare it with the published digest on the release page before installing.
 
 ## Build from source
 

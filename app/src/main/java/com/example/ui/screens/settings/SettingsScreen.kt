@@ -738,7 +738,26 @@ private fun SettingsMainHubContent(
             }
 
             item {
-                Spacer(modifier = Modifier.height(32.dp))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "InstaGallery v2.0.5",
+                        color = Color(0xFF6E6E77),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "100% On-Device • Zero Cloud Uploads",
+                        color = Color(0xFF4E4E57),
+                        fontSize = 11.sp
+                    )
+                }
+                Spacer(modifier = Modifier.height(24.dp))
             }
         }
     }
