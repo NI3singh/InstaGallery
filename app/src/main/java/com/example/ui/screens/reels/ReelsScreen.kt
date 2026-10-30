@@ -1,4 +1,4 @@
-// InstaGallery v1.0
+// InstaGallery v2.0
 package com.example.ui.screens.reels
 
 import android.content.Context
@@ -8,6 +8,7 @@ import android.net.Uri
 import android.view.TextureView
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
@@ -18,14 +19,17 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,21 +46,16 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FilledExtendedIcons
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.AspectRatio
+import androidx.compose.material.icons.outlined.CropFree
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Movie
-import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.OutlinedExtendedIcons
-import androidx.compose.material.icons.outlined.Send
 import androidx.compose.material.icons.outlined.VolumeOff
 import androidx.compose.material.icons.outlined.VolumeUp
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -75,8 +74,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -88,6 +89,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -105,19 +107,22 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import coil.compose.AsyncImage
-import com.example.data.local.HeartTheme
 import com.example.data.local.OnboardingPreferences
+import com.example.data.local.entity.MediaEntity
 import com.example.data.local.entity.MediaWithAuthors
 import com.example.data.repository.GalleryRepository
+import com.example.ui.components.CaptionEditorSheet
 import com.example.ui.components.HeartBurstInstance
 import com.example.ui.components.HeartThemePickerSheet
 import com.example.ui.components.InstaPullToRefreshBox
 import com.example.ui.components.RefreshableTab
+import com.example.ui.components.SaveToCollectionSheet
 import com.example.ui.components.TabRefreshManager
 import com.example.ui.components.TapHeartBurstOverlay
+import com.example.ui.components.bounceClick
+import com.example.ui.components.isMachineGeneratedFilename
 import com.example.ui.theme.IgBlack
 import com.example.ui.theme.IgBlue
-import com.example.ui.theme.IgRed
 import com.example.ui.theme.IgStoryGradient
 import com.example.ui.theme.IgSurfacePill
 import com.example.ui.theme.IgTextPrimary
@@ -140,8 +145,8 @@ fun ReelsScreen(
 ) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
-    val scope = rememberCoroutineScope()
-    val repository = remember(context) { GalleryRepository(context) }
+    val coroutineScope = rememberCoroutineScope()
+    val galleryRepository = remember(context) { GalleryRepository(context) }
 
     LaunchedEffect(context) {
         OnboardingPreferences.init(context)
@@ -151,6 +156,11 @@ fun ReelsScreen(
 
     val lifecycleOwner = LocalLifecycleOwner.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+
+    // Pressing Back while filtering Liked Reels returns to all Reels instead of exiting
+    BackHandler(enabled = uiState.onlyFavorites) {
+        viewModel.setFavoritesFilter(false)
+    }
 
     val videos = uiState.videos
     var refreshSeed by rememberSaveable { mutableLongStateOf(System.currentTimeMillis()) }
@@ -177,7 +187,7 @@ fun ReelsScreen(
             TabRefreshManager.refreshEvents.collect { tab ->
                 if (tab == RefreshableTab.REELS && !isRefreshing) {
                     isRefreshing = true
-                    runCatching { repository.performQuickRefreshSync() }
+                    runCatching { galleryRepository.performQuickRefreshSync() }
                     refreshSeed = System.nanoTime()
                     delay(250)
                     isRefreshing = false
@@ -188,9 +198,9 @@ fun ReelsScreen(
             isRefreshing = isRefreshing,
             onRefresh = {
                 if (!isRefreshing) {
-                    scope.launch {
+                    coroutineScope.launch {
                         isRefreshing = true
-                        runCatching { repository.performQuickRefreshSync() }
+                        runCatching { galleryRepository.performQuickRefreshSync() }
                         refreshSeed = System.nanoTime()
                         delay(250)
                         isRefreshing = false
@@ -227,7 +237,7 @@ fun ReelsScreen(
                     }
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = if (uiState.onlyFavorites) "No Favorite Reels Yet" else "No Videos Found",
+                        text = if (uiState.onlyFavorites) "No Liked Reels Yet" else "No Videos Found",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         color = IgTextPrimary
@@ -247,9 +257,9 @@ fun ReelsScreen(
                         Spacer(modifier = Modifier.height(16.dp))
                         Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(50))
+                                .clip(RoundedCornerShape(8.dp))
                                 .background(IgBlue)
-                                .clickable { viewModel.toggleFavoritesFilter() }
+                                .bounceClick { viewModel.setFavoritesFilter(false) }
                                 .padding(horizontal = 16.dp, vertical = 8.dp)
                         ) {
                             Text(
@@ -284,6 +294,20 @@ fun ReelsScreen(
     val activeBursts = remember { mutableStateListOf<HeartBurstInstance>() }
     var errorRetryCount by remember { mutableIntStateOf(0) }
 
+    // Caption & Save-to-Collection Sheet + Floating Toast State
+    var activeCaptionMediaId by remember { mutableStateOf<Long?>(null) }
+    var activeSaveCollectionMediaId by remember { mutableStateOf<Long?>(null) }
+    var showSavedFloatingToast by remember { mutableStateOf(false) }
+    var savedToastTrigger by remember { mutableIntStateOf(0) }
+    var savedToastMediaId by remember { mutableLongStateOf(-1L) }
+
+    LaunchedEffect(showSavedFloatingToast, savedToastTrigger) {
+        if (showSavedFloatingToast) {
+            delay(3000L)
+            showSavedFloatingToast = false
+        }
+    }
+
     // Configure ExoPlayer with hardware decoder fallback + audio focus so all phone videos play cleanly
     val exoPlayer = remember {
         val renderersFactory = DefaultRenderersFactory(context)
@@ -301,6 +325,12 @@ fun ReelsScreen(
                 repeatMode = Player.REPEAT_MODE_ONE
                 playWhenReady = true
             }
+    }
+
+    val pauseReelPlayback: () -> Unit = {
+        isPausedByTap = true
+        exoPlayer.playWhenReady = false
+        exoPlayer.pause()
     }
 
     // Attach Player.Listener to track first-frame rendering (eliminates flicker) and recover from codec errors
@@ -349,7 +379,7 @@ fun ReelsScreen(
         exoPlayer.volume = if (uiState.isMuted) 0f else 1f
     }
 
-    // Load video ONLY when settledMediaId actually changes (never on Like/Bookmark updates!)
+    // Load video ONLY when settledMediaId actually changes (never on Like/Bookmark/Caption updates!)
     LaunchedEffect(settledMediaId, settledMediaUri) {
         if (settledMediaId != -1L && settledMediaUri.isNotBlank()) {
             errorRetryCount = 0
@@ -357,6 +387,7 @@ fun ReelsScreen(
             isFastForward2x = false
             renderedFirstFrameMediaId = -1L
             playbackProgress = 0f
+            showSavedFloatingToast = false
             exoPlayer.setPlaybackParameters(PlaybackParameters.DEFAULT)
             exoPlayer.stop()
             exoPlayer.setMediaItem(MediaItem.fromUri(settledMediaUri))
@@ -422,10 +453,10 @@ fun ReelsScreen(
 
     val triggerReelsRefresh: () -> Unit = {
         if (!isRefreshing) {
-            scope.launch {
+            coroutineScope.launch {
                 isRefreshing = true
                 val previousLeadId = settledMediaId
-                runCatching { repository.performQuickRefreshSync() }
+                runCatching { galleryRepository.performQuickRefreshSync() }
                 avoidLeadMediaId = previousLeadId
                 refreshSeed = System.nanoTime()
                 if (shuffledVideos.isNotEmpty()) {
@@ -469,8 +500,9 @@ fun ReelsScreen(
                 modifier = Modifier.fillMaxSize()
             ) { page ->
                 val video = shuffledVideos[page]
+                val media = video.media
                 val isSettledPage = (page == settledPage)
-                val isFirstFrameReady = isSettledPage && (renderedFirstFrameMediaId == video.media.mediaId)
+                val isFirstFrameReady = isSettledPage && (renderedFirstFrameMediaId == media.mediaId)
 
                 // Smooth crossfade of thumbnail shield ONLY after ExoPlayer has rendered the first frame
                 val thumbnailAlpha by animateFloatAsState(
@@ -483,7 +515,7 @@ fun ReelsScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(IgBlack)
-                        .pointerInput(video.media.mediaId, video.media.isFavorite) {
+                        .pointerInput(media.mediaId, media.isFavorite) {
                             detectTapGestures(
                                 onDoubleTap = { tapOffset ->
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -495,8 +527,10 @@ fun ReelsScreen(
                                             rotationDeg = randomTilt
                                         )
                                     )
-                                    if (!video.media.isFavorite) {
-                                        viewModel.toggleFavorite(video.media.mediaId, false)
+                                    if (!media.isFavorite) {
+                                        coroutineScope.launch {
+                                            galleryRepository.toggleFavorite(media)
+                                        }
                                     }
                                 },
                                 onLongPress = {
@@ -534,8 +568,8 @@ fun ReelsScreen(
                     if (isSettledPage) {
                         ZeroFlickerTextureVideoPlayer(
                             exoPlayer = exoPlayer,
-                            videoWidth = activeVideoWidth.takeIf { it > 0 } ?: video.media.width,
-                            videoHeight = activeVideoHeight.takeIf { it > 0 } ?: video.media.height,
+                            videoWidth = activeVideoWidth.takeIf { it > 0 } ?: media.width,
+                            videoHeight = activeVideoHeight.takeIf { it > 0 } ?: media.height,
                             isFitMode = uiState.isFitMode,
                             modifier = Modifier.fillMaxSize()
                         )
@@ -544,8 +578,8 @@ fun ReelsScreen(
                     // Thumbnail Shield: stays visible until ExoPlayer renders first frame -> 0% flicker!
                     if (thumbnailAlpha > 0.01f) {
                         AsyncImage(
-                            model = video.media.uri,
-                            contentDescription = video.media.displayName,
+                            model = media.uri,
+                            contentDescription = media.displayName,
                             contentScale = contentScaleMode,
                             modifier = Modifier
                                 .fillMaxSize()
@@ -554,7 +588,7 @@ fun ReelsScreen(
                         )
                     }
 
-                    // Paused Indicator Overlay
+                    // 2.4 Center Play / Pause Overlay (Matches Instagram Reference: 68.dp dark translucent circle + 30.dp white Play icon)
                     AnimatedVisibility(
                         visible = isSettledPage && isPausedByTap,
                         enter = fadeIn() + scaleIn(initialScale = 0.8f),
@@ -565,14 +599,14 @@ fun ReelsScreen(
                             modifier = Modifier
                                 .size(68.dp)
                                 .clip(CircleShape)
-                                .background(Color.Black.copy(alpha = 0.55f)),
+                                .background(Color.Black.copy(alpha = 0.52f)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.PlayArrow,
                                 contentDescription = "Paused",
                                 tint = Color.White,
-                                modifier = Modifier.size(40.dp)
+                                modifier = Modifier.size(30.dp)
                             )
                         }
                     }
@@ -629,7 +663,7 @@ fun ReelsScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(240.dp)
+                            .height(220.dp)
                             .align(Alignment.BottomCenter)
                             .background(
                                 Brush.verticalGradient(
@@ -638,96 +672,200 @@ fun ReelsScreen(
                             )
                     )
 
-                    // Bottom-Left Overlay Details (Pure Standalone @Reels Identity)
+                    // 2.5 Clean Bottom-Left Overlay (Author + Date + Interactive Caption, No Music Ticker)
                     ReelsBottomOverlay(
                         video = video,
+                        onOpenCaptionEditor = {
+                            pauseReelPlayback()
+                            activeCaptionMediaId = media.mediaId
+                        },
                         modifier = Modifier
                             .align(Alignment.BottomStart)
-                            .padding(start = 16.dp, bottom = 36.dp)
+                            .padding(start = 16.dp, end = 76.dp, bottom = 28.dp)
                     )
 
-                    // Right-Side Vertical Action Rail (Pure Video Controls)
+                    // 2.3 Right-Side Vertical Action Rail (padding(end = 14.dp, bottom = 24.dp), spacedBy(22.dp))
                     ReelsActionRail(
-                        video = video,
+                        media = media,
                         isMuted = uiState.isMuted,
                         heartColor = heartTheme.primaryColor,
-                        onToggleFavorite = { viewModel.toggleFavorite(video.media.mediaId, video.media.isFavorite) },
-                        onLongPressFavorite = { showHeartThemeSheet = true },
-                        onToggleBookmark = { viewModel.toggleBookmark(video.media.mediaId, video.media.isBookmarked) },
-                        onToggleMute = { viewModel.toggleMute() },
+                        onToggleFavorite = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            coroutineScope.launch {
+                                galleryRepository.toggleFavorite(media)
+                            }
+                        },
+                        onLongPressFavorite = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            showHeartThemeSheet = true
+                        },
+                        onOpenCaptionEditor = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            pauseReelPlayback()
+                            activeCaptionMediaId = media.mediaId
+                        },
+                        onToggleBookmark = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            val wasBookmarked = media.isBookmarked
+                            coroutineScope.launch {
+                                galleryRepository.toggleBookmark(media)
+                            }
+                            if (!wasBookmarked) {
+                                savedToastMediaId = media.mediaId
+                                savedToastTrigger++
+                                showSavedFloatingToast = true
+                            } else {
+                                showSavedFloatingToast = false
+                            }
+                        },
+                        onLongPressBookmark = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            if (!media.isBookmarked) {
+                                coroutineScope.launch {
+                                    galleryRepository.toggleBookmark(media)
+                                }
+                            }
+                            showSavedFloatingToast = false
+                            pauseReelPlayback()
+                            activeSaveCollectionMediaId = media.mediaId
+                        },
+                        onShareVideo = {
+                            shareVideo(context, media.uri)
+                        },
+                        onToggleMute = {
+                            viewModel.toggleMute()
+                        },
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
-                            .padding(end = 14.dp, bottom = 36.dp)
+                            .padding(end = 14.dp, bottom = 24.dp)
                     )
                 }
             }
         }
 
-        // Top Overlay Bar (No Person Filter Chips)
+        // 2.4 Redesigned Top Bar (padding(horizontal = 16.dp, vertical = 14.dp))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.TopCenter)
-                .padding(top = 12.dp, start = 16.dp, end = 16.dp),
+                .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.clickable { triggerReelsRefresh() }
-            ) {
-                Text(
-                    text = if (uiState.onlyFavorites) "Favorite Reels" else "Reels",
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
-                Icon(
-                    imageVector = Icons.Default.KeyboardArrowDown,
-                    contentDescription = "Shuffle Reels",
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
+            // Left: "Reels" (22.sp, FontWeight.Bold, Color.White) — no downward chevron
+            Text(
+                text = "Reels",
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                modifier = Modifier
+                    .bounceClick { triggerReelsRefresh() }
+                    .testTag("reels_header_title")
+            )
 
+            // Right (spacedBy(10.dp)): Fit / Fill Aspect Ratio Button + Liked Reels Filter Button
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // Crop / Fit Aspect Ratio Pill
-                Box(
+                // Fit / Fill Aspect Ratio Button (matte squircle icon+label pill, height = 32.dp, zero border)
+                Row(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(50))
-                        .background(Color.Black.copy(alpha = 0.45f))
-                        .border(1.dp, Color.White.copy(alpha = 0.3f), RoundedCornerShape(50))
-                        .clickable { viewModel.toggleFitMode() }
-                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                        .height(32.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF26262A).copy(alpha = 0.85f))
+                        .bounceClick { viewModel.toggleFitMode() }
+                        .padding(horizontal = 10.dp)
+                        .testTag("reels_aspect_ratio_button"),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
+                    Icon(
+                        imageVector = if (uiState.isFitMode) Icons.Outlined.AspectRatio else Icons.Outlined.CropFree,
+                        contentDescription = if (uiState.isFitMode) "Fit Mode" else "Fill Mode",
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = if (uiState.isFitMode) "Fit" else "Crop",
-                        fontSize = 11.5.sp,
+                        text = if (uiState.isFitMode) "Fit" else "Fill",
+                        fontSize = 12.5.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = Color.White
                     )
                 }
 
+                // Liked Reels Filter Button (32.dp squircle button, RoundedCornerShape(8.dp))
                 Box(
                     modifier = Modifier
-                        .size(36.dp)
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF26262A).copy(alpha = 0.85f))
                         .combinedClickable(
-                            onClick = { viewModel.toggleFavoritesFilter() },
-                            onLongClick = { showHeartThemeSheet = true }
-                        ),
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                viewModel.toggleFavoritesFilter()
+                            },
+                            onLongClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                showHeartThemeSheet = true
+                            }
+                        )
+                        .testTag("reels_liked_filter_button"),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = if (uiState.onlyFavorites) FilledExtendedIcons.Favorite else OutlinedExtendedIcons.FavoriteBorder,
-                        contentDescription = "Filter Favorite Reels",
+                        contentDescription = "Filter Liked Reels",
                         tint = if (uiState.onlyFavorites) heartTheme.primaryColor else Color.White,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                 }
+            }
+        }
+
+        // Floating "Saved • Add to Collection ▸" Bottom Toast Bar (3000ms)
+        AnimatedVisibility(
+            visible = showSavedFloatingToast,
+            enter = slideInVertically { it } + fadeIn(),
+            exit = slideOutVertically { it } + fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 22.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFF18181E).copy(alpha = 0.96f))
+                    .border(0.5.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(12.dp))
+                    .clickable {
+                        showSavedFloatingToast = false
+                        pauseReelPlayback()
+                        val targetId = if (savedToastMediaId != -1L) savedToastMediaId else settledMediaId
+                        if (targetId != -1L) {
+                            activeSaveCollectionMediaId = targetId
+                        }
+                    }
+                    .padding(horizontal = 14.dp, vertical = 11.dp)
+                    .testTag("reels_saved_floating_toast"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Saved",
+                    fontSize = 13.5.sp,
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "Add to Collection ▸",
+                    fontSize = 13.5.sp,
+                    color = Color(0xFF0095F6),
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
 
@@ -739,6 +877,43 @@ fun ReelsScreen(
                     showHeartThemeSheet = false
                 },
                 onDismiss = { showHeartThemeSheet = false }
+            )
+        }
+
+        val captionTargetVideo = remember(shuffledVideos, activeCaptionMediaId) {
+            activeCaptionMediaId?.let { targetId ->
+                shuffledVideos.firstOrNull { it.media.mediaId == targetId }
+            }
+        }
+
+        if (captionTargetVideo != null) {
+            val formattedDate = remember(captionTargetVideo.media.dateAddedSeconds) {
+                SimpleDateFormat("MMMM d, yyyy", Locale.getDefault())
+                    .format(Date(captionTargetVideo.media.dateAddedSeconds * 1000L))
+            }
+            CaptionEditorSheet(
+                media = captionTargetVideo.media,
+                primaryAuthorName = "Reels",
+                formattedDate = formattedDate,
+                onSaveCaption = { newCaption ->
+                    coroutineScope.launch {
+                        galleryRepository.updateMediaCaption(captionTargetVideo.media.mediaId, newCaption)
+                    }
+                },
+                onDismiss = { activeCaptionMediaId = null }
+            )
+        }
+
+        val collectionTargetVideo = remember(shuffledVideos, activeSaveCollectionMediaId) {
+            activeSaveCollectionMediaId?.let { targetId ->
+                shuffledVideos.firstOrNull { it.media.mediaId == targetId }
+            }
+        }
+
+        if (collectionTargetVideo != null) {
+            SaveToCollectionSheet(
+                media = collectionTargetVideo.media,
+                onDismiss = { activeSaveCollectionMediaId = null }
             )
         }
 
@@ -913,189 +1088,266 @@ private fun applyVideoScaleMatrix(
     textureView.setTransform(matrix)
 }
 
+/**
+ * Clean, zero-ripple, spring-bouncing action rail icon composable.
+ * Completely eliminates the transparent square ripple box when tapping Like/Comment/Save/Share.
+ */
 @kotlin.OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ReelsActionRail(
-    video: MediaWithAuthors,
-    isMuted: Boolean,
-    heartColor: Color,
-    onToggleFavorite: () -> Unit,
-    onLongPressFavorite: () -> Unit,
-    onToggleBookmark: () -> Unit,
-    onToggleMute: () -> Unit,
+private fun ReelActionButton(
+    icon: ImageVector,
+    label: String? = null,
+    tint: Color = Color.White,
+    iconSize: Dp = 28.dp,
+    hasDotBadge: Boolean = false,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.90f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "reel_action_scale"
+    )
+
+    val clickModifier = if (onLongClick != null) {
+        Modifier
+            .scale(scale)
+            .combinedClickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
+    } else {
+        Modifier.bounceClick(onClick = onClick)
+    }
 
     Column(
-        modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        modifier = modifier.then(clickModifier)
     ) {
-        // 1. Heart (Favorite) button (long-press opens Heart Color Picker)
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.combinedClickable(
-                onClick = onToggleFavorite,
-                onLongClick = onLongPressFavorite
-            )
-        ) {
-            Icon(
-                imageVector = if (video.media.isFavorite) FilledExtendedIcons.Favorite else OutlinedExtendedIcons.FavoriteBorder,
-                contentDescription = "Like",
-                tint = if (video.media.isFavorite) heartColor else Color.White,
-                modifier = Modifier.size(28.dp)
-            )
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = if (video.media.isFavorite) "Liked" else "Like",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                color = Color.White
-            )
-        }
-
-        // 2. Bookmark / Save button
-        IconButton(
-            onClick = onToggleBookmark,
-            modifier = Modifier.size(32.dp)
-        ) {
-            Icon(
-                imageVector = if (video.media.isBookmarked) Icons.Default.Bookmark else Icons.Outlined.BookmarkBorder,
-                contentDescription = if (video.media.isBookmarked) "Saved" else "Save",
-                tint = Color.White,
-                modifier = Modifier.size(26.dp)
-            )
-        }
-
-        // 3. Share paper-plane button (Intent.ACTION_SEND)
-        IconButton(
-            onClick = { shareVideo(context, video.media.uri) },
-            modifier = Modifier.size(32.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Outlined.Send,
-                contentDescription = "Share",
-                tint = Color.White,
-                modifier = Modifier.size(26.dp)
-            )
-        }
-
-        // 4. Mute / Unmute Speaker button
-        IconButton(
-            onClick = onToggleMute,
-            modifier = Modifier.size(32.dp)
-        ) {
-            Icon(
-                imageVector = if (isMuted) Icons.Outlined.VolumeOff else Icons.Outlined.VolumeUp,
-                contentDescription = if (isMuted) "Unmute" else "Mute",
-                tint = Color.White,
-                modifier = Modifier.size(26.dp)
-            )
-        }
-
-        // 5. Bottom rounded square video thumbnail
         Box(
-            modifier = Modifier
-                .size(32.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .border(2.dp, Color.White, RoundedCornerShape(8.dp))
+            modifier = Modifier.size(28.dp),
+            contentAlignment = Alignment.Center
         ) {
-            AsyncImage(
-                model = video.media.uri,
-                contentDescription = "Video thumbnail",
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
+            Icon(
+                imageVector = icon,
+                contentDescription = label ?: "Reel action",
+                tint = tint,
+                modifier = Modifier.size(iconSize)
+            )
+            if (hasDotBadge) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF0095F6))
+                )
+            }
+        }
+        if (label != null) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = label,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.Medium,
+                color = Color.White.copy(alpha = 0.9f)
             )
         }
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun ReelsActionRail(
+    media: MediaEntity,
+    isMuted: Boolean,
+    heartColor: Color,
+    onToggleFavorite: () -> Unit,
+    onLongPressFavorite: () -> Unit,
+    onOpenCaptionEditor: () -> Unit,
+    onToggleBookmark: () -> Unit,
+    onLongPressBookmark: () -> Unit,
+    onShareVideo: () -> Unit,
+    onToggleMute: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(22.dp)
+    ) {
+        // 1. Heart (Like) Button
+        ReelActionButton(
+            icon = if (media.isFavorite) FilledExtendedIcons.Favorite else OutlinedExtendedIcons.FavoriteBorder,
+            label = if (media.isFavorite) "Liked" else null,
+            tint = if (media.isFavorite) heartColor else Color.White,
+            iconSize = 28.dp,
+            onClick = onToggleFavorite,
+            onLongClick = onLongPressFavorite,
+            modifier = Modifier.testTag("reel_like_button_${media.mediaId}")
+        )
+
+        // 2. Comment / Caption Button (NEW)
+        ReelActionButton(
+            icon = OutlinedExtendedIcons.ChatBubbleOutline,
+            label = null,
+            tint = Color.White,
+            iconSize = 27.dp,
+            hasDotBadge = !media.customCaption.isNullOrBlank(),
+            onClick = onOpenCaptionEditor,
+            modifier = Modifier.testTag("reel_caption_button_${media.mediaId}")
+        )
+
+        // 3. Bookmark (Save) Button
+        ReelActionButton(
+            icon = if (media.isBookmarked) FilledExtendedIcons.Bookmark else OutlinedExtendedIcons.BookmarkBorder,
+            label = null,
+            tint = Color.White,
+            iconSize = 28.dp,
+            onClick = onToggleBookmark,
+            onLongClick = onLongPressBookmark,
+            modifier = Modifier.testTag("reel_bookmark_button_${media.mediaId}")
+        )
+
+        // 4. Share Paper Plane Button
+        ReelActionButton(
+            icon = OutlinedExtendedIcons.Send,
+            label = null,
+            tint = Color.White,
+            iconSize = 26.dp,
+            onClick = onShareVideo,
+            modifier = Modifier.testTag("reel_share_button_${media.mediaId}")
+        )
+
+        // 5. Mute / Unmute Audio Button inside 36.dp dark translucent circle (no square thumbnail below)
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(Color(0xFF18181C).copy(alpha = 0.75f))
+                .bounceClick { onToggleMute() }
+                .testTag("reel_mute_button_${media.mediaId}"),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = if (isMuted) Icons.Outlined.VolumeOff else Icons.Outlined.VolumeUp,
+                contentDescription = if (isMuted) "Unmute" else "Mute",
+                tint = Color.White,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
 @Composable
 fun ReelsBottomOverlay(
     video: MediaWithAuthors,
+    onOpenCaptionEditor: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val formattedDate = remember(video.media.dateAddedSeconds) {
-        val date = Date(video.media.dateAddedSeconds * 1000L)
+    val media = video.media
+    val formattedDate = remember(media.dateAddedSeconds) {
+        val date = Date(media.dateAddedSeconds * 1000L)
         val sdf = SimpleDateFormat("MMMM d, yyyy", Locale.getDefault())
         sdf.format(date)
     }
 
+    val cleanStem = remember(media.displayName) {
+        media.displayName.substringBeforeLast('.').trim()
+    }
+    val isCleanHumanTitle = remember(media.displayName, cleanStem) {
+        cleanStem.isNotEmpty() &&
+            !isMachineGeneratedFilename(media.displayName) &&
+            !cleanStem.contains('[') &&
+            !cleanStem.contains(']')
+    }
+
     Column(
-        modifier = modifier.width(280.dp),
+        modifier = modifier,
         horizontalAlignment = Alignment.Start
     ) {
-        // Standalone @Reels Identity Badge Row
+        // 2.5 Clean Author & Date Header: 34.dp circular Sunset gradient badge + "@Reels" + " • $formattedDate"
         Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(32.dp)
+                    .size(34.dp)
                     .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.65f))
-                    .border(2.dp, IgStoryGradient, CircleShape),
+                    .background(Color(0xFF141418))
+                    .border(1.8.dp, IgStoryGradient, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Outlined.Movie,
+                    imageVector = OutlinedExtendedIcons.Movie,
                     contentDescription = "Reels",
                     tint = Color.White,
                     modifier = Modifier.size(16.dp)
                 )
             }
 
+            Spacer(modifier = Modifier.width(10.dp))
+
             Text(
                 text = "@Reels",
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold,
+                fontSize = 14.5.sp,
+                fontWeight = FontWeight.Bold,
                 color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Text(
+                text = " • $formattedDate",
+                fontSize = 13.sp,
+                color = Color.White.copy(alpha = 0.78f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // Subtitle below: "${video.media.displayName} • ${formattedDate}"
-        Text(
-            text = "${video.media.displayName} • $formattedDate",
-            fontSize = 13.sp,
-            color = Color.White.copy(alpha = 0.9f),
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // Scrolling audio ticker pill below: "${video.media.displayName} • Local Video Audio"
-        Row(
+        // Interactive Caption Line (padding(top = 8.dp))
+        Box(
             modifier = Modifier
-                .clip(RoundedCornerShape(50))
-                .background(Color.Black.copy(alpha = 0.5f))
-                .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(50))
-                .padding(horizontal = 10.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                .padding(top = 8.dp)
+                .bounceClick { onOpenCaptionEditor() }
+                .testTag("reel_bottom_caption_${media.mediaId}")
         ) {
-            Icon(
-                imageVector = Icons.Outlined.MusicNote,
-                contentDescription = "Audio",
-                tint = Color.White,
-                modifier = Modifier.size(13.dp)
-            )
-            Box(modifier = Modifier.width(180.dp)) {
-                Text(
-                    text = "${video.media.displayName} • Local Video Audio",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = Color.White,
-                    maxLines = 1,
-                    modifier = Modifier.basicMarquee()
-                )
+            when {
+                !media.customCaption.isNullOrBlank() -> {
+                    Text(
+                        text = media.customCaption,
+                        fontSize = 14.sp,
+                        color = Color.White,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                isCleanHumanTitle -> {
+                    Text(
+                        text = cleanStem,
+                        fontSize = 13.5.sp,
+                        color = Color.White.copy(alpha = 0.9f),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                else -> {
+                    Text(
+                        text = "Add a caption...",
+                        fontSize = 13.sp,
+                        color = Color.White.copy(alpha = 0.65f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
     }

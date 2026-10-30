@@ -41,7 +41,7 @@ interface MediaDao {
     fun getFavoritePhotosWithAuthors(): Flow<List<MediaWithAuthors>>
 
     @Transaction
-    @Query("SELECT * FROM media_items WHERE isVideo = 0 AND isBookmarked = 1 ORDER BY dateAddedSeconds DESC")
+    @Query("SELECT * FROM media_items WHERE isBookmarked = 1 ORDER BY dateAddedSeconds DESC")
     fun getBookmarkedPhotosWithAuthors(): Flow<List<MediaWithAuthors>>
 
     @Transaction
@@ -420,6 +420,6 @@ interface MediaDao {
     fun getSoloMediaForPersonFlow(personId: Long): Flow<List<MediaWithAuthors>>
 
     @Transaction
-    @Query("SELECT * FROM media_items WHERE isBookmarked = 1 AND isVideo = 0 ORDER BY dateAddedSeconds DESC")
+    @Query("SELECT * FROM media_items WHERE isBookmarked = 1 ORDER BY dateAddedSeconds DESC")
     fun getAllBookmarkedPhotosWithAuthorsFlow(): Flow<List<MediaWithAuthors>>
 }

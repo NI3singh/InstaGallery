@@ -142,7 +142,7 @@ class GalleryRepository(
     val photosWithAuthors: Flow<List<MediaWithAuthors>> = filterMediaAuthorsToVisible(mediaDao.getPhotosWithAuthors())
     val videosWithAuthors: Flow<List<MediaWithAuthors>> = filterMediaAuthorsToVisible(mediaDao.getVideosWithAuthors())
     val favoritePhotosWithAuthors: Flow<List<MediaWithAuthors>> = filterMediaAuthorsToVisible(mediaDao.getFavoritePhotosWithAuthors())
-    val bookmarkedPhotosWithAuthors: Flow<List<MediaWithAuthors>> = filterMediaAuthorsToVisible(mediaDao.getBookmarkedPhotosWithAuthors())
+    val bookmarkedPhotosWithAuthors: Flow<List<MediaWithAuthors>> = filterMediaAuthorsToVisible(mediaDao.getAllBookmarkedPhotosWithAuthorsFlow())
 
     val unindexedCount: Flow<Int> = mediaDao.getUnindexedPhotoCountFlow()
     val unindexedPhotoCount: Flow<Int> = mediaDao.getUnindexedPhotoCountFlow()
@@ -486,11 +486,13 @@ class GalleryRepository(
 
     fun getFacesForPerson(personId: Long): Flow<List<FaceEntity>> = personDao.getFacesForPerson(personId)
 
-    suspend fun toggleFavorite(mediaId: Long, currentFavorite: Boolean) {
+    suspend fun toggleFavorite(mediaId: Long, currentFavorite: Boolean) = withContext(Dispatchers.IO) {
         mediaDao.setFavorite(mediaId, !currentFavorite)
     }
 
-    suspend fun setFavorite(mediaId: Long, isFavorite: Boolean) {
+    suspend fun toggleFavorite(media: MediaEntity) = toggleFavorite(media.mediaId, media.isFavorite)
+
+    suspend fun setFavorite(mediaId: Long, isFavorite: Boolean) = withContext(Dispatchers.IO) {
         mediaDao.setFavorite(mediaId, isFavorite)
     }
 
@@ -545,10 +547,20 @@ class GalleryRepository(
         }
     }
 
+    fun getAllBookmarkedPhotosWithAuthorsFlow(): Flow<List<MediaWithAuthors>> =
+        bookmarkedPhotosWithAuthors
+
     suspend fun createCollection(rawName: String): Long = withContext(Dispatchers.IO) {
         val clean = rawName.trim()
         if (clean.isEmpty()) return@withContext -1L
         collectionDao.insertCollection(CollectionEntity(name = clean))
+    }
+
+    suspend fun renameCollection(collectionId: Long, newName: String) = withContext(Dispatchers.IO) {
+        val clean = newName.trim()
+        if (clean.isNotEmpty()) {
+            collectionDao.renameCollection(collectionId, clean)
+        }
     }
 
     suspend fun deleteCollection(collectionId: Long) = withContext(Dispatchers.IO) {
@@ -834,6 +846,23 @@ class GalleryRepository(
         }
         mediaDao.syncAllMediaHasFaces()
         clusterManager.invalidateCache()
+    }
+
+    val totalDetectedFacesCount: Flow<Int> = personDao.getTotalDetectedFacesCountFlow()
+
+    suspend fun restorePersonFromOther(personId: Long) = restorePersonFromOtherSql(personId)
+
+    suspend fun restoreAllHiddenPeople(personIds: List<Long>) = withContext(Dispatchers.IO) {
+        for (id in personIds) {
+            personDao.unhidePersonFromOther(id)
+        }
+        clusterManager.invalidateCache()
+    }
+
+    suspend fun runFullStorageAndAvatarVerification(): Int = withContext(Dispatchers.IO) {
+        val count = mediaStoreScanner.scanFullAndReconcile()
+        repairAndSyncDatabaseCounts()
+        count
     }
 
     fun findPossibleDuplicatePair(

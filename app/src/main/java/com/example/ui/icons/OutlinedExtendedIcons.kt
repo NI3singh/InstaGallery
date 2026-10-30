@@ -842,3 +842,93 @@ val Icons.Outlined.AddAPhoto: ImageVector
         return _addAPhoto!!
     }
 private var _addAPhoto: ImageVector? = null
+
+val Icons.Outlined.AspectRatio: ImageVector
+    get() {
+        if (_aspectRatio != null) return _aspectRatio!!
+        _aspectRatio = materialIcon(name = "Outlined.AspectRatio") {
+            materialPath {
+                moveTo(19.0f, 12.0f)
+                horizontalLineToRelative(-2.0f)
+                verticalLineToRelative(3.0f)
+                horizontalLineToRelative(-3.0f)
+                verticalLineToRelative(2.0f)
+                horizontalLineToRelative(5.0f)
+                verticalLineToRelative(-5.0f)
+                close()
+                moveTo(7.0f, 9.0f)
+                horizontalLineToRelative(3.0f)
+                verticalLineTo(7.0f)
+                horizontalLineTo(5.0f)
+                verticalLineToRelative(5.0f)
+                horizontalLineToRelative(2.0f)
+                verticalLineTo(9.0f)
+                close()
+                moveTo(21.0f, 3.0f)
+                horizontalLineTo(3.0f)
+                curveToRelative(-1.1f, 0.0f, -2.0f, 0.9f, -2.0f, 2.0f)
+                verticalLineToRelative(14.0f)
+                curveToRelative(0.0f, 1.1f, 0.9f, 2.0f, 2.0f, 2.0f)
+                horizontalLineToRelative(18.0f)
+                curveToRelative(1.1f, 0.0f, 2.0f, -0.9f, 2.0f, -2.0f)
+                verticalLineTo(5.0f)
+                curveToRelative(0.0f, -1.1f, -0.9f, -2.0f, -2.0f, -2.0f)
+                close()
+                moveTo(21.0f, 19.01f)
+                horizontalLineTo(3.0f)
+                verticalLineTo(4.99f)
+                horizontalLineToRelative(18.0f)
+                verticalLineToRelative(14.02f)
+                close()
+            }
+        }
+        return _aspectRatio!!
+    }
+private var _aspectRatio: ImageVector? = null
+
+val Icons.Outlined.CropFree: ImageVector
+    get() {
+        if (_cropFree != null) return _cropFree!!
+        _cropFree = materialIcon(name = "Outlined.CropFree") {
+            materialPath {
+                moveTo(3.0f, 5.0f)
+                verticalLineToRelative(4.0f)
+                horizontalLineToRelative(2.0f)
+                verticalLineTo(5.0f)
+                horizontalLineToRelative(4.0f)
+                verticalLineTo(3.0f)
+                horizontalLineTo(5.0f)
+                curveToRelative(-1.1f, 0.0f, -2.0f, 0.9f, -2.0f, 2.0f)
+                close()
+                moveTo(5.0f, 15.0f)
+                horizontalLineTo(3.0f)
+                verticalLineToRelative(4.0f)
+                curveToRelative(0.0f, 1.1f, 0.9f, 2.0f, 2.0f, 2.0f)
+                horizontalLineToRelative(4.0f)
+                verticalLineToRelative(-2.0f)
+                horizontalLineTo(5.0f)
+                verticalLineToRelative(-4.0f)
+                close()
+                moveTo(19.0f, 19.0f)
+                horizontalLineToRelative(-4.0f)
+                verticalLineToRelative(2.0f)
+                horizontalLineToRelative(4.0f)
+                curveToRelative(1.1f, 0.0f, 2.0f, -0.9f, 2.0f, -2.0f)
+                verticalLineToRelative(-4.0f)
+                horizontalLineToRelative(-2.0f)
+                verticalLineToRelative(4.0f)
+                close()
+                moveTo(19.0f, 3.0f)
+                horizontalLineToRelative(-4.0f)
+                verticalLineToRelative(2.0f)
+                horizontalLineToRelative(4.0f)
+                verticalLineToRelative(4.0f)
+                horizontalLineToRelative(2.0f)
+                verticalLineTo(5.0f)
+                curveToRelative(0.0f, -1.1f, -0.9f, -2.0f, -2.0f, -2.0f)
+                close()
+            }
+        }
+        return _cropFree!!
+    }
+private var _cropFree: ImageVector? = null

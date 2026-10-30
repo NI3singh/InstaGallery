@@ -101,6 +101,10 @@ class ReelsViewModel(application: Application) : AndroidViewModel(application) {
         _onlyFavorites.value = !_onlyFavorites.value
     }
 
+    fun setFavoritesFilter(enabled: Boolean) {
+        _onlyFavorites.value = enabled
+    }
+
     fun markVideoUnplayable(mediaId: Long) {
         _brokenMediaIds.value = _brokenMediaIds.value + mediaId
     }
@@ -114,6 +118,12 @@ class ReelsViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleBookmark(mediaId: Long, current: Boolean) {
         viewModelScope.launch {
             repository.toggleBookmarked(mediaId, current)
+        }
+    }
+
+    fun updateCaption(mediaId: Long, caption: String?) {
+        viewModelScope.launch {
+            repository.updateMediaCaption(mediaId, caption)
         }
     }
 

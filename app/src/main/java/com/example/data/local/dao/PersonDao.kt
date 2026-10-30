@@ -251,6 +251,9 @@ interface PersonDao {
     @Query("SELECT * FROM detected_faces ORDER BY qualityScore DESC")
     suspend fun getAllFacesSync(): List<FaceEntity>
 
+    @Query("SELECT COUNT(*) FROM detected_faces")
+    fun getTotalDetectedFacesCountFlow(): Flow<Int>
+
     @Query("SELECT * FROM detected_faces WHERE personId IS NULL ORDER BY qualityScore DESC")
     suspend fun getUnassignedFacesSync(): List<FaceEntity>
 

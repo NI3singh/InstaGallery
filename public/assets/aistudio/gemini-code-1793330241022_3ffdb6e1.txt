@@ -1,0 +1,19 @@
+[SettingsScreen Main Hub]
+  │
+  ├── 1. Hero Identity Card (@Me Avatar, Bio, Live Stats: Posts | Solo | Together)
+  │      ├── [ Edit profile ] ──────► Sub-Screen A: Edit Profile & Bio Page
+  │      └── [ Switch face ]  ──────► Sub-Screen B: Visual "Me" Face Picker Grid
+  │
+  ├── 2. Face Engine & People Tools
+  │      ├── Name & Review Faces > ─► Navigates to 3D ProfileSetupScreen
+  │      ├── Merge Duplicate Profiles > ► Sub-Screen C: AI Duplicate Pairs + Multi-Select Grid
+  │      ├── Manage Hidden / @Other > ──► Sub-Screen D: Visual Grid of Hidden Faces (Restore / Merge)
+  │      └── Gallery Sync & Scanner > ──► Sub-Screen E: Live Sync Console & Telemetry Dashboard
+  │
+  ├── 3. Feed, Stories & Appearance
+  │      ├── Feed & Aspect Ratio Studio > ► Sub-Screen F: Live Post Preview + 4:5 vs Fit + Story Timer
+  │      ├── Heart Reaction Theme > ──────► Sub-Screen G: Interactive Heart Burst Preview & 6 Swatches
+  │      └── Hide @Other in Home Feed ────► Inline #0095F6 Switch (No '>' chevron)
+  │
+  └── 4. Database & Storage Diagnostics
+         └── SQLite & Storage Inspector > ► Sub-Screen H: Table Counts, Cache Size, Repair & Reset

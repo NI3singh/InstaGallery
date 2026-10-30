@@ -24,6 +24,9 @@ interface CollectionDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertCollection(collection: CollectionEntity): Long
 
+    @Query("UPDATE collections SET name = :newName WHERE collectionId = :collectionId")
+    suspend fun renameCollection(collectionId: Long, newName: String)
+
     @Query("DELETE FROM collections WHERE collectionId = :collectionId")
     suspend fun deleteCollection(collectionId: Long)
 
@@ -50,7 +53,7 @@ interface CollectionDao {
         """
         SELECT m.* FROM media_items m
         INNER JOIN collection_media_cross_ref ref ON m.mediaId = ref.mediaId
-        WHERE ref.collectionId = :collectionId AND m.isVideo = 0 AND m.isBookmarked = 1
+        WHERE ref.collectionId = :collectionId AND m.isBookmarked = 1
         ORDER BY ref.addedAt DESC
         """
     )
@@ -62,7 +65,7 @@ interface CollectionDao {
         """
         SELECT m.* FROM media_items m
         INNER JOIN collection_media_cross_ref ref ON m.mediaId = ref.mediaId
-        WHERE ref.collectionId = :collectionId AND m.isVideo = 0 AND m.isBookmarked = 1
+        WHERE ref.collectionId = :collectionId AND m.isBookmarked = 1
         ORDER BY ref.addedAt DESC
         """
     )

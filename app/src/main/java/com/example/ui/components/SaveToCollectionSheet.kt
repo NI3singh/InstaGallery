@@ -1,4 +1,4 @@
-// InstaGallery v1.0
+// InstaGallery v2.0
 package com.example.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
@@ -26,19 +26,18 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.Face
 import androidx.compose.material.icons.outlined.OutlinedExtendedIcons
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -52,11 +51,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -101,8 +102,11 @@ fun SaveToCollectionSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF121216),
-        contentColor = Color.White
+        containerColor = Color(0xFF121214),
+        contentColor = Color.White,
+        dragHandle = {
+            BottomSheetDefaults.DragHandle(color = Color(0xFF3A3A3E))
+        }
     ) {
         Column(
             modifier = Modifier
@@ -111,11 +115,11 @@ fun SaveToCollectionSheet(
                 .padding(bottom = 20.dp)
                 .testTag("save_to_collection_sheet")
         ) {
-            // Top Header
+            // Header Row (padding(horizontal = 16.dp, vertical = 8.dp))
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 10.dp),
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -124,58 +128,66 @@ fun SaveToCollectionSheet(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier.weight(1f)
                 ) {
-                    AsyncImage(
-                        model = media.uri,
-                        contentDescription = media.displayName,
-                        contentScale = ContentScale.Crop,
+                    Box(
                         modifier = Modifier
                             .size(44.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color(0xFF1E1E24))
-                    )
-                    Column {
-                        Text(
-                            text = "Save to Collection",
-                            fontSize = 17.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF1C1C20))
+                    ) {
+                        AsyncImage(
+                            model = media.uri,
+                            contentDescription = media.displayName,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
                         )
-                        Text(
-                            text = "Organize this photo into local boards",
-                            fontSize = 12.sp,
-                            color = Color(0xFF8E8E93)
-                        )
+                        if (media.isVideo) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(3.dp)
+                                    .size(12.dp)
+                            )
+                        }
                     }
+                    Text(
+                        text = "Save to",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
                 }
 
-                // "+ New" Pill Button
+                // Right: Matte squircle button (Color(0xFF26262A), RoundedCornerShape(8.dp), height = 32.dp, padding(horizontal = 12.dp)) "+ New board"
                 Row(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(50))
-                        .background(Color(0xFF1C2536))
-                        .border(1.dp, IgBlue.copy(alpha = 0.5f), RoundedCornerShape(50))
-                        .clickable { showNewBoardInput = !showNewBoardInput }
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                        .height(32.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF26262A))
+                        .bounceClick { showNewBoardInput = !showNewBoardInput }
+                        .padding(horizontal = 12.dp)
                         .testTag("new_collection_toggle_button"),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Add,
-                        contentDescription = "New Collection",
-                        tint = IgBlue,
-                        modifier = Modifier.size(16.dp)
+                        contentDescription = "New board",
+                        tint = Color.White,
+                        modifier = Modifier.size(15.dp)
                     )
                     Text(
-                        text = "New",
+                        text = "New board",
                         fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = IgBlue
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White
                     )
                 }
             }
 
-            // Inline New Collection Input Row
+            // Inline New Board Input Row (borderless #1C1C20 rounded container + solid #0095F6 squircle Create button)
             AnimatedVisibility(
                 visible = showNewBoardInput,
                 enter = fadeIn() + expandVertically(),
@@ -184,73 +196,81 @@ fun SaveToCollectionSheet(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 8.dp),
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    OutlinedTextField(
-                        value = newBoardName,
-                        onValueChange = { newBoardName = it },
-                        placeholder = {
-                            Text(
-                                text = "e.g., Goa Trip, Certificates...",
-                                fontSize = 13.sp,
-                                color = Color(0xFF71717A)
-                            )
-                        },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedBorderColor = IgBlue,
-                            unfocusedBorderColor = Color(0xFF2E2E36),
-                            cursorColor = IgBlue,
-                            focusedContainerColor = Color(0xFF1A1A20),
-                            unfocusedContainerColor = Color(0xFF1A1A20)
-                        ),
-                        shape = RoundedCornerShape(12.dp),
+                    Box(
                         modifier = Modifier
                             .weight(1f)
-                            .testTag("new_collection_name_input")
-                    )
+                            .height(42.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFF1C1C20))
+                            .padding(horizontal = 14.dp)
+                            .testTag("new_collection_name_input"),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        if (newBoardName.isEmpty()) {
+                            Text(
+                                text = "Board name...",
+                                fontSize = 14.sp,
+                                color = Color(0xFF8E8E93)
+                            )
+                        }
+                        BasicTextField(
+                            value = newBoardName,
+                            onValueChange = { newBoardName = it },
+                            singleLine = true,
+                            textStyle = TextStyle(
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium
+                            ),
+                            cursorBrush = SolidColor(Color(0xFF0095F6)),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
 
-                    Button(
-                        onClick = {
-                            val trimmed = newBoardName.trim()
-                            if (trimmed.isNotEmpty()) {
-                                scope.launch {
-                                    val newId = repository.createCollection(trimmed)
-                                    if (newId > 0L) {
-                                        repository.toggleMediaInCollection(
-                                            collectionId = newId,
-                                            mediaId = media.mediaId,
-                                            isCurrentlyInCollection = false
-                                        )
+                    val canCreate = newBoardName.trim().isNotEmpty()
+                    Box(
+                        modifier = Modifier
+                            .height(42.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(
+                                if (canCreate) Color(0xFF0095F6) else Color(0xFF0095F6).copy(alpha = 0.4f)
+                            )
+                            .bounceClick {
+                                val trimmed = newBoardName.trim()
+                                if (trimmed.isNotEmpty()) {
+                                    scope.launch {
+                                        val newId = repository.createCollection(trimmed)
+                                        if (newId > 0L) {
+                                            repository.toggleMediaInCollection(
+                                                collectionId = newId,
+                                                mediaId = media.mediaId,
+                                                isCurrentlyInCollection = false
+                                            )
+                                        }
+                                        newBoardName = ""
+                                        showNewBoardInput = false
                                     }
-                                    newBoardName = ""
-                                    showNewBoardInput = false
                                 }
                             }
-                        },
-                        enabled = newBoardName.trim().isNotEmpty(),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = IgBlue,
-                            contentColor = Color.White
-                        ),
-                        modifier = Modifier.height(50.dp)
+                            .padding(horizontal = 16.dp),
+                        contentAlignment = Alignment.Center
                     ) {
                         Text(
                             text = "Create",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.5.sp,
+                            color = Color.White
                         )
                     }
                 }
             }
 
             HorizontalDivider(
-                color = Color(0xFF222228),
+                color = Color(0xFF1F1F22),
                 thickness = 0.5.dp,
                 modifier = Modifier.padding(vertical = 8.dp)
             )
@@ -261,7 +281,7 @@ fun SaveToCollectionSheet(
                     .fillMaxWidth()
                     .heightIn(max = 380.dp)
                     .padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 items(
                     items = collections,
@@ -271,19 +291,15 @@ fun SaveToCollectionSheet(
                     val collectionMedia by remember(repository, collection.collectionId) {
                         repository.getMediaForCollectionFlow(collection.collectionId)
                     }.collectAsStateWithLifecycle(initialValue = emptyList())
-                    val itemCount = collectionMedia.size
                     val coverMedia = collectionMedia.firstOrNull()
+                    val subtitleText = remember(collectionMedia) {
+                        formatCollectionSubtitle(collectionMedia)
+                    }
 
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(if (isSelected) Color(0xFF1A2232) else Color(0xFF18181E))
-                            .border(
-                                width = 1.dp,
-                                color = if (isSelected) IgBlue.copy(alpha = 0.6f) else Color(0xFF24242C),
-                                shape = RoundedCornerShape(14.dp)
-                            )
+                            .clip(RoundedCornerShape(10.dp))
                             .clickable {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 scope.launch {
@@ -294,7 +310,7 @@ fun SaveToCollectionSheet(
                                     )
                                 }
                             }
-                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                            .padding(horizontal = 4.dp, vertical = 8.dp)
                             .testTag("collection_row_${collection.collectionId}"),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -304,12 +320,12 @@ fun SaveToCollectionSheet(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                             modifier = Modifier.weight(1f)
                         ) {
-                            // 48.dp rounded cover thumbnail or folder glyph
+                            // 48.dp RoundedCornerShape(10.dp) cover thumbnail or #1C1C20 box with subtle bookmark glyph
                             Box(
                                 modifier = Modifier
                                     .size(48.dp)
                                     .clip(RoundedCornerShape(10.dp))
-                                    .background(Color(0xFF23232B)),
+                                    .background(Color(0xFF1C1C20)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (coverMedia != null) {
@@ -323,8 +339,8 @@ fun SaveToCollectionSheet(
                                     Icon(
                                         imageVector = OutlinedExtendedIcons.BookmarkBorder,
                                         contentDescription = collection.name,
-                                        tint = Color(0xFF8E8E93),
-                                        modifier = Modifier.size(22.dp)
+                                        tint = Color.White.copy(alpha = 0.35f),
+                                        modifier = Modifier.size(20.dp)
                                     )
                                 }
                             }
@@ -340,22 +356,22 @@ fun SaveToCollectionSheet(
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    text = if (itemCount == 1) "1 photo" else "$itemCount photos",
+                                    text = subtitleText,
                                     fontSize = 12.sp,
                                     color = Color(0xFF8E8E93)
                                 )
                             }
                         }
 
-                        // Right circular selection indicator
+                        // 24.dp circular selection indicator (#0095F6 filled circle with white checkmark when saved)
                         Box(
                             modifier = Modifier
-                                .size(26.dp)
+                                .size(24.dp)
                                 .clip(CircleShape)
-                                .background(if (isSelected) IgBlue else Color.Transparent)
+                                .background(if (isSelected) Color(0xFF0095F6) else Color.Transparent)
                                 .border(
                                     width = 1.5.dp,
-                                    color = if (isSelected) IgBlue else Color(0xFF52525B),
+                                    color = if (isSelected) Color(0xFF0095F6) else Color(0xFF3A3A3E),
                                     shape = CircleShape
                                 ),
                             contentAlignment = Alignment.Center
@@ -365,7 +381,7 @@ fun SaveToCollectionSheet(
                                     imageVector = Icons.Default.Check,
                                     contentDescription = "Selected",
                                     tint = Color.White,
-                                    modifier = Modifier.size(16.dp)
+                                    modifier = Modifier.size(15.dp)
                                 )
                             }
                         }
@@ -373,6 +389,17 @@ fun SaveToCollectionSheet(
                 }
             }
         }
+    }
+}
+
+internal fun formatCollectionSubtitle(items: List<MediaEntity>): String {
+    if (items.isEmpty()) return "No saved items"
+    val photoCount = items.count { !it.isVideo }
+    val reelCount = items.count { it.isVideo }
+    return when {
+        photoCount > 0 && reelCount > 0 -> "$photoCount photos • $reelCount reels"
+        reelCount > 0 -> "$reelCount ${if (reelCount == 1) "reel" else "reels"}"
+        else -> "$photoCount ${if (photoCount == 1) "photo" else "photos"}"
     }
 }
 
@@ -392,8 +419,11 @@ fun CollabAuthorsSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF121216),
-        contentColor = Color.White
+        containerColor = Color(0xFF121214),
+        contentColor = Color.White,
+        dragHandle = {
+            BottomSheetDefaults.DragHandle(color = Color(0xFF3A3A3E))
+        }
     ) {
         Column(
             modifier = Modifier
@@ -422,7 +452,7 @@ fun CollabAuthorsSheet(
             }
 
             HorizontalDivider(
-                color = Color(0xFF222228),
+                color = Color(0xFF1F1F22),
                 thickness = 0.5.dp,
                 modifier = Modifier.padding(vertical = 8.dp)
             )
@@ -510,8 +540,8 @@ fun CollabAuthorsSheet(
 
                         Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Color(0xFF22222A))
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF26262A))
                                 .padding(horizontal = 12.dp, vertical = 6.dp)
                         ) {
                             Text(
