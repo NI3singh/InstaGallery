@@ -3,8 +3,11 @@ package com.example.ui.screens.reels
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.Matrix
+import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.util.LruCache
 import android.view.TextureView
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -27,6 +30,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -80,12 +84,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -138,9 +142,11 @@ import com.example.ui.theme.IgStoryGradient
 import com.example.ui.theme.IgSurfacePill
 import com.example.ui.theme.IgTextPrimary
 import com.example.ui.theme.IgTextSecondary
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -293,12 +299,15 @@ fun ReelsScreen(
     }
 
     val pagerState = rememberPagerState(pageCount = { shuffledVideos.size })
-    val settledPage = pagerState.settledPage.coerceIn(0, (shuffledVideos.size - 1).coerceAtLeast(0))
-    val settledVideo = shuffledVideos.getOrNull(settledPage)
-    val settledMediaId = settledVideo?.media?.mediaId ?: -1L
-    val settledMediaUri = settledVideo?.media?.uri ?: ""
+    val activePage = pagerState.settledPage.coerceIn(0, (shuffledVideos.size - 1).coerceAtLeast(0))
+    val activeVideo = shuffledVideos.getOrNull(activePage)
+    val settledMediaId = activeVideo?.media?.mediaId ?: -1L
+    val settledMediaUri = activeVideo?.media?.uri ?: ""
 
-    var renderedFirstFrameMediaId by remember { mutableLongStateOf(-1L) }
+    var isFirstFrameRendered by remember { mutableStateOf(false) }
+    var renderedMediaId by remember { mutableLongStateOf(-1L) }
+    var currentPlayingMediaId by remember { mutableLongStateOf(-1L) }
+    var activeTextureView by remember { mutableStateOf<TextureView?>(null) }
     var activeVideoWidth by remember { mutableIntStateOf(0) }
     var activeVideoHeight by remember { mutableIntStateOf(0) }
     var playbackProgress by remember { mutableFloatStateOf(0f) }
@@ -349,16 +358,16 @@ fun ReelsScreen(
         exoPlayer.pause()
     }
 
+    val latestSettledMediaId by rememberUpdatedState(settledMediaId)
+    val latestSettledMediaUri by rememberUpdatedState(settledMediaUri)
+
     // Attach Player.Listener to track first-frame rendering (eliminates flicker) and recover from codec errors
-    DisposableEffect(exoPlayer, settledMediaId, settledMediaUri) {
+    DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
             override fun onRenderedFirstFrame() {
-                renderedFirstFrameMediaId = settledMediaId
-            }
-
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
-                if (isPlaying && settledMediaId != -1L) {
-                    renderedFirstFrameMediaId = settledMediaId
+                if (currentPlayingMediaId != -1L) {
+                    renderedMediaId = currentPlayingMediaId
+                    isFirstFrameRendered = true
                 }
             }
 
@@ -370,23 +379,27 @@ fun ReelsScreen(
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                if (errorRetryCount < 1 && settledMediaUri.isNotBlank()) {
+                val activeUri = latestSettledMediaUri
+                val activeId = latestSettledMediaId
+                if (errorRetryCount < 1 && activeUri.isNotBlank()) {
                     errorRetryCount++
                     exoPlayer.stop()
-                    exoPlayer.setMediaItem(MediaItem.fromUri(settledMediaUri))
+                    exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(activeUri)))
+                    activeTextureView?.let { exoPlayer.setVideoTextureView(it) }
                     exoPlayer.prepare()
                     exoPlayer.playWhenReady = !isPausedByTap
                     if (!isPausedByTap) {
                         exoPlayer.play()
                     }
-                } else if (settledMediaId != -1L) {
-                    viewModel.markVideoUnplayable(settledMediaId)
+                } else if (activeId != -1L) {
+                    viewModel.markVideoUnplayable(activeId)
                 }
             }
         }
         exoPlayer.addListener(listener)
         onDispose {
             exoPlayer.removeListener(listener)
+            exoPlayer.release()
         }
     }
 
@@ -395,25 +408,39 @@ fun ReelsScreen(
         exoPlayer.volume = if (uiState.isMuted) 0f else 1f
     }
 
-    // Load video ONLY when settledMediaId actually changes (never on Like/Bookmark/Caption updates!)
-    LaunchedEffect(settledMediaId, settledMediaUri) {
-        if (settledMediaId != -1L && settledMediaUri.isNotBlank()) {
+    // Load video ONLY when activeVideo?.media?.mediaId actually changes (never mid-swipe or on Like/Bookmark/Caption updates!)
+    LaunchedEffect(activeVideo?.media?.mediaId) {
+        val targetMedia = activeVideo?.media
+        if (targetMedia != null && targetMedia.uri.isNotBlank()) {
+            // 1. Immediately close the first-frame cover gate BEFORE touching the player
+            isFirstFrameRendered = false
+            renderedMediaId = -1L
+            currentPlayingMediaId = -1L
+            activeVideoWidth = targetMedia.width
+            activeVideoHeight = targetMedia.height
+
             errorRetryCount = 0
             isPausedByTap = false
             isFastForward2x = false
-            renderedFirstFrameMediaId = -1L
             playbackProgress = 0f
             showSavedFloatingToast = false
             exoPlayer.setPlaybackParameters(PlaybackParameters.DEFAULT)
+
+            // 2. Stop previous video & clear old media items BEFORE binding new TextureView
             exoPlayer.stop()
-            exoPlayer.setMediaItem(MediaItem.fromUri(settledMediaUri))
+            exoPlayer.clearMediaItems()
+            currentPlayingMediaId = targetMedia.mediaId
+            exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(targetMedia.uri)))
+            activeTextureView?.let { tv ->
+                exoPlayer.setVideoTextureView(tv)
+            }
             exoPlayer.prepare()
             exoPlayer.playWhenReady = true
             exoPlayer.play()
         }
     }
 
-    // Poll playback progress smoothly and ensure thumbnail shield clears once video advances
+    // Poll playback progress smoothly and ensure thumbnail cover clears if video advances past 150ms
     LaunchedEffect(exoPlayer, settledMediaId, isScrubbing) {
         while (isActive) {
             if (!isScrubbing) {
@@ -424,8 +451,14 @@ fun ReelsScreen(
                     currentPositionMs = pos.coerceAtLeast(0L)
                     playbackProgress = (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f)
                 }
-                if (exoPlayer.isPlaying && pos > 60L && settledMediaId != -1L) {
-                    renderedFirstFrameMediaId = settledMediaId
+                if (exoPlayer.playbackState == Player.STATE_READY &&
+                    exoPlayer.isPlaying &&
+                    pos > 150L &&
+                    currentPlayingMediaId == settledMediaId &&
+                    settledMediaId != -1L
+                ) {
+                    renderedMediaId = settledMediaId
+                    isFirstFrameRendered = true
                 }
             }
             delay(80)
@@ -440,7 +473,8 @@ fun ReelsScreen(
                 Lifecycle.Event.ON_RESUME -> {
                     if (!isPausedByTap && settledMediaUri.isNotBlank()) {
                         if (exoPlayer.playbackState == Player.STATE_IDLE) {
-                            exoPlayer.setMediaItem(MediaItem.fromUri(settledMediaUri))
+                            exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(settledMediaUri)))
+                            activeTextureView?.let { exoPlayer.setVideoTextureView(it) }
                             exoPlayer.prepare()
                         } else if (exoPlayer.playbackState == Player.STATE_ENDED) {
                             exoPlayer.seekTo(0L)
@@ -458,14 +492,8 @@ fun ReelsScreen(
         }
     }
 
-    // Release ExoPlayer strictly when ReelsScreen leaves composition
-    DisposableEffect(exoPlayer) {
-        onDispose {
-            exoPlayer.release()
-        }
-    }
-
-    val contentScaleMode = if (uiState.isFitMode) ContentScale.Fit else ContentScale.Crop
+    val isCropMode = !uiState.isFitMode
+    val contentScaleMode = if (isCropMode) ContentScale.Crop else ContentScale.Fit
 
     val triggerReelsRefresh: () -> Unit = {
         if (!isRefreshing) {
@@ -532,14 +560,19 @@ fun ReelsScreen(
                 val video = shuffledVideos[page]
                 val media = video.media
                 val currentMedia by rememberUpdatedState(media)
-                val isSettledPage = (page == settledPage)
-                val isFirstFrameReady = isSettledPage && (renderedFirstFrameMediaId == media.mediaId)
+                val isSettledActivePage = (page == activePage)
+                val showLiveVideo = isSettledActivePage && isFirstFrameRendered && (renderedMediaId == media.mediaId)
 
-                // Smooth crossfade of thumbnail shield ONLY after ExoPlayer has rendered the first frame
-                val thumbnailAlpha by animateFloatAsState(
-                    targetValue = if (isFirstFrameReady) 0f else 1f,
-                    animationSpec = tween(durationMillis = 160),
-                    label = "thumbnail_shield_alpha"
+                // Synchronized First-Frame Thumbnail Cover per Reel Page
+                val frameBitmap = rememberVideoFrameBitmap(
+                    context = context,
+                    uriString = media.uri,
+                    mediaId = media.mediaId
+                )
+                val coverAlpha by animateFloatAsState(
+                    targetValue = if (showLiveVideo) 0f else 1f,
+                    animationSpec = tween(durationMillis = if (showLiveVideo) 140 else 0),
+                    label = "reel_cover_alpha"
                 )
 
                 Box(
@@ -585,7 +618,8 @@ fun ReelsScreen(
                                     } else {
                                         isPausedByTap = false
                                         if (exoPlayer.playbackState == Player.STATE_IDLE && settledMediaUri.isNotBlank()) {
-                                            exoPlayer.setMediaItem(MediaItem.fromUri(settledMediaUri))
+                                            exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(settledMediaUri)))
+                                            activeTextureView?.let { exoPlayer.setVideoTextureView(it) }
                                             exoPlayer.prepare()
                                         } else if (exoPlayer.playbackState == Player.STATE_ENDED) {
                                             exoPlayer.seekTo(0L)
@@ -597,33 +631,56 @@ fun ReelsScreen(
                             )
                         }
                 ) {
-                    // Zero-Flicker TextureView Renderer (bound when settled on this page)
-                    if (isSettledPage) {
-                        ZeroFlickerTextureVideoPlayer(
-                            exoPlayer = exoPlayer,
-                            videoWidth = activeVideoWidth.takeIf { it > 0 } ?: media.width,
-                            videoHeight = activeVideoHeight.takeIf { it > 0 } ?: media.height,
-                            isFitMode = uiState.isFitMode,
-                            modifier = Modifier.fillMaxSize()
-                        )
+                    // 1. Hardware-accelerated TextureView Video Renderer on the settled page
+                    // Never set alpha = 0f on TextureView so Android RenderThread always decodes & fires onRenderedFirstFrame()!
+                    if (isSettledActivePage) {
+                        androidx.compose.runtime.key(media.mediaId) {
+                            ZeroFlickerTextureVideoPlayer(
+                                exoPlayer = exoPlayer,
+                                shouldAttachPlayer = (currentPlayingMediaId == media.mediaId),
+                                onTextureViewActive = { tv -> activeTextureView = tv },
+                                onTextureViewReleased = { releasedTv ->
+                                    if (activeTextureView === releasedTv) {
+                                        activeTextureView = null
+                                    }
+                                },
+                                videoWidth = activeVideoWidth.takeIf { it > 0 } ?: media.width,
+                                videoHeight = activeVideoHeight.takeIf { it > 0 } ?: media.height,
+                                isFitMode = uiState.isFitMode,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
                     }
 
-                    // Thumbnail Shield: stays visible until ExoPlayer renders first frame -> 0% flicker!
-                    if (thumbnailAlpha > 0.01f) {
-                        AsyncImage(
-                            model = media.uri,
-                            contentDescription = media.displayName,
-                            contentScale = contentScaleMode,
+                    // 2. Opaque First-Frame Thumbnail Cover: sits directly over TextureView at alpha = 1f until onRenderedFirstFrame() fires
+                    if (coverAlpha > 0.01f) {
+                        Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .alpha(thumbnailAlpha)
+                                .graphicsLayer { alpha = coverAlpha }
                                 .background(IgBlack)
-                        )
+                        ) {
+                            if (frameBitmap != null) {
+                                Image(
+                                    bitmap = frameBitmap.asImageBitmap(),
+                                    contentDescription = media.displayName,
+                                    contentScale = contentScaleMode,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                AsyncImage(
+                                    model = media.uri,
+                                    contentDescription = media.displayName,
+                                    contentScale = contentScaleMode,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                        }
                     }
 
                     // 2.4 Center Play / Pause Overlay (Matches Instagram Reference: 68.dp dark translucent circle + 30.dp white Play icon)
                     AnimatedVisibility(
-                        visible = isSettledPage && isPausedByTap,
+                        visible = isSettledActivePage && isPausedByTap,
                         enter = fadeIn() + scaleIn(initialScale = 0.8f),
                         exit = fadeOut() + scaleOut(targetScale = 0.8f),
                         modifier = Modifier.align(Alignment.Center)
@@ -646,7 +703,7 @@ fun ReelsScreen(
 
                     // 2x Speed Indicator Pill (when long-pressing)
                     AnimatedVisibility(
-                        visible = isSettledPage && isFastForward2x,
+                        visible = isSettledActivePage && isFastForward2x,
                         enter = fadeIn() + scaleIn(initialScale = 0.9f),
                         exit = fadeOut(),
                         modifier = Modifier
@@ -670,7 +727,7 @@ fun ReelsScreen(
                     }
 
                     // Double-Tap Heart Burst Overlay (Exact Tap-Coordinate Canvas Physics, Zero Bounding Box)
-                    if (isSettledPage) {
+                    if (isSettledActivePage) {
                         TapHeartBurstOverlay(
                             bursts = activeBursts,
                             heartTheme = heartTheme,
@@ -1035,11 +1092,44 @@ fun ReelsScreen(
     }
 }
 
-/**
- * Renders ExoPlayer video into a hardware-accelerated TextureView with matrix aspect-ratio scaling.
- * Unlike SurfaceView, TextureView participates directly in Compose's render node tree,
- * preventing black surface-punch flickering during Pager swipes or screen transitions.
- */
+private val reelVideoFrameCache = LruCache<Long, Bitmap>(24)
+
+@Composable
+private fun rememberVideoFrameBitmap(
+    context: Context,
+    uriString: String,
+    mediaId: Long
+): Bitmap? {
+    var cachedBitmap by remember(mediaId) {
+        mutableStateOf(reelVideoFrameCache.get(mediaId))
+    }
+    LaunchedEffect(mediaId, uriString) {
+        if (cachedBitmap == null && uriString.isNotBlank()) {
+            val extracted = withContext(Dispatchers.IO) {
+                reelVideoFrameCache.get(mediaId)?.let { return@withContext it }
+                val retriever = MediaMetadataRetriever()
+                try {
+                    retriever.setDataSource(context, Uri.parse(uriString))
+                    val frame = retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                        ?: retriever.frameAtTime
+                    if (frame != null) {
+                        reelVideoFrameCache.put(mediaId, frame)
+                    }
+                    frame
+                } catch (_: Exception) {
+                    null
+                } finally {
+                    runCatching { retriever.release() }
+                }
+            }
+            if (extracted != null) {
+                cachedBitmap = extracted
+            }
+        }
+    }
+    return cachedBitmap
+}
+
 private data class VideoScaleSpec(
     val width: Int,
     val height: Int,
@@ -1049,6 +1139,9 @@ private data class VideoScaleSpec(
 @Composable
 private fun ZeroFlickerTextureVideoPlayer(
     exoPlayer: ExoPlayer,
+    shouldAttachPlayer: Boolean,
+    onTextureViewActive: (TextureView) -> Unit,
+    onTextureViewReleased: (TextureView) -> Unit,
     videoWidth: Int,
     videoHeight: Int,
     isFitMode: Boolean,
@@ -1072,10 +1165,14 @@ private fun ZeroFlickerTextureVideoPlayer(
         },
         update = { textureView ->
             textureView.tag = VideoScaleSpec(videoWidth, videoHeight, isFitMode)
-            exoPlayer.setVideoTextureView(textureView)
+            onTextureViewActive(textureView)
+            if (shouldAttachPlayer) {
+                exoPlayer.setVideoTextureView(textureView)
+            }
             applyVideoScaleMatrix(textureView, videoWidth, videoHeight, isFitMode)
         },
         onRelease = { textureView ->
+            onTextureViewReleased(textureView)
             exoPlayer.clearVideoTextureView(textureView)
         },
         modifier = modifier
@@ -1099,14 +1196,12 @@ private fun applyVideoScaleMatrix(
     var scaleY = 1f
 
     if (isFitMode) {
-        // Fit Center (letterbox/pillarbox without cropping)
         if (videoAspect > viewAspect) {
             scaleY = viewAspect / videoAspect
         } else {
             scaleX = videoAspect / viewAspect
         }
     } else {
-        // Center Crop (full-bleed Reels standard)
         if (videoAspect > viewAspect) {
             scaleX = videoAspect / viewAspect
         } else {
