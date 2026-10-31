@@ -51,13 +51,26 @@ class FaceDetectorProcessor(private val context: Context) {
         private const val MIN_DECODED_DIMENSION = 1280
         private const val MAX_DECODED_DIMENSION = 1920
 
-        private const val MIN_FACE_BOX_PX = 36
-        private const val MAX_YAW_DEGREES = 45f
-        private const val MAX_ROLL_DEGREES = 42f
+        private const val MIN_FACE_BOX_PX = 32
+
+        // Spec: sideways / EXIF-stripped photos (people lying down, WhatsApp forwards)
+        const val MAX_YAW_DEGREES = 62f
+        const val MAX_ROLL_DEGREES = 68f
+        private const val MIN_EYE_DISTANCE_RATIO = 0.14f
+        private const val MAX_EYE_DISTANCE_RATIO = 0.78f
 
         const val CANONICAL_FACE_SIZE = 112
         const val AVATAR_CROP_SIZE = 200
-        private const val SCREENSHOT_MIN_WIDTH_RATIO = 0.22f
+
+        // Spec: photos use a very permissive relative floor; screenshots only skip TINY UI avatars
+        // (detected by the circular-avatar check), never real faces inside screenshots.
+        private const val CAMERA_MIN_WIDTH_RATIO = 0.038f
+        private const val SCREENSHOT_MIN_WIDTH_RATIO = 0.055f
+        private const val TINY_UI_AVATAR_MAX_RATIO = 0.16f
+        private const val PEOPLE_GRID_MIN_FACES = 6
+        private const val PEOPLE_GRID_TINY_AVATARS = 5
+        private const val PEOPLE_GRID_TINY_AVATAR_MAX_RATIO = 0.20f
+        private const val STORY_RING_COLORFUL_RATIO = 0.42f
 
         /**
          * A face must clear BOTH bars to start a brand-new profile on its own. Smaller or blurrier
@@ -111,11 +124,39 @@ class FaceDetectorProcessor(private val context: Context) {
     ): List<DetectedAlignedFace> {
         val bitmap = decodePhotoBitmap(uriString) ?: return emptyList()
         return try {
-            detectAndAlignFacesFromBitmap(bitmap, isScreenshot = isScreenshot)
+            val upright = detectAndAlignFacesFromBitmap(bitmap, isScreenshot = isScreenshot)
+            if (upright.isNotEmpty()) {
+                upright
+            } else {
+                // Spec: people lying sideways, or photos stripped of EXIF orientation. Retry 90°, then 270°.
+                rotateAndRetry(bitmap, 90, isScreenshot)
+                    ?: rotateAndRetry(bitmap, 270, isScreenshot)
+                    ?: emptyList()
+            }
         } finally {
             if (!bitmap.isRecycled) {
                 bitmap.recycle()
             }
+        }
+    }
+
+    private suspend fun rotateAndRetry(
+        bitmap: Bitmap,
+        degrees: Int,
+        isScreenshot: Boolean
+    ): List<DetectedAlignedFace>? {
+        val matrix = Matrix().apply { postRotate(degrees.toFloat()) }
+        val rotated = try {
+            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        } catch (e: Exception) {
+            Log.e(TAG, "Rotation retry failed at $degrees degrees", e)
+            return null
+        }
+        return try {
+            val faces = detectAndAlignFacesFromBitmap(rotated, isScreenshot = isScreenshot)
+            if (faces.isEmpty()) null else faces
+        } finally {
+            if (!rotated.isRecycled) rotated.recycle()
         }
     }
 
@@ -126,26 +167,33 @@ class FaceDetectorProcessor(private val context: Context) {
         val rawFaces = runMlKitDetectionOrThrow(bitmap)
         if (rawFaces.isEmpty()) return emptyList()
 
-        // If this is a screenshot and ML Kit detects >= 4 small grid-aligned faces
-        // (such as a screenshot of the People directory grid), return emptyList() immediately
-        // so a screenshot of the People grid never creates 12 clone profiles!
-        if (isScreenshot && rawFaces.size >= 4) {
-            val smallGridFaces = rawFaces.count { face ->
-                face.boundingBox.width().toFloat() / bitmap.width.toFloat() < 0.32f
+        val minWidthRatio = if (isScreenshot) SCREENSHOT_MIN_WIDTH_RATIO else CAMERA_MIN_WIDTH_RATIO
+
+        // Screenshots of the app's own People directory grid (many tiny circular avatars) are the one
+        // case where a whole screenshot is skipped, so it can never spawn clone profiles. Real multi-face
+        // screenshots (family photos, video calls) are NEVER wiped - spec guardrail.
+        if (isScreenshot && rawFaces.size >= PEOPLE_GRID_MIN_FACES) {
+            val tinyCircularAvatars = rawFaces.count { face ->
+                face.boundingBox.width().toFloat() / bitmap.width.toFloat() < PEOPLE_GRID_TINY_AVATAR_MAX_RATIO &&
+                    isLikelyCircularUiAvatar(bitmap, face)
             }
-            if (smallGridFaces >= 4 || rawFaces.size >= 4) {
+            if (tinyCircularAvatars >= PEOPLE_GRID_TINY_AVATARS) {
+                Log.i(TAG, "Skipping screenshot: People-grid capture ($tinyCircularAvatars tiny circular avatars)")
                 return emptyList()
             }
         }
 
         val results = mutableListOf<DetectedAlignedFace>()
         for (face in rawFaces) {
-            // Screenshots: skip tiny UI avatars / grid thumbnails. Real photos rely on the absolute
-            // MIN_FACE_BOX_PX gate instead; a relative width cut-off silently dropped most faces in
-            // group shots (6.5% of a 1600px photo is a 104px face).
-            if (isScreenshot &&
-                face.boundingBox.width().toFloat() / bitmap.width.toFloat() < SCREENSHOT_MIN_WIDTH_RATIO
-            ) {
+            val widthRatio = face.boundingBox.width().toFloat() / bitmap.width.toFloat()
+            // Skip order (spec):
+            // 1. Tiny circular UI avatars (story-ring style) - even above the width floor.
+            // 2. Relative width floor (0.055 screenshots / 0.038 camera photos).
+            // 3. Absolute 32px floor. Real faces in screenshots are never skipped for being smallish.
+            if (widthRatio < TINY_UI_AVATAR_MAX_RATIO && isLikelyCircularUiAvatar(bitmap, face)) {
+                continue
+            }
+            if (widthRatio < minWidthRatio || face.boundingBox.width() < MIN_FACE_BOX_PX) {
                 continue
             }
             if (!passesHumanFaceGate(face)) continue
@@ -232,10 +280,19 @@ class FaceDetectorProcessor(private val context: Context) {
         val rightEye = face.getLandmark(FaceLandmark.RIGHT_EYE)?.position
         val noseBase = face.getLandmark(FaceLandmark.NOSE_BASE)?.position
 
-        // Require at least both eyes, or one eye + nose base for side-angled faces
-        val hasCoreLandmarks = (leftEye != null && rightEye != null) ||
-            (noseBase != null && (leftEye != null || rightEye != null))
-        if (!hasCoreLandmarks) {
+        // Spec: require both eyes AND at least one lower-face landmark so non-face pareidolia fails.
+        val hasLowerFaceLandmark = noseBase != null ||
+            face.getLandmark(FaceLandmark.MOUTH_BOTTOM) != null ||
+            face.getLandmark(FaceLandmark.MOUTH_LEFT) != null ||
+            face.getLandmark(FaceLandmark.MOUTH_RIGHT) != null
+        if (leftEye == null || rightEye == null || !hasLowerFaceLandmark) {
+            return false
+        }
+
+        // Inter-ocular distance sanity window (spec): rejects box mismatches and non-face detections.
+        val eyeDistance = kotlin.math.hypot(rightEye.x - leftEye.x, rightEye.y - leftEye.y)
+        val eyeDistanceRatio = eyeDistance / box.width().toFloat()
+        if (eyeDistanceRatio !in MIN_EYE_DISTANCE_RATIO..MAX_EYE_DISTANCE_RATIO) {
             return false
         }
 

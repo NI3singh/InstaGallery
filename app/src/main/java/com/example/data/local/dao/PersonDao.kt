@@ -61,32 +61,18 @@ interface PersonDao {
     )
     fun getAllPeopleForSetupFlow(): Flow<List<PersonEntity>>
 
+    // Guardrail: every VISIBLE person with >= 1 photo is shown. Never require photoCount >= 2 here:
+    // doing so stripped 1-photo profiles from posts and misrouted their authors to @Other.
     @Query(
         """
         SELECT p.* FROM people p
         WHERE p.isHiddenToOther = 0
           AND (
-              p.isNamedByUser = 1
-              OR p.decisionState = 'KEPT'
-              OR (
-                  SELECT COUNT(DISTINCT ref.mediaId)
-                  FROM media_person_cross_ref ref
-                  INNER JOIN media_items m ON m.mediaId = ref.mediaId
-                  WHERE ref.personId = p.personId AND m.isVideo = 0
-              ) >= 2
-              OR (
-                  EXISTS (
-                      SELECT 1 FROM media_person_cross_ref ref
-                      INNER JOIN media_items m ON m.mediaId = ref.mediaId
-                      WHERE ref.personId = p.personId AND m.isVideo = 0
-                  )
-                  AND NOT EXISTS (
-                      SELECT 1 FROM people p2
-                      WHERE p2.isHiddenToOther = 0
-                        AND (p2.isNamedByUser = 1 OR p2.decisionState = 'KEPT' OR p2.faceCount >= 2)
-                  )
-              )
-          )
+              SELECT COUNT(DISTINCT ref.mediaId)
+              FROM media_person_cross_ref ref
+              INNER JOIN media_items m ON m.mediaId = ref.mediaId
+              WHERE ref.personId = p.personId AND m.isVideo = 0
+          ) >= 1
         ORDER BY p.isNamedByUser DESC, p.faceCount DESC, p.bestQualityScore DESC
         """
     )
@@ -97,27 +83,11 @@ interface PersonDao {
         SELECT p.* FROM people p
         WHERE p.isHiddenToOther = 0
           AND (
-              p.isNamedByUser = 1
-              OR p.decisionState = 'KEPT'
-              OR (
-                  SELECT COUNT(DISTINCT ref.mediaId)
-                  FROM media_person_cross_ref ref
-                  INNER JOIN media_items m ON m.mediaId = ref.mediaId
-                  WHERE ref.personId = p.personId AND m.isVideo = 0
-              ) >= 2
-              OR (
-                  EXISTS (
-                      SELECT 1 FROM media_person_cross_ref ref
-                      INNER JOIN media_items m ON m.mediaId = ref.mediaId
-                      WHERE ref.personId = p.personId AND m.isVideo = 0
-                  )
-                  AND NOT EXISTS (
-                      SELECT 1 FROM people p2
-                      WHERE p2.isHiddenToOther = 0
-                        AND (p2.isNamedByUser = 1 OR p2.decisionState = 'KEPT' OR p2.faceCount >= 2)
-                  )
-              )
-          )
+              SELECT COUNT(DISTINCT ref.mediaId)
+              FROM media_person_cross_ref ref
+              INNER JOIN media_items m ON m.mediaId = ref.mediaId
+              WHERE ref.personId = p.personId AND m.isVideo = 0
+          ) >= 1
         ORDER BY p.isNamedByUser DESC, p.faceCount DESC, p.bestQualityScore DESC
         """
     )
