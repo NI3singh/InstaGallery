@@ -64,13 +64,26 @@ class FaceClusterManager(
         const val EXEMPLAR_QUALITY_GATE = 0.55f
         const val MAX_EXEMPLARS_PER_PERSON = 12
 
-        const val PASS2_MERGE_MULTI_THRESHOLD = 0.61f
-        const val PASS2_MERGE_SINGLETON_THRESHOLD = 0.58f
+        /**
+         * Pass-2 merge bars. Deliberately ABOVE Pass-1 match thresholds: a wrong merge is much more
+         * expensive for the user than a split they can fix with one tap in Merge Studio, and Pass-1
+         * matching already uses exemplar+centroid scoring rather than raw centroid cosine.
+         */
+        const val PASS2_MERGE_MULTI_THRESHOLD = 0.66f
+        const val PASS2_MERGE_SINGLETON_THRESHOLD = 0.68f
 
-        const val PASS2_NAMED_ANCHOR_SWEEP_THRESHOLD = 0.54f
-        const val PASS2_MULTI_ANCHOR_SWEEP_THRESHOLD = 0.56f
+        const val PASS2_NAMED_ANCHOR_SWEEP_THRESHOLD = 0.58f
+        const val PASS2_MULTI_ANCHOR_SWEEP_THRESHOLD = 0.62f
 
         const val DUPLICATE_MIN_THRESHOLD = 0.52f
+
+        /**
+         * Auto-merge bar for dedup. Above Pass-2 merge thresholds so automated merging only fires on
+         * near-identical centroids; everything borderline goes to the Merge Studio for a human call.
+         */
+        const val AUTO_DEDUP_THRESHOLD = 0.72f
+        const val AUTO_DEDUP_EXCLUSIVE_UPPER = AUTO_DEDUP_THRESHOLD - 0.001f
+
         private const val AVATAR_TARGET_SIZE = 200
 
         @Volatile
@@ -359,8 +372,11 @@ class FaceClusterManager(
             return bestCluster.personId
         }
 
-        // Case B — Create a new PersonEntity if face.qualityScore >= 0.35f && box.width() >= 36
-        val canSpawnNewPerson = (face.qualityScore >= 0.35f && box.width() >= 36) || face.isStrictAnchorCandidate
+        // Case B — Create a new PersonEntity only from a strong anchor face. Weaker faces are stored
+        // unassigned and picked up by the Pass-2 anchor sweep once the same person recurs, which stops
+        // one low-quality stranger crop from spawning a profile.
+        val canSpawnNewPerson = face.isStrictAnchorCandidate ||
+            FaceDetectorProcessor.isStrongEnoughForNewProfile(face.qualityScore, box.width())
         if (canSpawnNewPerson) {
             val nextNumber = computeNextPersonNumber()
             val newPersonName = "Person $nextNumber"
@@ -814,7 +830,7 @@ class FaceClusterManager(
                             }
                         }
 
-                        if (maxSim >= 0.68f) {
+                        if (maxSim >= AUTO_DEDUP_THRESHOLD) {
                             val wA = currentA.faceCount.coerceAtLeast(1).toFloat()
                             val wB = personB.faceCount.coerceAtLeast(1).toFloat()
                             val updatedCentroid = updateCentroid(vecA, wA, vecB, wB)
@@ -989,7 +1005,7 @@ class FaceClusterManager(
                     dotProduct(emb1, emb2)
                 }
 
-                if (sim in 0.52f..0.679f && sim > bestSim) {
+                if (sim in DUPLICATE_MIN_THRESHOLD..AUTO_DEDUP_EXCLUSIVE_UPPER && sim > bestSim) {
                     bestSim = sim
                     val (primary, secondary) = if (p1.isNamedByUser && !p2.isNamedByUser) {
                         p1 to p2
