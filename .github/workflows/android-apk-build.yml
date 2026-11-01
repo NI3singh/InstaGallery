@@ -9,8 +9,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_TAG: v2.0.5.1
-  APK_FILENAME: InstaGallery-v2.0.5.1.apk
+  RELEASE_TAG: v2.0.5
+  APK_FILENAME: InstaGallery-v2.0.5.apk
 
 jobs:
   build:
