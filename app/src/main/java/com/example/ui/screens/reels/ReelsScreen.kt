@@ -4,13 +4,9 @@ package com.example.ui.screens.reels
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
-import android.graphics.Matrix
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.util.LruCache
-import android.view.TextureView
-import android.view.ViewGroup
-import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
@@ -117,10 +113,11 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
-import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.example.data.local.OnboardingPreferences
 import com.example.data.local.entity.MediaEntity
@@ -304,12 +301,7 @@ fun ReelsScreen(
     val settledMediaId = activeVideo?.media?.mediaId ?: -1L
     val settledMediaUri = activeVideo?.media?.uri ?: ""
 
-    var isFirstFrameRendered by remember { mutableStateOf(false) }
-    var renderedMediaId by remember { mutableLongStateOf(-1L) }
-    var currentPlayingMediaId by remember { mutableLongStateOf(-1L) }
-    var activeTextureView by remember { mutableStateOf<TextureView?>(null) }
-    var activeVideoWidth by remember { mutableIntStateOf(0) }
-    var activeVideoHeight by remember { mutableIntStateOf(0) }
+    var isCurrentVideoRendered by remember { mutableStateOf(false) }
     var playbackProgress by remember { mutableFloatStateOf(0f) }
     var currentPositionMs by remember { mutableLongStateOf(0L) }
     var durationMs by remember { mutableLongStateOf(0L) }
@@ -361,20 +353,15 @@ fun ReelsScreen(
     val latestSettledMediaId by rememberUpdatedState(settledMediaId)
     val latestSettledMediaUri by rememberUpdatedState(settledMediaUri)
 
-    // Attach Player.Listener to track first-frame rendering (eliminates flicker) and recover from codec errors
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
             override fun onRenderedFirstFrame() {
-                if (currentPlayingMediaId != -1L) {
-                    renderedMediaId = currentPlayingMediaId
-                    isFirstFrameRendered = true
-                }
+                isCurrentVideoRendered = true
             }
 
-            override fun onVideoSizeChanged(videoSize: VideoSize) {
-                if (videoSize.width > 0 && videoSize.height > 0) {
-                    activeVideoWidth = videoSize.width
-                    activeVideoHeight = videoSize.height
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (isPlaying) {
+                    isCurrentVideoRendered = true
                 }
             }
 
@@ -385,7 +372,6 @@ fun ReelsScreen(
                     errorRetryCount++
                     exoPlayer.stop()
                     exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(activeUri)))
-                    activeTextureView?.let { exoPlayer.setVideoTextureView(it) }
                     exoPlayer.prepare()
                     exoPlayer.playWhenReady = !isPausedByTap
                     if (!isPausedByTap) {
@@ -408,39 +394,29 @@ fun ReelsScreen(
         exoPlayer.volume = if (uiState.isMuted) 0f else 1f
     }
 
-    // Load video ONLY when activeVideo?.media?.mediaId actually changes (never mid-swipe or on Like/Bookmark/Caption updates!)
+    // Load video ONLY when activeVideo?.media?.mediaId changes (bound to pagerState.settledPage)
     LaunchedEffect(activeVideo?.media?.mediaId) {
-        val targetMedia = activeVideo?.media
-        if (targetMedia != null && targetMedia.uri.isNotBlank()) {
-            // 1. Immediately close the first-frame cover gate BEFORE touching the player
-            isFirstFrameRendered = false
-            renderedMediaId = -1L
-            currentPlayingMediaId = -1L
-            activeVideoWidth = targetMedia.width
-            activeVideoHeight = targetMedia.height
+        val targetMedia = activeVideo?.media ?: return@LaunchedEffect
+        if (targetMedia.uri.isBlank()) return@LaunchedEffect
 
-            errorRetryCount = 0
-            isPausedByTap = false
-            isFastForward2x = false
-            playbackProgress = 0f
-            showSavedFloatingToast = false
-            exoPlayer.setPlaybackParameters(PlaybackParameters.DEFAULT)
+        isCurrentVideoRendered = false
+        errorRetryCount = 0
+        isPausedByTap = false
+        isFastForward2x = false
+        playbackProgress = 0f
+        showSavedFloatingToast = false
+        exoPlayer.setPlaybackParameters(PlaybackParameters.DEFAULT)
 
-            // 2. Stop previous video & clear old media items BEFORE binding new TextureView
-            exoPlayer.stop()
-            exoPlayer.clearMediaItems()
-            currentPlayingMediaId = targetMedia.mediaId
-            exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(targetMedia.uri)))
-            activeTextureView?.let { tv ->
-                exoPlayer.setVideoTextureView(tv)
-            }
-            exoPlayer.prepare()
-            exoPlayer.playWhenReady = true
-            exoPlayer.play()
-        }
+        exoPlayer.stop()
+        exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(targetMedia.uri)))
+        exoPlayer.prepare()
+        exoPlayer.playWhenReady = true
+        // Safety fallback: ensure cover always lifts within 220ms even if onRenderedFirstFrame was already emitted
+        delay(220)
+        isCurrentVideoRendered = true
     }
 
-    // Poll playback progress smoothly and ensure thumbnail cover clears if video advances past 150ms
+    // Poll playback progress smoothly
     LaunchedEffect(exoPlayer, settledMediaId, isScrubbing) {
         while (isActive) {
             if (!isScrubbing) {
@@ -450,15 +426,6 @@ fun ReelsScreen(
                     durationMs = dur
                     currentPositionMs = pos.coerceAtLeast(0L)
                     playbackProgress = (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f)
-                }
-                if (exoPlayer.playbackState == Player.STATE_READY &&
-                    exoPlayer.isPlaying &&
-                    pos > 150L &&
-                    currentPlayingMediaId == settledMediaId &&
-                    settledMediaId != -1L
-                ) {
-                    renderedMediaId = settledMediaId
-                    isFirstFrameRendered = true
                 }
             }
             delay(80)
@@ -474,7 +441,6 @@ fun ReelsScreen(
                     if (!isPausedByTap && settledMediaUri.isNotBlank()) {
                         if (exoPlayer.playbackState == Player.STATE_IDLE) {
                             exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(settledMediaUri)))
-                            activeTextureView?.let { exoPlayer.setVideoTextureView(it) }
                             exoPlayer.prepare()
                         } else if (exoPlayer.playbackState == Player.STATE_ENDED) {
                             exoPlayer.seekTo(0L)
@@ -560,8 +526,8 @@ fun ReelsScreen(
                 val video = shuffledVideos[page]
                 val media = video.media
                 val currentMedia by rememberUpdatedState(media)
-                val isSettledActivePage = (page == activePage)
-                val showLiveVideo = isSettledActivePage && isFirstFrameRendered && (renderedMediaId == media.mediaId)
+                val isSettledPage = (page == pagerState.settledPage)
+                val showLiveVideo = isSettledPage && isCurrentVideoRendered
 
                 // Synchronized First-Frame Thumbnail Cover per Reel Page
                 val frameBitmap = rememberVideoFrameBitmap(
@@ -571,7 +537,7 @@ fun ReelsScreen(
                 )
                 val coverAlpha by animateFloatAsState(
                     targetValue = if (showLiveVideo) 0f else 1f,
-                    animationSpec = tween(durationMillis = if (showLiveVideo) 140 else 0),
+                    animationSpec = tween(durationMillis = if (showLiveVideo) 120 else 0),
                     label = "reel_cover_alpha"
                 )
 
@@ -619,7 +585,6 @@ fun ReelsScreen(
                                         isPausedByTap = false
                                         if (exoPlayer.playbackState == Player.STATE_IDLE && settledMediaUri.isNotBlank()) {
                                             exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(settledMediaUri)))
-                                            activeTextureView?.let { exoPlayer.setVideoTextureView(it) }
                                             exoPlayer.prepare()
                                         } else if (exoPlayer.playbackState == Player.STATE_ENDED) {
                                             exoPlayer.seekTo(0L)
@@ -631,28 +596,39 @@ fun ReelsScreen(
                             )
                         }
                 ) {
-                    // 1. Hardware-accelerated TextureView Video Renderer on the settled page
-                    // Never set alpha = 0f on TextureView so Android RenderThread always decodes & fires onRenderedFirstFrame()!
-                    if (isSettledActivePage) {
-                        androidx.compose.runtime.key(media.mediaId) {
-                            ZeroFlickerTextureVideoPlayer(
-                                exoPlayer = exoPlayer,
-                                shouldAttachPlayer = (currentPlayingMediaId == media.mediaId),
-                                onTextureViewActive = { tv -> activeTextureView = tv },
-                                onTextureViewReleased = { releasedTv ->
-                                    if (activeTextureView === releasedTv) {
-                                        activeTextureView = null
-                                    }
-                                },
-                                videoWidth = activeVideoWidth.takeIf { it > 0 } ?: media.width,
-                                videoHeight = activeVideoHeight.takeIf { it > 0 } ?: media.height,
-                                isFitMode = uiState.isFitMode,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        }
-                    }
+                    // 1. PlayerView at full opacity (alpha = 1f) — never call clearVideoSurface() or set alpha = 0f
+                    AndroidView(
+                        factory = { ctx ->
+                            PlayerView(ctx).apply {
+                                useController = false
+                                setKeepContentOnPlayerReset(false)
+                                setShutterBackgroundColor(android.graphics.Color.BLACK)
+                                resizeMode = if (isCropMode) {
+                                    AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                                } else {
+                                    AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                }
+                            }
+                        },
+                        update = { playerView ->
+                            playerView.resizeMode = if (isCropMode) {
+                                AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                            } else {
+                                AspectRatioFrameLayout.RESIZE_MODE_FIT
+                            }
+                            if (isSettledPage) {
+                                if (playerView.player !== exoPlayer) {
+                                    PlayerView.switchTargetView(exoPlayer, null, playerView)
+                                    playerView.player = exoPlayer
+                                }
+                            } else if (playerView.player === exoPlayer) {
+                                playerView.player = null
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
 
-                    // 2. Opaque First-Frame Thumbnail Cover: sits directly over TextureView at alpha = 1f until onRenderedFirstFrame() fires
+                    // 2. First-Frame Thumbnail Cover: shown while !isSettledPage || !isCurrentVideoRendered, fading out over 120ms
                     if (coverAlpha > 0.01f) {
                         Box(
                             modifier = Modifier
@@ -680,7 +656,7 @@ fun ReelsScreen(
 
                     // 2.4 Center Play / Pause Overlay (Matches Instagram Reference: 68.dp dark translucent circle + 30.dp white Play icon)
                     AnimatedVisibility(
-                        visible = isSettledActivePage && isPausedByTap,
+                        visible = isSettledPage && isPausedByTap,
                         enter = fadeIn() + scaleIn(initialScale = 0.8f),
                         exit = fadeOut() + scaleOut(targetScale = 0.8f),
                         modifier = Modifier.align(Alignment.Center)
@@ -703,7 +679,7 @@ fun ReelsScreen(
 
                     // 2x Speed Indicator Pill (when long-pressing)
                     AnimatedVisibility(
-                        visible = isSettledActivePage && isFastForward2x,
+                        visible = isSettledPage && isFastForward2x,
                         enter = fadeIn() + scaleIn(initialScale = 0.9f),
                         exit = fadeOut(),
                         modifier = Modifier
@@ -727,7 +703,7 @@ fun ReelsScreen(
                     }
 
                     // Double-Tap Heart Burst Overlay (Exact Tap-Coordinate Canvas Physics, Zero Bounding Box)
-                    if (isSettledActivePage) {
+                    if (isSettledPage) {
                         TapHeartBurstOverlay(
                             bursts = activeBursts,
                             heartTheme = heartTheme,
@@ -1128,92 +1104,6 @@ private fun rememberVideoFrameBitmap(
         }
     }
     return cachedBitmap
-}
-
-private data class VideoScaleSpec(
-    val width: Int,
-    val height: Int,
-    val isFitMode: Boolean
-)
-
-@Composable
-private fun ZeroFlickerTextureVideoPlayer(
-    exoPlayer: ExoPlayer,
-    shouldAttachPlayer: Boolean,
-    onTextureViewActive: (TextureView) -> Unit,
-    onTextureViewReleased: (TextureView) -> Unit,
-    videoWidth: Int,
-    videoHeight: Int,
-    isFitMode: Boolean,
-    modifier: Modifier = Modifier
-) {
-    AndroidView(
-        factory = { ctx ->
-            TextureView(ctx).apply {
-                layoutParams = FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT
-                )
-                isOpaque = false
-                tag = VideoScaleSpec(videoWidth, videoHeight, isFitMode)
-                addOnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
-                    val spec = (view.tag as? VideoScaleSpec)
-                        ?: VideoScaleSpec(videoWidth, videoHeight, isFitMode)
-                    applyVideoScaleMatrix(this, spec.width, spec.height, spec.isFitMode)
-                }
-            }
-        },
-        update = { textureView ->
-            textureView.tag = VideoScaleSpec(videoWidth, videoHeight, isFitMode)
-            onTextureViewActive(textureView)
-            if (shouldAttachPlayer) {
-                exoPlayer.setVideoTextureView(textureView)
-            }
-            applyVideoScaleMatrix(textureView, videoWidth, videoHeight, isFitMode)
-        },
-        onRelease = { textureView ->
-            onTextureViewReleased(textureView)
-            exoPlayer.clearVideoTextureView(textureView)
-        },
-        modifier = modifier
-    )
-}
-
-private fun applyVideoScaleMatrix(
-    textureView: TextureView,
-    videoWidth: Int,
-    videoHeight: Int,
-    isFitMode: Boolean
-) {
-    val viewWidth = textureView.width.toFloat()
-    val viewHeight = textureView.height.toFloat()
-    if (viewWidth <= 0f || viewHeight <= 0f || videoWidth <= 0 || videoHeight <= 0) return
-
-    val videoAspect = videoWidth.toFloat() / videoHeight.toFloat()
-    val viewAspect = viewWidth / viewHeight
-
-    var scaleX = 1f
-    var scaleY = 1f
-
-    if (isFitMode) {
-        if (videoAspect > viewAspect) {
-            scaleY = viewAspect / videoAspect
-        } else {
-            scaleX = videoAspect / viewAspect
-        }
-    } else {
-        if (videoAspect > viewAspect) {
-            scaleX = videoAspect / viewAspect
-        } else {
-            scaleY = viewAspect / videoAspect
-        }
-    }
-
-    val pivotX = viewWidth / 2f
-    val pivotY = viewHeight / 2f
-    val matrix = Matrix()
-    matrix.setScale(scaleX, scaleY, pivotX, pivotY)
-    textureView.setTransform(matrix)
 }
 
 /**

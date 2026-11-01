@@ -331,6 +331,21 @@ interface MediaDao {
 
     @Query(
         """
+        UPDATE media_items
+        SET isProcessedForFaces = 0
+        WHERE isVideo = 0
+          AND isProcessedForFaces = 1
+          AND hasFaces = 0
+          AND NOT EXISTS (
+              SELECT 1 FROM media_person_cross_ref ref
+              WHERE ref.mediaId = media_items.mediaId
+          )
+        """
+    )
+    suspend fun requeueUnassignedPhotosForFaceRecovery(): Int
+
+    @Query(
+        """
         SELECT m.mediaId FROM media_items m
         WHERE LOWER(m.displayName) LIKE '%screenshot%'
           AND (SELECT COUNT(*) FROM media_person_cross_ref ref WHERE ref.mediaId = m.mediaId) >= 3
