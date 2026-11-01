@@ -73,6 +73,43 @@ class FaceDetectorProcessor(private val context: Context) {
         private const val STORY_RING_COLORFUL_RATIO = 0.42f
 
         /**
+         * Story-ring style UI avatars sit inside a highly saturated circular ring. Sample the
+         * border band of the face box: a colorful ring leaves saturated pixels all along the
+         * edge, which a real face photo almost never does at this tiny scale. Spec contract:
+         * colorfulRatio >= 0.42.
+         */
+        private fun isLikelyCircularUiAvatar(bitmap: Bitmap, face: Face): Boolean {
+            val box = face.boundingBox
+            val left = max(0, box.left)
+            val top = max(0, box.top)
+            val width = minOf(bitmap.width, box.right) - left
+            val height = minOf(bitmap.height, box.bottom) - top
+            if (width < 8 || height < 8) return false
+            val band = max(1f, minOf(width, height) * 0.15f)
+            val hsv = FloatArray(3)
+            var sampled = 0
+            var colorful = 0
+            val stepX = max(1, width / 12)
+            val stepY = max(1, height / 12)
+            var y = 0
+            while (y < height) {
+                var x = 0
+                while (x < width) {
+                    val edgeDistance = minOf(x, y, width - 1 - x, height - 1 - y)
+                    if (edgeDistance < band) {
+                        Color.colorToHSV(bitmap.getPixel(left + x, top + y), hsv)
+                        sampled++
+                        if (hsv[1] >= 0.5f && hsv[2] >= 0.3f) colorful++
+                    }
+                    x += stepX
+                }
+                y += stepY
+            }
+            if (sampled == 0) return false
+            return colorful.toFloat() / sampled >= STORY_RING_COLORFUL_RATIO
+        }
+
+        /**
          * A face must clear BOTH bars to start a brand-new profile on its own. Smaller or blurrier
          * faces are still stored and can join an existing profile, or form a new one in Pass-2
          * once the same face recurs across several photos.

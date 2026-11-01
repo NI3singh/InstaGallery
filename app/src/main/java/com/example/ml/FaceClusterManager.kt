@@ -118,7 +118,7 @@ class FaceClusterManager(
         val mediaIds: MutableSet<Long> = mutableSetOf()
     )
 
-    private val clusterMutex = Mutex()
+    private val clusterMutex: Mutex
         get() = Companion.clusterMutex
     private val clusterCache = mutableListOf<PersonCluster>()
     private val inMemoryClusters: MutableList<PersonCluster>
