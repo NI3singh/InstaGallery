@@ -148,8 +148,8 @@ class FaceAlignmentTest {
         )
         val dst = src.map { p ->
             FaceAlignment.Point(
-                x = (p.x * scale * cos(angle)).toFloat(),
-                y = (p.x * scale * sin(angle)).toFloat()
+                x = (scale * (p.x * cos(angle) - p.y * sin(angle))).toFloat(),
+                y = (scale * (p.x * sin(angle) + p.y * cos(angle))).toFloat()
             )
         }
         val m = FaceAlignment.estimateSimilarity(src, dst)!!

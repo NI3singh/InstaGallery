@@ -9,8 +9,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_TAG: v2.0.5
-  APK_FILENAME: InstaGallery-v2.0.5.apk
+  RELEASE_TAG: v2.0.6
+  APK_FILENAME: InstaGallery-v2.0.6.apk
 
 jobs:
   build:
@@ -122,7 +122,7 @@ jobs:
       - name: Upload InstaGallery APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: InstaGallery-v2.0.5-APK
+          name: InstaGallery-v2.0.6-APK
           path: dist/${{ env.APK_FILENAME }}
           if-no-files-found: error
 
@@ -134,7 +134,7 @@ jobs:
           APK_SIZE=$(du -h "dist/${APK_FILENAME}" | cut -f1)
           APK_SHA256=$(sha256sum "dist/${APK_FILENAME}" | awk '{print $1}')
           cat << EOF > RELEASE_NOTES.md
-          ## 🚀 InstaGallery ${RELEASE_TAG} — Sub-Second Media Sync, My Profile Hub, Saved Reels & Interactive Settings Studio
+          ## 🚀 InstaGallery ${RELEASE_TAG} — 5-Point ArcFace Landmark Alignment, Fault-Tolerant Face Indexing & Smooth Reels Playback
 
           ### ⚡ Fast APK Download (\`${APK_SIZE}\` — Slim Optimized Build)
           - **Option 1 — Direct GitHub Release Asset**: Tap **\`${APK_FILENAME}\`** under **Assets** below.
@@ -154,18 +154,14 @@ jobs:
           3. Launch **InstaGallery** — all existing faces, profiles, captions, and bookmarks upgrade automatically via non-destructive SQLite migrations.
 
           ### ✨ What's New in ${RELEASE_TAG}
-          - **Sub-Second Real-Time Media Sync & Fast-Lane Face Indexing**:
-            - Surgical URI \`ContentObserver\` and zero-I/O \`HashSet\` ID diffing detect new camera captures and deletions in under 50ms, triggering immediate priority face indexing for newly taken photos.
-          - **Primary "My Profile" Experience & Clean People Directory**:
-            - Set your own detected profile as **My Profile** (with your live face avatar in the bottom navigation bar), switch profiles via the \`@handle ⌄\` sheet, expand the *People in Your Gallery* discovery tray, or browse the searchable People Directory.
-          - **Navbar Re-Tap & Pull-to-Refresh with Smart Shuffle Engine**:
-            - Re-tap the active bottom navigation tab or pull down on *Home*, *Reels*, *Saved*, or *Profile* to run a fast delta sync and reshuffle your feed/Reels while keeping photos captured in the last 30 minutes pinned at the top.
-          - **Reels UI/UX Overhaul & Video Bookmarks**:
-            - Bookmark Reel videos into SQLite and custom Saved Collections, add personal video captions, enjoy clean 1-line attribution without raw camera filenames, and manage Reel tags/details from the native \`⋮\` options sheet.
-          - **Redesigned Saved Boards & Built-In Saved Reels Player**:
-            - Edge-to-edge \`2x2\` mosaic collection covers, dynamic *"X posts • Y reels"* counters, *All / Photos / Reels* filter pills, \`3x3\` Grid vs. Vertical Post Feed toggle, and a dedicated full-screen ExoPlayer modal for bookmarked Reels.
-          - **Settings & Activity Hub + 7 Dedicated Interactive Sub-Screens**:
-            - Flagship Instagram Dark Mode matte squircle controls (\`#26262A\`) and full-screen interactive sub-pages: *Edit Profile*, *Switch 'Me' Face*, *Gallery Sync & Face Scanner Console*, *Hidden & @Other Profiles Manager*, *Merge Duplicate Profiles Studio* (with live 192-D cosine similarity lookalike detection), *Feed, Aspect Ratio & Story Studio* (with live interactive mini-post preview), and *Database & Storage Inspector*.
+          - **2D Umeyama Similarity Face Alignment onto 112×112 ArcFace Template**:
+            - Warps detected eyes and mouth corners onto the canonical 112×112 ArcFace landmark coordinates before MobileFaceNet inference, dramatically improving same-person cosine similarity across head tilts and framing variations.
+          - **Unified Fault-Tolerant \`FacePhotoIndexer\` State Machine**:
+            - Atomic SQLite single-flight photo claiming (\`atomicallyClaimMediaForIndexing\`), \`NonCancellable\` claim release when WorkManager pauses/cancels background indexing, and automatic 1-retry recovery on transient detector errors.
+          - **Pass-2 Recurring Unassigned Face Clustering & Co-Occurrence Protected Auto-Dedup**:
+            - Weak or small group-photo faces that recur across 2+ photos automatically cluster into a profile during Pass-2 consolidation, while same-photo co-occurrence and visible-over-hidden guards prevent merging distinct people in group photos.
+          - **Zero-Blank-Screen Smooth Reels Playback & Elastic Heart Animation**:
+            - Binds \`ExoPlayer\` cleanly to \`pagerState.settledPage\` with a thumbnail crossfade until \`onRenderedFirstFrame()\`, fixes first-Reel swipe-up gestures, and adds keyframe elastic heart animations.
           EOF
 
           git config user.name "github-actions[bot]"
@@ -176,13 +172,13 @@ jobs:
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
             gh release upload "${RELEASE_TAG}" "dist/${APK_FILENAME}" --clobber
             gh release edit "${RELEASE_TAG}" \
-              --title "InstaGallery ${RELEASE_TAG} — Sub-Second Sync, My Profile, Saved Reels & Settings Studio (${APK_SIZE})" \
+              --title "InstaGallery ${RELEASE_TAG} — ArcFace Landmark Alignment, Fault-Tolerant Indexing & Smooth Reels (${APK_SIZE})" \
               --notes-file RELEASE_NOTES.md \
               --latest
           else
             gh release create "${RELEASE_TAG}" "dist/${APK_FILENAME}" \
               --target "${GITHUB_SHA}" \
-              --title "InstaGallery ${RELEASE_TAG} — Sub-Second Sync, My Profile, Saved Reels & Settings Studio (${APK_SIZE})" \
+              --title "InstaGallery ${RELEASE_TAG} — ArcFace Landmark Alignment, Fault-Tolerant Indexing & Smooth Reels (${APK_SIZE})" \
               --notes-file RELEASE_NOTES.md \
               --latest
           fi

@@ -285,6 +285,80 @@ class ExampleRobolectricTest {
         }
     }
 
+    @Test
+    fun `pass 2 step c clusters recurring unassigned weak faces across distinct photos`() = runBlocking {
+        val mediaDao = db.mediaDao()
+        val personDao = db.personDao()
+
+        mediaDao.insertMediaList(
+            listOf(
+                MediaEntity(
+                    mediaId = 201L,
+                    uri = "content://media/201",
+                    dateAddedSeconds = 1000L,
+                    mimeType = "image/jpeg",
+                    isVideo = false,
+                    width = 1080,
+                    height = 1350,
+                    durationMs = null,
+                    displayName = "group_1.jpg"
+                ),
+                MediaEntity(
+                    mediaId = 202L,
+                    uri = "content://media/202",
+                    dateAddedSeconds = 2000L,
+                    mimeType = "image/jpeg",
+                    isVideo = false,
+                    width = 1080,
+                    height = 1350,
+                    durationMs = null,
+                    displayName = "group_2.jpg"
+                )
+            )
+        )
+
+        val vec1 = FloatArray(192) { i -> (i % 5 - 2).toFloat() }.also { norm(it) }
+        val vec2 = FloatArray(192) { i -> (i % 5 - 2).toFloat() + if (i < 10) 0.15f else 0f }.also { norm(it) }
+
+        personDao.insertFace(
+            FaceEntity(
+                mediaId = 201L,
+                personId = null,
+                cropPath = "/tmp/weak_1.jpg",
+                embeddingBlob = clusterManager.floatArrayToBlob(vec1),
+                qualityScore = 0.41f,
+                isAnchorExemplar = false,
+                left = 10,
+                top = 10,
+                right = 54,
+                bottom = 54
+            )
+        )
+        personDao.insertFace(
+            FaceEntity(
+                mediaId = 202L,
+                personId = null,
+                cropPath = "/tmp/weak_2.jpg",
+                embeddingBlob = clusterManager.floatArrayToBlob(vec2),
+                qualityScore = 0.43f,
+                isAnchorExemplar = false,
+                left = 12,
+                top = 12,
+                right = 58,
+                bottom = 58
+            )
+        )
+
+        clusterManager.runPass2ConsolidationAndAnchorSweep()
+
+        val unassignedAfter = personDao.getUnassignedFacesSync()
+        assertEquals(0, unassignedAfter.size)
+
+        val people = personDao.getAllPeopleSync()
+        assertEquals(1, people.size)
+        assertEquals(2, people[0].faceCount)
+    }
+
     private fun norm(vec: FloatArray) {
         var s = 0f
         for (v in vec) s += v * v

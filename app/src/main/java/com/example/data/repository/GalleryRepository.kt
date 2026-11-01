@@ -811,16 +811,26 @@ class GalleryRepository(
     }
 
     suspend fun resetAndRescanAllFaces() = withContext(Dispatchers.IO) {
-        WorkManager.getInstance(context).cancelUniqueWork(MediaStoreScanner.FACE_INDEXING_WORK_NAME)
-        mediaDao.clearAllCrossRefs()
-        personDao.deleteAllFaces()
-        personDao.deleteAllPeople()
-        mediaDao.resetAllMediaProcessed()
-        clusterManager.invalidateCache()
+        runCatching {
+            WorkManager.getInstance(context)
+                .cancelUniqueWork(MediaStoreScanner.FACE_INDEXING_WORK_NAME)
+                .result
+                .get()
+        }
 
-        val cropsDir = File(context.filesDir, "face_crops")
-        if (cropsDir.exists()) {
-            cropsDir.listFiles()?.forEach { it.delete() }
+        fastLaneMutex.withLock {
+            clusterManager.withClusterLock {
+                mediaDao.clearAllCrossRefs()
+                personDao.deleteAllFaces()
+                personDao.deleteAllPeople()
+                mediaDao.resetAllMediaProcessed()
+
+                val cropsDir = File(context.filesDir, "face_crops")
+                if (cropsDir.exists()) {
+                    cropsDir.listFiles()?.forEach { it.delete() }
+                }
+            }
+            clusterManager.invalidateCache()
         }
 
         OnboardingPreferences.resetOnboardingForRescan(context)

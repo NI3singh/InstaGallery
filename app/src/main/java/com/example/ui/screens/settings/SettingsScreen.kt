@@ -746,7 +746,7 @@ private fun SettingsMainHubContent(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = "InstaGallery v2.0.5",
+                        text = "InstaGallery v2.0.6",
                         color = Color(0xFF6E6E77),
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium
