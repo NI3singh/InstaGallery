@@ -146,19 +146,25 @@ class FaceAlignmentTest {
             FaceAlignment.Point(10f, 0f),
             FaceAlignment.Point(5f, 8f)
         )
+        // Full similarity: rotate + scale + translate (rotation about the origin alone would not
+        // be recoverable by a fit that also has to minimize residual for all three points).
+        val tx = 7.0
+        val ty = -3.0
         val dst = src.map { p ->
             FaceAlignment.Point(
-                x = (p.x * scale * cos(angle)).toFloat(),
-                y = (p.x * scale * sin(angle)).toFloat()
+                x = (p.x * scale * cos(angle) - p.y * scale * sin(angle) + tx).toFloat(),
+                y = (p.x * scale * sin(angle) + p.y * scale * cos(angle) + ty).toFloat()
             )
         }
         val m = FaceAlignment.estimateSimilarity(src, dst)!!
         val recovered = hypot(m[0], m[3])
         assertEquals(scale.toFloat(), recovered, 1e-3f)
-        // Apply to src[1]: should land on dst[1]
-        val applied = FaceAlignment.apply(m, src[1])
-        assertEquals(dst[1].x, applied.x, 1e-2f)
-        assertEquals(dst[1].y, applied.y, 1e-2f)
+        // Every source point must land on its destination.
+        for (i in src.indices) {
+            val applied = FaceAlignment.apply(m, src[i])
+            assertEquals(dst[i].x, applied.x, 1e-2f)
+            assertEquals(dst[i].y, applied.y, 1e-2f)
+        }
     }
 
     @Test
