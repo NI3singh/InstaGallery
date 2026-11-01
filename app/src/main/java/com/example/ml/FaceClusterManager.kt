@@ -64,17 +64,37 @@ class FaceClusterManager(
         const val EXEMPLAR_QUALITY_GATE = 0.55f
         const val MAX_EXEMPLARS_PER_PERSON = 12
 
-        const val PASS2_MERGE_MULTI_THRESHOLD = 0.61f
-        const val PASS2_MERGE_SINGLETON_THRESHOLD = 0.58f
+        /**
+         * Pass-2 merge bars. Deliberately ABOVE Pass-1 match thresholds: a wrong merge is much more
+         * expensive for the user than a split they can fix with one tap in Merge Studio, and Pass-1
+         * matching already uses exemplar+centroid scoring rather than raw centroid cosine.
+         */
+        const val PASS2_MERGE_MULTI_THRESHOLD = 0.66f
+        const val PASS2_MERGE_SINGLETON_THRESHOLD = 0.68f
 
-        const val PASS2_NAMED_ANCHOR_SWEEP_THRESHOLD = 0.54f
-        const val PASS2_MULTI_ANCHOR_SWEEP_THRESHOLD = 0.56f
+        const val PASS2_NAMED_ANCHOR_SWEEP_THRESHOLD = 0.58f
+        const val PASS2_MULTI_ANCHOR_SWEEP_THRESHOLD = 0.62f
 
         const val DUPLICATE_MIN_THRESHOLD = 0.52f
+
+        /**
+         * Auto-merge bar for dedup (spec: centroid similarity >= 0.70f). Above the Pass-2 merge
+         * thresholds so automated merging only fires on near-identical clusters; everything
+         * borderline goes to the Merge Studio for a human call.
+         */
+        const val AUTO_DEDUP_THRESHOLD = 0.70f
+        const val AUTO_DEDUP_EXCLUSIVE_UPPER = AUTO_DEDUP_THRESHOLD - 0.001f
+
         private const val AVATAR_TARGET_SIZE = 200
 
         @Volatile
         private var INSTANCE: FaceClusterManager? = null
+
+        /**
+         * Shared across ALL instances (spec): FaceIndexingWorker, GalleryRepository fast lane, and
+         * test-constructed instances must never run concurrent clustering passes against SQLite.
+         */
+        private val clusterMutex = Mutex()
 
         fun getInstance(context: Context): FaceClusterManager {
             return INSTANCE ?: synchronized(this) {
@@ -98,7 +118,8 @@ class FaceClusterManager(
         val mediaIds: MutableSet<Long> = mutableSetOf()
     )
 
-    private val clusterMutex = Mutex()
+    private val clusterMutex: Mutex
+        get() = Companion.clusterMutex
     private val clusterCache = mutableListOf<PersonCluster>()
     private val inMemoryClusters: MutableList<PersonCluster>
         get() = clusterCache
@@ -220,9 +241,8 @@ class FaceClusterManager(
         }
 
         clusterMutex.withLock {
-            if (inMemoryClusters.isEmpty() || !isCacheLoaded) {
-                loadExistingClustersFromDb()
-            }
+            // Spec: always reload clusters from SQLite on entry so in-memory state never drifts.
+            loadExistingClustersFromDb()
 
             // Ensure re-indexing a photo never duplicates face rows or stale cross-refs
             personDao.deleteFacesForMediaId(mediaId)
@@ -264,9 +284,8 @@ class FaceClusterManager(
     ): Long? = withContext(Dispatchers.IO) {
         if (isVideo) return@withContext null
         clusterMutex.withLock {
-            if (inMemoryClusters.isEmpty() || !isCacheLoaded) {
-                loadExistingClustersFromDb()
-            }
+            // Spec: always reload clusters from SQLite on entry so in-memory state never drifts.
+            loadExistingClustersFromDb()
             processSingleAlignedFaceLocked(
                 mediaId = mediaId,
                 face = face,
@@ -359,8 +378,11 @@ class FaceClusterManager(
             return bestCluster.personId
         }
 
-        // Case B — Create a new PersonEntity if face.qualityScore >= 0.35f && box.width() >= 36
-        val canSpawnNewPerson = (face.qualityScore >= 0.35f && box.width() >= 36) || face.isStrictAnchorCandidate
+        // Case B — Create a new PersonEntity only from a strong anchor face. Weaker faces are stored
+        // unassigned and picked up by the Pass-2 anchor sweep once the same person recurs, which stops
+        // one low-quality stranger crop from spawning a profile.
+        val canSpawnNewPerson = face.isStrictAnchorCandidate ||
+            FaceDetectorProcessor.isStrongEnoughForNewProfile(face.qualityScore, box.width())
         if (canSpawnNewPerson) {
             val nextNumber = computeNextPersonNumber()
             val newPersonName = "Person $nextNumber"
@@ -561,6 +583,17 @@ class FaceClusterManager(
                         val isNewExemplar = face.qualityScore >= EXEMPLAR_QUALITY_GATE &&
                             bestAnchor.exemplars.size < MAX_EXEMPLARS_PER_PERSON
 
+                        // Spec: auto-unhide a previously hidden recurring person once it reaches >= 2
+                        // distinct photos, unless the user explicitly rejected it (MOVED_TO_OTHER).
+                        val distinctMediaAfterAssign =
+                            personDao.countDistinctMediaForPerson(bestAnchor.personId) + 1
+                        if (distinctMediaAfterAssign >= 2) {
+                            val entity = personDao.getPersonByIdSync(bestAnchor.personId)
+                            if (entity != null && entity.isHiddenToOther && entity.decisionState != "MOVED_TO_OTHER") {
+                                personDao.restorePersonFromOtherSql(bestAnchor.personId)
+                            }
+                        }
+
                         personDao.assignFaceToPerson(
                             faceId = face.faceId,
                             personId = bestAnchor.personId,
@@ -726,7 +759,6 @@ class FaceClusterManager(
 
     /**
      * 4.1 Automatic Deduplication of Clone Profiles & High-Similarity Matches (>= 0.68f).
-     * - Step 1: Purges screenshot grid clones (screenshots that spawned >= 3 person links) and orphan 0-photo profiles.
      * - Step 2: Auto-merges all duplicate profiles with cosine similarity >= 0.68f into the highest-priority profile.
      * - Step 3: Reconciles counts, purges 0-photo orphans, and reloads inMemoryClusters from SQLite.
      */
@@ -734,19 +766,11 @@ class FaceClusterManager(
         clusterMutex.withLock {
             var mergedCount = 0
 
-            // Step 1 — Purge Screenshot Grid Clones
-            val screenshotCloneMediaIds = mediaDao.getScreenshotGridCloneMediaIdsSync()
-            if (screenshotCloneMediaIds.isNotEmpty()) {
-                for (mediaId in screenshotCloneMediaIds) {
-                    mediaDao.deleteCrossRefsForMediaId(mediaId)
-                    personDao.deleteFacesForMediaId(mediaId)
-                    mediaDao.updateMediaHasFaces(mediaId, false)
-                }
-                personDao.deleteOrphanPeopleWithZeroPhotos()
-                personDao.reconcilePeopleAfterMediaDeletion()
-            }
+            // Spec guardrail: NEVER wipe a multi-face screenshot just because its filename contains
+            // "screenshot" and it has >= 3 faces - real screenshots of people are legitimate media.
+            // The detector now skips only the app's own People-grid captures at detection time.
 
-            // Step 2 — Auto-Merge All Duplicate Profiles with Cosine Similarity >= 0.68f
+            // Step 2 — Auto-Merge All Duplicate Profiles with Cosine Similarity >= AUTO_DEDUP_THRESHOLD
             val myProfileId = OnboardingPreferences.getMyProfilePersonId(context)
             val allPeople = personDao.getAllPeopleForDeduplicationSync()
                 .sortedWith(
@@ -814,7 +838,7 @@ class FaceClusterManager(
                             }
                         }
 
-                        if (maxSim >= 0.68f) {
+                        if (maxSim >= AUTO_DEDUP_THRESHOLD) {
                             val wA = currentA.faceCount.coerceAtLeast(1).toFloat()
                             val wB = personB.faceCount.coerceAtLeast(1).toFloat()
                             val updatedCentroid = updateCentroid(vecA, wA, vecB, wB)
@@ -989,7 +1013,7 @@ class FaceClusterManager(
                     dotProduct(emb1, emb2)
                 }
 
-                if (sim in 0.52f..0.679f && sim > bestSim) {
+                if (sim in DUPLICATE_MIN_THRESHOLD..AUTO_DEDUP_EXCLUSIVE_UPPER && sim > bestSim) {
                     bestSim = sim
                     val (primary, secondary) = if (p1.isNamedByUser && !p2.isNamedByUser) {
                         p1 to p2

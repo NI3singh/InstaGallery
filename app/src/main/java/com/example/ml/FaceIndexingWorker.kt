@@ -33,6 +33,7 @@ class FaceIndexingWorker(
         const val PROGRESS_PROFILES_COUNT = "profilesCount"
         const val PROGRESS_FACES_FOUND = "faces_found"
         private const val BATCH_CHUNK_SIZE = 15
+        private const val PROGRESS_THROTTLE_MS = 750L
 
         fun scheduleContentUriTriggerWatcher(context: Context) {
             runCatching {
@@ -108,6 +109,15 @@ class FaceIndexingWorker(
                 )
             }
 
+            val photoIndexer = FacePhotoIndexer(
+                mediaDao = mediaDao,
+                detector = detectorProcessor,
+                embeddingExtractor = embeddingExtractor,
+                clusterManager = faceClusterManager
+            )
+            val failedOnceThisRun = mutableSetOf<Long>()
+            var lastProgressAtMs = 0L
+
             while (!isStopped) {
                 // Queries unindexed photos only (isVideo = 0 AND isProcessedForFaces = 0)
                 val unindexedBatch = mediaDao.getUnindexedPhotos(limit = BATCH_CHUNK_SIZE)
@@ -116,73 +126,33 @@ class FaceIndexingWorker(
                 for (media in unindexedBatch) {
                     if (isStopped) break
 
-                    if (media.isVideo || media.displayName.startsWith("InstaCard_", ignoreCase = true)) {
-                        mediaDao.updateMediaProcessed(
-                            mediaId = media.mediaId,
-                            isProcessed = true,
-                            hasFaces = false
-                        )
-                        continue
-                    }
-
-                    // Atomic compare-and-set single-flight claim so fast-lane and worker never race
-                    val claimed = mediaDao.atomicallyClaimMediaForIndexing(media.mediaId)
-                    if (claimed == 0) {
-                        continue
-                    }
-
-                    try {
-                        val detectedFaces = detectorProcessor.processMedia(media)
-
-                        val facesAssigned = try {
-                            if (detectedFaces.isNotEmpty()) {
-                                faceClusterManager.processDetectedFacesForMedia(
-                                    mediaId = media.mediaId,
-                                    detectedFaces = detectedFaces,
-                                    embeddingExtractor = embeddingExtractor,
-                                    isVideo = false
-                                )
-                            } else {
-                                false
-                            }
-                        } finally {
-                            for (face in detectedFaces) {
-                                if (!face.alignedFaceBitmap.isRecycled) {
-                                    face.alignedFaceBitmap.recycle()
-                                }
-                                if (face.avatarCropBitmap != face.alignedFaceBitmap && !face.avatarCropBitmap.isRecycled) {
-                                    face.avatarCropBitmap.recycle()
-                                }
-                            }
+                    when (photoIndexer.index(media, failedOnceThisRun)) {
+                        is FacePhotoIndexer.Outcome.Indexed -> {
+                            processedAnyNewInThisRun = true
+                            processedCount++
                         }
-
-                        mediaDao.updateMediaHasFaces(
-                            mediaId = media.mediaId,
-                            hasFaces = facesAssigned
-                        )
-                        processedAnyNewInThisRun = true
-                    } catch (t: Throwable) {
-                        Log.e(TAG, "Error processing photo ${media.mediaId}", t)
-                        mediaDao.updateMediaHasFaces(
-                            mediaId = media.mediaId,
-                            hasFaces = false
-                        )
+                        FacePhotoIndexer.Outcome.Failed -> processedCount++
+                        FacePhotoIndexer.Outcome.WillRetry,
+                        FacePhotoIndexer.Outcome.AlreadyClaimed,
+                        FacePhotoIndexer.Outcome.SkippedNotAPhoto -> continue
                     }
 
-                    processedCount++
-
-                    val totalCount = (mediaDao.getTotalMediaCount().firstOrNull() ?: totalPhotos)
-                        .coerceAtLeast(processedCount)
-                    val visiblePeopleCount = countVisibleProfiles()
-
-                    setProgress(
-                        workDataOf(
-                            PROGRESS_PROCESSED to processedCount,
-                            PROGRESS_TOTAL to totalCount,
-                            PROGRESS_PROFILES_COUNT to visiblePeopleCount,
-                            PROGRESS_FACES_FOUND to visiblePeopleCount
+                    // Progress reporting hits the DB twice; throttle it so it doesn't slow the scan.
+                    val now = System.currentTimeMillis()
+                    if (now - lastProgressAtMs >= PROGRESS_THROTTLE_MS) {
+                        lastProgressAtMs = now
+                        val totalCount = mediaDao.getTotalMediaCountSync()
+                            .coerceAtLeast(processedCount)
+                        val visiblePeopleCount = countVisibleProfiles()
+                        setProgress(
+                            workDataOf(
+                                PROGRESS_PROCESSED to processedCount,
+                                PROGRESS_TOTAL to totalCount,
+                                PROGRESS_PROFILES_COUNT to visiblePeopleCount,
+                                PROGRESS_FACES_FOUND to visiblePeopleCount
+                            )
                         )
-                    )
+                    }
                 }
             }
 

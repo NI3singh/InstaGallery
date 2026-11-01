@@ -30,6 +30,7 @@ import com.example.ml.FaceClusterManager
 import com.example.ml.FaceDetectorProcessor
 import com.example.ml.FaceEmbeddingExtractor
 import com.example.ml.FaceIndexingWorker
+import com.example.ml.FacePhotoIndexer
 import com.example.ml.SimilarProfileCandidate
 import com.example.ui.screens.permission.hasAnyMediaPermission
 import kotlinx.coroutines.CoroutineScope
@@ -81,6 +82,9 @@ class GalleryRepository(
         get() = fastLaneMutex
     private var fastLaneDetector: FaceDetectorProcessor? = null
     private var fastLaneEmbeddingExtractor: FaceEmbeddingExtractor? = null
+    private var fastLanePhotoIndexer: FacePhotoIndexer? = null
+    /** Photos whose detection failed once in the fast lane; guarded by [fastLaneMutex]. */
+    private val fastLaneFailedOnce = mutableSetOf<Long>()
 
     init {
         syncScope.launch {
@@ -316,46 +320,19 @@ class GalleryRepository(
             val extractor = fastLaneEmbeddingExtractor ?: FaceEmbeddingExtractor(appContext).also {
                 fastLaneEmbeddingExtractor = it
             }
+            val indexer = fastLanePhotoIndexer ?: FacePhotoIndexer(
+                mediaDao = mediaDao,
+                detector = detector,
+                embeddingExtractor = extractor,
+                clusterManager = faceClusterManager
+            ).also { fastLanePhotoIndexer = it }
 
             var anyPhotoProcessed = false
             for (photo in candidatePhotos) {
-                // Atomic single-flight compare-and-set claim in SQLite
-                val claimed = mediaDao.atomicallyClaimMediaForIndexing(photo.mediaId)
-                if (claimed == 0) {
-                    continue
-                }
-
                 val currentInDb = mediaDao.getMediaByIdSync(photo.mediaId) ?: photo
-
-                try {
-                    val detectedFaces = detector.processMedia(currentInDb)
-                    val hasAssignedFaces = try {
-                        if (detectedFaces.isNotEmpty()) {
-                            faceClusterManager.processDetectedFacesForMedia(
-                                mediaId = currentInDb.mediaId,
-                                detectedFaces = detectedFaces,
-                                embeddingExtractor = extractor,
-                                isVideo = false
-                            )
-                        } else {
-                            false
-                        }
-                    } finally {
-                        for (face in detectedFaces) {
-                            if (!face.alignedFaceBitmap.isRecycled) {
-                                face.alignedFaceBitmap.recycle()
-                            }
-                            if (face.avatarCropBitmap != face.alignedFaceBitmap && !face.avatarCropBitmap.isRecycled) {
-                                face.avatarCropBitmap.recycle()
-                            }
-                        }
-                    }
-
-                    mediaDao.updateMediaHasFaces(currentInDb.mediaId, hasFaces = hasAssignedFaces)
+                val outcome = indexer.index(currentInDb, fastLaneFailedOnce)
+                if (outcome is FacePhotoIndexer.Outcome.Indexed) {
                     anyPhotoProcessed = true
-                } catch (t: Throwable) {
-                    Log.e("GalleryRepository", "Fast-lane indexing error for photo ${photo.mediaId}", t)
-                    mediaDao.updateMediaHasFaces(currentInDb.mediaId, hasFaces = false)
                 }
             }
 
